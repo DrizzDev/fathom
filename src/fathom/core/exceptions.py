@@ -308,3 +308,200 @@ class CheckpointStoreError(FathomError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, retryable=False)
+
+
+class InteractionError(FathomError):
+    """
+    Error raised when an interaction invariant is violated.
+    """
+
+    def __init__(self, message: str) -> None:
+        """
+        Initialize an interaction error as non-retryable.
+        """
+
+        super().__init__(message, retryable=False)
+
+
+class IdentityError(InteractionError):
+    """
+    Error raised when a runtime is invoked without a fully-resolved Principal.
+
+    Carries the offending field name so a host can map this exception to a
+    typed validation failure (e.g. JSEND `fail` with the field name) without
+    parsing the message string.
+    """
+
+    def __init__(self, *, field: str, message: str) -> None:
+        """
+        Initialize an identity error with the offending field name.
+        """
+
+        super().__init__(message)
+        self.__field = field
+
+    @property
+    def field(self) -> str:
+        """
+        Name of the missing or invalid identity field.
+        """
+
+        return self.__field
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(field={self.__field!r}, message={self.message!r})"
+
+
+class ThreadNotFoundError(InteractionError):
+    """
+    Error raised when a tenant-scoped thread lookup misses.
+    """
+
+    def __init__(self, *, thread: str, message: str) -> None:
+        """
+        Initialize with the missing thread identifier.
+        """
+
+        super().__init__(message)
+        self.__thread = thread
+
+    @property
+    def thread(self) -> str:
+        """
+        Identifier of the thread that does not exist.
+        """
+
+        return self.__thread
+
+
+class ThreadConflictError(InteractionError):
+    """
+    Error raised when a thread create request collides with an existing thread of the same identifier but different content
+    """
+
+    def __init__(self, *, thread: str, message: str) -> None:
+        """
+        Initialize a thread conflict error with the offending identifier.
+        """
+
+        super().__init__(message)
+        self.__thread = thread
+
+    @property
+    def thread(self) -> str:
+        """
+        Identifier of the thread whose stored content conflicts.
+        """
+
+        return self.__thread
+
+
+class TaskConflictError(InteractionError):
+    """
+    Error raised when a task transition conflicts with the existing record.
+    """
+
+    def __init__(self, *, task: str, message: str) -> None:
+        """
+        Initialize a task conflict error with the offending task identifier.
+        """
+
+        super().__init__(message)
+        self.__task = task
+
+    @property
+    def task(self) -> str:
+        """
+        Identifier of the task whose terminal state conflicts.
+        """
+
+        return self.__task
+
+
+class JobLeaseLostError(InteractionError):
+    """
+    Error raised when a worker tries to finalize a job whose lease was lost to another worker via stale-claim recovery.
+    """
+
+    def __init__(self, *, job: str, message: str) -> None:
+        """
+        Initialize a lease-lost error with the offending job identifier.
+        """
+
+        super().__init__(message)
+        self.__job = job
+
+    @property
+    def job(self) -> str:
+        """
+        Identifier of the job whose lease was lost.
+        """
+
+        return self.__job
+
+
+class ConversationSummaryLimitExceeded(InteractionError):
+    """
+    Raised when a conversation has more rows than the /summary projection caps allow.
+    """
+
+    def __init__(self, *, kind: str, thread: str, limit: int) -> None:
+        """
+        Initialize with the row kind, thread id, and the cap that was exceeded.
+        """
+
+        super().__init__(
+            f"Conversation {thread!r} has more {kind} rows than the summary projection cap of {limit}."
+        )
+        self.__kind = kind
+        self.__limit = limit
+        self.__thread = thread
+
+    @property
+    def kind(self) -> str:
+        """
+        Row kind that overflowed (message kind value, or 'script').
+        """
+
+        return self.__kind
+
+    @property
+    def thread(self) -> str:
+        """
+        Identifier of the conversation thread that overflowed.
+        """
+
+        return self.__thread
+
+    @property
+    def limit(self) -> int:
+        """
+        Cap value the projection was bounded to.
+        """
+
+        return self.__limit
+
+
+class StorageConfigurationError(InteractionError):
+    """
+    Error raised when an interaction storage backend is selected without a valid corresponding configuration.
+    """
+
+    def __init__(self, *, backend: str, message: str) -> None:
+        """
+        Initialize a storage configuration error with the backend name.
+        """
+
+        super().__init__(message)
+        self.__backend = backend
+
+    @property
+    def backend(self) -> str:
+        """
+        Name of the misconfigured storage backend.
+        """
+
+        return self.__backend
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(backend={self.__backend!r}, message={self.message!r})"

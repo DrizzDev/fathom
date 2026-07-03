@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
@@ -10,7 +10,7 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.reasoning import SubGoalCompletionSignal
-from fathom.schemas.results import PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
@@ -116,12 +116,18 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
             confidence=1.0,
         )
         return StepResult(
-            step=Step(action=action, step_number=0, screen_hash="pre"),
+            step=Step(
+                action=action,
+                step_number=0,
+                screen_hash="pre",
+                metadata={"started_at": "2026-06-30T10:00:00+00:00"},
+            ),
             success=True,
             duration=12,
             screen_changed=True,
             pre_hash="pre",
             post_hash="post",
+            observation="post-action observation",
         )
 
     @staticmethod
@@ -345,3 +351,291 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
             CompletionReason.SUCCESS.value,
         )
         self.assertEqual(agent_state.completion_reason, CompletionReason.SUCCESS.value)
+
+    async def test_record_step_persists_user_progress_message(self) -> None:
+        """
+        Runtime RECORD must write a progress message for the user timeline.
+        """
+
+        agent_state = AgentState(intent="change address", capabilities=self.__caps())
+        provider = self.__provider(agent_state=agent_state)
+        provider.context.tenant = "tenant-1"
+        provider.context.thread = "thread-1"
+        provider.context.workspace = None
+        provider.context.responder = "agent:fathom"
+        provider.context.workflow_id = "workflow-1"
+        provider.context.execution_id = "execution-1"
+        recorder = MagicMock(name="ConversationRecorder")
+        recorder.attach_mock(AsyncMock(), "record_step_finished")
+        recorder.attach_mock(AsyncMock(), "record_llm_analysis")
+        recorder.attach_mock(AsyncMock(), "record_context")
+        provider.context.recorder = recorder
+        provider.context.artifact_catalog.discover = AsyncMock(return_value=())
+        node = RecordNode(provider=provider)
+
+        result = await node(
+            state={
+                CommonStateKey.ANALYSIS: self.__analysis(),
+                CommonStateKey.ANALYSIS_DURATION: 0.11,
+                CommonStateKey.GROUNDING_DURATION: 0.22,
+                CommonStateKey.EXECUTION_DURATION: 0.033,
+                CommonStateKey.STEP_RESULT: self.__step_result(),
+                CommonStateKey.SCREEN_STATE: self.__screen(),
+                CommonStateKey.IS_NEW_SCREEN: False,
+                IntentStateKey.POST_ACTIVITY: "com.test/.MainActivity",
+            }
+        )
+
+        self.assertFalse(result.get(CommonStateKey.IS_COMPLETE, False))
+        provider.context.recorder.record_llm_analysis.assert_awaited_once()
+        self.assertLess(
+            provider.context.recorder.mock_calls.index(call.record_llm_analysis(analysis=ANY)),
+            provider.context.recorder.mock_calls.index(call.record_step_finished(completion=ANY)),
+        )
+        recorded = provider.context.recorder.record_llm_analysis.await_args.kwargs["analysis"]
+        self.assertEqual("tenant-1", recorded.tenant)
+        self.assertEqual("thread-1", recorded.thread)
+        self.assertEqual("agent:fathom", recorded.actor)
+        self.assertEqual(1, recorded.step)
+        assert recorded.action is not None
+        assert recorded.observation is not None
+        assert recorded.metrics is not None
+        assert recorded.metrics.usage is not None
+        self.assertEqual("tap", recorded.action.type)
+        self.assertEqual("Continue", recorded.action.target)
+        self.assertEqual("tap continue", recorded.action.rationale)
+        self.assertEqual("tap continue", recorded.rationale)
+        self.assertEqual("post-action observation", recorded.observation.summary)
+        self.assertEqual("pre", recorded.observation.screen)
+        self.assertTrue(recorded.observation.changed)
+        self.assertEqual("The screen shows the continue button.", recorded.evidence)
+        self.assertEqual("Tap Continue.", recorded.summary)
+        self.assertEqual(110, recorded.metrics.analysis)
+        self.assertEqual(220, recorded.metrics.grounding)
+        self.assertEqual(33, recorded.metrics.execution)
+        self.assertEqual(363, recorded.metrics.total)
+        self.assertEqual(100, recorded.metrics.usage.prompt)
+        self.assertEqual(20, recorded.metrics.usage.completion)
+        self.assertEqual(10, recorded.metrics.usage.cached)
+        self.assertEqual(120, recorded.metrics.usage.total)
+        self.assertEqual("2026-06-30T10:00:00+00:00", recorded.created.isoformat())
+        provider.context.recorder.record_context.assert_awaited_once()
+        snapshot = provider.context.recorder.record_context.await_args.kwargs["snapshot"]
+        self.assertEqual("tenant-1", snapshot.tenant)
+        self.assertEqual("thread-1", snapshot.thread)
+        self.assertEqual("agent:fathom", snapshot.actor)
+        self.assertEqual((recorded.id,), snapshot.messages)
+        self.assertEqual(64, len(snapshot.hash))
+        provider.context.telemetry.info.assert_any_await(
+            "Conversation progress message recorded.",
+            type="conversation.timeline.progress.recorded",
+            tenant_id="tenant-1",
+            conversation_id="thread-1",
+            execution_id="execution-1",
+            workflow_id="workflow-1",
+            task=recorded.task,
+            step=1,
+            duration=0.363,
+            analysis_present=True,
+            step_result_present=True,
+        )
+
+    async def test_record_step_persists_progress_message_without_analysis(self) -> None:
+        """
+        Runtime RECORD must still write a timeline progress message when analysis is absent.
+        """
+
+        agent_state = AgentState(intent="change address", capabilities=self.__caps())
+        provider = self.__provider(agent_state=agent_state)
+        provider.context.tenant = "tenant-1"
+        provider.context.thread = "thread-1"
+        provider.context.workspace = None
+        provider.context.responder = "agent:fathom"
+        provider.context.workflow_id = "workflow-1"
+        provider.context.execution_id = "execution-1"
+        provider.context.recorder.record_step_finished = AsyncMock()
+        provider.context.recorder.record_llm_analysis = AsyncMock()
+        provider.context.recorder.record_context = AsyncMock()
+        provider.context.artifact_catalog.discover = AsyncMock(return_value=())
+        node = RecordNode(provider=provider)
+
+        await node(
+            state={
+                CommonStateKey.EXECUTION_DURATION: 0.033,
+                CommonStateKey.STEP_RESULT: self.__step_result(),
+                CommonStateKey.SCREEN_STATE: self.__screen(),
+                CommonStateKey.IS_NEW_SCREEN: False,
+                IntentStateKey.POST_ACTIVITY: "com.test/.MainActivity",
+            }
+        )
+
+        provider.context.recorder.record_llm_analysis.assert_awaited_once()
+        recorded = provider.context.recorder.record_llm_analysis.await_args.kwargs["analysis"]
+        self.assertEqual("post-action observation", recorded.summary)
+        self.assertEqual("tap continue", recorded.rationale)
+        self.assertEqual("post-action observation", recorded.evidence)
+        self.assertIsNotNone(recorded.action)
+        self.assertIsNotNone(recorded.observation)
+        assert recorded.observation is not None
+        self.assertEqual("post-action observation", recorded.observation.summary)
+        self.assertEqual("post-action observation", recorded.observation.evidence)
+        self.assertIsNotNone(recorded.metrics)
+        assert recorded.metrics is not None
+        self.assertEqual(33, recorded.metrics.execution)
+        self.assertIsNone(recorded.metrics.usage)
+        provider.context.recorder.record_context.assert_awaited_once()
+        snapshot = provider.context.recorder.record_context.await_args.kwargs["snapshot"]
+        self.assertEqual((recorded.id,), snapshot.messages)
+        provider.context.telemetry.info.assert_any_await(
+            "Conversation progress message recorded.",
+            type="conversation.timeline.progress.recorded",
+            tenant_id="tenant-1",
+            conversation_id="thread-1",
+            execution_id="execution-1",
+            workflow_id="workflow-1",
+            task=recorded.task,
+            step=1,
+            duration=0.033,
+            analysis_present=False,
+            step_result_present=True,
+        )
+
+    async def test_record_step_logs_progress_failure(self) -> None:
+        """
+        Runtime RECORD must log progress persistence failures with routing context.
+        """
+
+        agent_state = AgentState(intent="change address", capabilities=self.__caps())
+        provider = self.__provider(agent_state=agent_state)
+        provider.context.tenant = "tenant-1"
+        provider.context.thread = "thread-1"
+        provider.context.workspace = None
+        provider.context.responder = "agent:fathom"
+        provider.context.workflow_id = "workflow-1"
+        provider.context.execution_id = "execution-1"
+        provider.context.recorder.record_step_finished = AsyncMock()
+        provider.context.recorder.record_llm_analysis = AsyncMock(side_effect=RuntimeError("boom"))
+        provider.context.recorder.record_context = AsyncMock()
+        provider.context.artifact_catalog.discover = AsyncMock(return_value=())
+        node = RecordNode(provider=provider)
+
+        await node(
+            state={
+                CommonStateKey.EXECUTION_DURATION: 0.033,
+                CommonStateKey.STEP_RESULT: self.__step_result(),
+                CommonStateKey.SCREEN_STATE: self.__screen(),
+                CommonStateKey.IS_NEW_SCREEN: False,
+                IntentStateKey.POST_ACTIVITY: "com.test/.MainActivity",
+            }
+        )
+
+        provider.context.telemetry.warning.assert_any_await(
+            "Conversation progress message recording failed",
+            type="conversation.timeline.progress.failed",
+            tenant_id="tenant-1",
+            conversation_id="thread-1",
+            execution_id="execution-1",
+            workflow_id="workflow-1",
+            task=provider.context.recorder.record_step_finished.await_args.kwargs[
+                "completion"
+            ].task,
+            error="boom",
+            step=1,
+            duration=0.033,
+            analysis_present=False,
+            step_result_present=True,
+        )
+
+    async def test_record_wait_step_persists_progress_message_without_analysis(self) -> None:
+        """
+        Wait-only steps without analysis must still write a progress message.
+        """
+
+        agent_state = AgentState(intent="change address", capabilities=self.__caps())
+        provider = self.__provider(agent_state=agent_state)
+        provider.context.tenant = "tenant-1"
+        provider.context.thread = "thread-1"
+        provider.context.workspace = None
+        provider.context.responder = "agent:fathom"
+        provider.context.workflow_id = "workflow-1"
+        provider.context.execution_id = "execution-1"
+        provider.context.recorder.record_step_finished = AsyncMock()
+        provider.context.recorder.record_llm_analysis = AsyncMock()
+        provider.context.recorder.record_context = AsyncMock()
+        provider.context.artifact_catalog.discover = AsyncMock(return_value=())
+        node = RecordNode(provider=provider)
+
+        await node(
+            state={
+                CommonStateKey.EXECUTION_DURATION: 5.0,
+                CommonStateKey.STEP_RESULT: self.__wait_step_result(),
+                CommonStateKey.SCREEN_STATE: self.__screen(),
+                CommonStateKey.IS_NEW_SCREEN: False,
+                IntentStateKey.POST_ACTIVITY: "com.test/.MainActivity",
+            }
+        )
+
+        recorded = provider.context.recorder.record_llm_analysis.await_args.kwargs["analysis"]
+        self.assertEqual("Wait for 5.0 seconds", recorded.summary)
+        provider.context.telemetry.info.assert_any_await(
+            "Conversation progress message recorded.",
+            type="conversation.timeline.progress.recorded",
+            tenant_id="tenant-1",
+            conversation_id="thread-1",
+            execution_id="execution-1",
+            workflow_id="workflow-1",
+            task=recorded.task,
+            step=1,
+            duration=5.0,
+            analysis_present=False,
+            step_result_present=True,
+        )
+
+    @staticmethod
+    def __analysis() -> AnalysisResult:
+        """
+        Build the analysis result used for progress message recording.
+        """
+
+        action = Action(
+            action_type=ActionType.TAP,
+            target="Continue",
+            rationale="tap continue",
+            confidence=1.0,
+        )
+        return AnalysisResult(
+            action=action,
+            reasoning="Tap Continue.",
+            screen_description="The screen shows the continue button.",
+            metrics={
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cached_tokens": 10,
+            },
+        )
+
+    @staticmethod
+    def __wait_step_result() -> StepResult:
+        """
+        Build a wait-only StepResult that does not require analysis.
+        """
+
+        action = Action(
+            action_type=ActionType.WAIT,
+            rationale="wait for the page",
+            wait_duration=5.0,
+        )
+        return StepResult(
+            step=Step(
+                action=action,
+                step_number=0,
+                screen_hash="pre",
+                metadata={"started_at": "2026-06-30T10:00:00+00:00"},
+            ),
+            success=True,
+            duration=5000,
+            screen_changed=False,
+            pre_hash="pre",
+            post_hash="pre",
+            observation=None,
+        )

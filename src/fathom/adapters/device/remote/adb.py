@@ -123,6 +123,14 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
         try:
             response = await self.__client.request(method, path, **kwargs)
+            self.__ensure_success(response=response)
+        except httpx.TimeoutException as exception:
+            raise DeviceError("Remote device request timed out.", retryable=True) from exception
+        except httpx.TransportError as exception:
+            raise DeviceError(
+                f"Remote device request failed due to a transport error: {exception}",
+                retryable=True,
+            ) from exception
         except RuntimeError as exception:
             if self.__is_closed_client_error(exception=exception):
                 logger.exception(
@@ -133,9 +141,23 @@ class ADBRemoteDeviceAdapter(DevicePort):
                 ) from exception
             raise
 
-        response.raise_for_status()
-
         return response
+
+    def __ensure_success(self, *, response: httpx.Response) -> None:
+        """
+        Convert retryable remote HTTP failures before they leave the retry boundary.
+        """
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exception:
+            if (status := exception.response.status_code) >= 500:
+                raise DeviceError(
+                    f"Remote device request failed with HTTP {status}.",
+                    retryable=True,
+                ) from exception
+
+            raise
 
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
@@ -440,6 +462,10 @@ class ADBRemoteDeviceAdapter(DevicePort):
             try:
                 _ = await self.__execute_request("GET", "")
                 return True
+            except DeviceError as exception:
+                if not exception.retryable:
+                    raise
+                await asyncio.sleep(1.0)
             except httpx.HTTPError:
                 await asyncio.sleep(1.0)
 

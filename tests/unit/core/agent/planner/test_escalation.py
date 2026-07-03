@@ -3,8 +3,6 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
-
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
@@ -13,6 +11,7 @@ from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.results import AnalysisResult
+from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
 
 
 class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):

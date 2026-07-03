@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +18,7 @@ class TraceRecord(BaseModel):
     action: Dict[str, Any]
 
     timestamp: float = Field(default_factory=time.time)
-    record_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    record_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
 
 
 class Commit(BaseModel):
@@ -28,10 +28,10 @@ class Commit(BaseModel):
     """
 
     summary: str
-    step_range: tuple[int, int]
+    step_range: Tuple[int, int]
 
     parent_id: Optional[str] = None
-    commit_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
+    commit_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
 
     timestamp: float = Field(default_factory=time.time)
     metadata: Dict[str, Any] = Field(default_factory=dict)

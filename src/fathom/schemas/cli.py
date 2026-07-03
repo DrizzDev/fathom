@@ -95,6 +95,24 @@ class RunCommandInput(LocalCommandInput):
     command: Literal["run"] = Field(default="run")
 
     intent: str = Field(..., min_length=1)
+    conversation: str = Field(
+        ...,
+        min_length=1,
+        description="Conversation thread id; required and host-supplied",
+    )
+    tenant: Optional[str] = Field(
+        default=None,
+        description="Tenant id; falls back to CLI default if absent",
+    )
+    operator: Optional[str] = Field(
+        default=None,
+        description="Operator/user actor id; falls back to CLI default if absent",
+    )
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Optional workspace boundary inside the tenant; "
+        "falls back to FATHOM_CLI_WORKSPACE if absent.",
+    )
     use_xml: bool = Field(default=False)
 
     signal: Literal["interactive", "socket"] = Field(default="interactive")
@@ -134,5 +152,18 @@ class ExploreCommandInput(LocalCommandInput):
     """
 
     command: Literal["explore"] = Field(default="explore")
+    tenant: Optional[str] = Field(
+        default=None,
+        description="Tenant id; falls back to CLI default if absent",
+    )
+    operator: Optional[str] = Field(
+        default=None,
+        description="Operator/user actor id; falls back to CLI default if absent",
+    )
+    workspace: Optional[str] = Field(
+        default=None,
+        description="Optional workspace boundary inside the tenant; "
+        "falls back to FATHOM_CLI_WORKSPACE if absent.",
+    )
     max_steps: int = Field(default=50, ge=1)
     verbose: bool = Field(default=False)

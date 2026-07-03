@@ -1,20 +1,25 @@
 from __future__ import annotations
 
-import logging
 import time
+from datetime import datetime, timezone
+from logging import getLogger
 from typing import Any, Dict, cast
 
 from fathom.constants import ActionType
+from fathom.constants.collaboration import TaskKind
 from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import HITLNotAvailableError
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.recording import Step as RecordedStep
 from fathom.schemas.results import ExecutionResult
+from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.state import IntentGraphState
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class ExecuteNode:
@@ -87,16 +92,19 @@ class ExecuteNode:
             result = cast(
                 "IntentGraphState",
                 {
-                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.IS_COMPLETE: True,
-                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
+                    IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.FAILURE_DIAGNOSTIC: message,
+                    CommonStateKey.COMPLETION_REASON: CompletionReason.FAILED.value,
                 },
             )
             self.__provider.persistence.persist(result=result)
             return result
 
-        step = context.step
+        start_time = time.time()
+
+        step = self.__step_with_started_at(step=context.step, started_at=start_time)
+        context = context.model_copy(update={"step": step})
         logger.info(
             "Executing action: target=%s, confidence=%.2f, type=%s",
             step.action.target,
@@ -104,7 +112,7 @@ class ExecuteNode:
             step.action.action_type.value,
         )
 
-        start_time = time.time()
+        await self.__record_step_started(step=step, created=start_time)
 
         if step.action.memory_updates:
             logger.info(
@@ -149,9 +157,9 @@ class ExecuteNode:
                 step=step,
                 pre_capture=context.capture,
                 package_name=context.package,
-                session_id=self.__provider.context.workflow_id,
                 observation=resolved_observation,
                 is_cancelled=self.__provider.is_cancelled,
+                session_id=self.__provider.context.workflow_id,
             )
 
         logger.info(
@@ -177,8 +185,88 @@ class ExecuteNode:
 
         return cast("IntentGraphState", result_dict)
 
+    @staticmethod
+    def __step_with_started_at(*, step: Step, started_at: float) -> Step:
+        """
+        Return the step with deterministic recorder timing metadata attached.
+        """
+
+        metadata = {
+            **step.metadata,
+            "started_at": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
+        }
+        return step.model_copy(update={"metadata": metadata})
+
+    async def __record_step_started(self, *, step: Step, created: float) -> None:
+        """
+        Record the start of one graph action task when recording is enabled.
+        """
+
+        context = self.__provider.context
+        recorder = getattr(context, "recorder", None)
+
+        tenant = getattr(context, "tenant", None)
+        thread = getattr(context, "thread", None)
+        responder = getattr(context, "responder", None)
+
+        workspace = getattr(context, "workspace", None)
+        workflow_id = getattr(context, "workflow_id", None)
+        execution_id = getattr(context, "execution_id", None)
+
+        if recorder is None:
+            return
+
+        if (
+            not isinstance(tenant, str)
+            or not isinstance(thread, str)
+            or not isinstance(responder, str)
+            or not isinstance(workflow_id, str)
+            or not isinstance(execution_id, str)
+        ):
+            return
+
+        if workspace is not None and not isinstance(workspace, str):
+            return
+
+        identity = InteractionIdentity(execution=execution_id)
+        try:
+            await recorder.record_step_started(
+                step=RecordedStep(
+                    id=identity.step_task(
+                        step_number=step.step_number,
+                        action_descriptor=step.action.to_description(),
+                    ),
+                    tenant=tenant,
+                    thread=thread,
+                    actor=responder,
+                    kind=TaskKind.AGENT,
+                    workspace=workspace,
+                    root=identity.task(),
+                    workflow=workflow_id,
+                    parent=identity.task(),
+                    reference=step.screen_hash,
+                    execution=identity.execution,
+                    objective=step.action.to_description(),
+                    origin=identity.message(name="request"),
+                    created=datetime.fromtimestamp(created, tz=timezone.utc),
+                    metadata={
+                        "step": step.step_number,
+                        "target": step.action.target,
+                        "action": step.action.action_type.value,
+                    },
+                )
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation step start recording failed",
+                error=str(exception),
+                step=step.step_number + 1,
+            )
+
     def __route_back_for_replan(self) -> IntentGraphState:
-        """Clear the stale ASK_USER step and signal SHOULD_RETRY so the planner re-decides."""
+        """
+        Clear the stale ASK_USER step and signal SHOULD_RETRY so the planner re-decides.
+        """
 
         result = cast(
             "IntentGraphState",
@@ -191,6 +279,7 @@ class ExecuteNode:
             },
         )
         self.__provider.persistence.persist(result=result)
+
         return result
 
     @staticmethod
@@ -200,6 +289,7 @@ class ExecuteNode:
         """
 
         execution = execution_result.swipe_execution
+
         if execution is None or execution.aborted_for is None or execution.effective:
             return None
 

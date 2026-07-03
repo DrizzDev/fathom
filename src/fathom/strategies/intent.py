@@ -17,6 +17,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import FinalizationTimeoutError, WorkflowCancelledError
 from fathom.core.services.decomposer import IntentDecomposer
+from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.checkpoint import CheckpointStore, LangGraphCheckpointer
 from fathom.interfaces.device import DevicePort
@@ -77,20 +78,31 @@ class IntentStrategy:
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         *,
+        tenant: str,
+        thread: str,
         use_xml: bool,
         max_steps: int,
+        requester: str,
+        responder: str,
         workflow_id: str,
+        execution_id: str,
         package_name: str,
+        workspace: Optional[str] = None,
+        recorder: Optional[ConversationRecorder] = None,
         realignment: Optional[RealignmentPolicy] = None,
-        runtime_configuration: Optional[RuntimeConfigLoader] = None,
         checkpoint_store: Optional[CheckpointStore] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
         self.__llm = llm
         self.__intent = intent
+
         self.__workflow_id = workflow_id
+        self.__execution_id = execution_id
 
         self.__graph: Any = None
         self.__step_results: List[StepResult] = []
+
+        self.__final_script: Optional[str] = None
         self.__completion_reason: Optional[str] = None
 
         self.__phase = PhaseAnnouncer(
@@ -121,19 +133,26 @@ class IntentStrategy:
 
         self.__graph_context = GraphContext(
             llm=llm,
+            tenant=tenant,
+            thread=thread,
             intent=intent,
             device=device,
             memory=memory,
             signal=signal,
             use_xml=use_xml,
             storage=storage,
+            recorder=recorder,
             phase=self.__phase,
             telemetry=telemetry,
             max_steps=max_steps,
+            requester=requester,
+            responder=responder,
+            workspace=workspace,
             summarizer=summarizer,
             perception=perception,
             workflow_id=workflow_id,
             realignment=realignment,
+            execution_id=execution_id,
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
@@ -700,6 +719,7 @@ class IntentStrategy:
         """
 
         is_empty_script = not bool(script_data and script_data.strip())
+        self.__final_script = None if is_empty_script else script_data
 
         if is_empty_script:
             logger.warning(
@@ -764,6 +784,14 @@ class IntentStrategy:
         """
 
         return self.__step_results
+
+    @property
+    def final_script(self) -> Optional[str]:
+        """
+        Return the final script content generated during run finalization.
+        """
+
+        return self.__final_script
 
     def get_progress(self) -> Dict[str, Any]:
         """

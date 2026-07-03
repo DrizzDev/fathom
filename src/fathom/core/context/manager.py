@@ -50,7 +50,7 @@ class ContextManager:
         self.__engine = engine or GitContextEngine()
 
         self.__summarizer = summarizer
-        self.__workflow_id = workflow_id or uuid.uuid4().hex[:8]
+        self.__workflow_id = workflow_id or uuid.uuid4().hex
 
         # Tier 1: Immutable Roadmap
         self.__roadmap_intent: str = "unknown"

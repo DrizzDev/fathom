@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
+
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.core.exceptions import DeviceConnectionClosedError
@@ -37,7 +39,10 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         client.is_closed = True
         client.request = AsyncMock()
 
-        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+        with patch(
+            "fathom.adapters.device.remote.adb.httpx.AsyncClient",
+            return_value=client,
+        ):
             adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
 
         with self.assertRaises(DeviceConnectionClosedError) as context:
@@ -63,7 +68,10 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
             side_effect=RuntimeError("Cannot send a request, as the client has been closed.")
         )
 
-        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+        with patch(
+            "fathom.adapters.device.remote.adb.httpx.AsyncClient",
+            return_value=client,
+        ):
             adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
 
         with self.assertRaises(DeviceConnectionClosedError) as context:
@@ -104,3 +112,47 @@ class ADBRemoteDeviceAdapterTest(unittest.IsolatedAsyncioTestCase):
         client_factory.assert_called_once()
         self.assertEqual(client_factory.call_args.kwargs["timeout"], 60.0)
         client.request.assert_awaited_once_with("POST", "snapshot", params={})
+
+    async def test_get_dimensions_retries_raw_read_timeout(self) -> None:
+        """
+        Raw httpx timeouts are normalized into retryable device errors before escaping.
+        """
+
+        response = Mock()
+        response.json.return_value = {"data": {"width": 1206, "height": 2622}}
+        response.raise_for_status = Mock()
+
+        client = Mock()
+        client.is_closed = False
+        client.request = AsyncMock(side_effect=(httpx.ReadTimeout("read timed out"), response))
+
+        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+            adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
+
+        dimensions = await adapter.get_dimensions()
+
+        self.assertEqual(dimensions, (1206, 2622))
+        self.assertEqual(client.request.await_count, 2)
+
+    async def test_get_dimensions_retries_server_error(self) -> None:
+        """
+        Remote 5xx responses are retried inside the transport adapter.
+        """
+
+        request = httpx.Request("POST", "https://example.test/action")
+        unavailable = httpx.Response(status_code=503, request=request)
+        response = Mock()
+        response.json.return_value = {"data": {"width": 1206, "height": 2622}}
+        response.raise_for_status = Mock()
+
+        client = Mock()
+        client.is_closed = False
+        client.request = AsyncMock(side_effect=(unavailable, response))
+
+        with patch("fathom.adapters.device.remote.adb.httpx.AsyncClient", return_value=client):
+            adapter = ADBRemoteDeviceAdapter(configuration=self.__build_configuration())
+
+        dimensions = await adapter.get_dimensions()
+
+        self.assertEqual(dimensions, (1206, 2622))
+        self.assertEqual(client.request.await_count, 2)

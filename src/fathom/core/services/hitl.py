@@ -94,10 +94,10 @@ class HITLService:
 
         if context:
             await self.__telemetry.info(
+                message="Got your message — picking up from here.",
                 step=step,
                 context=context,
                 type=FathomEvent.HITL_RECEIVED,
-                message="Got your message — picking up from here.",
             )
 
             try:
@@ -119,10 +119,10 @@ class HITLService:
             raise HITLNotAvailableError()
 
         await self.__telemetry.info(
+            message=f"Paused — need your input: {prompt}",
             step=step,
             original_action=prompt,
             type=FathomEvent.HITL_REQUESTED,
-            message=f"Paused — need your input: {prompt}",
         )
 
         try:
@@ -136,10 +136,10 @@ class HITLService:
         logger.info(f"Received HITL response: {response} from user")
 
         await self.__telemetry.info(
+            message="Got it — continuing.",
             step=step,
             context=response,
             type=FathomEvent.HITL_RECEIVED,
-            message="Got it — continuing.",
         )
 
         try:

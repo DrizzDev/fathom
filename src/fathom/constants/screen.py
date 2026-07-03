@@ -153,6 +153,33 @@ MIN_CHANGED_REGION_AREA_PX: int = 100
 DILATION_ITERATIONS: int = 2
 DILATION_KERNEL_SIZE: int = 10
 
+MEMORY_SUMMARY_RECENT_LIMIT: int = 10
+MEMORY_SUMMARY_HASH_PREVIEW_LENGTH: int = 12
+MEMORY_SUMMARY_UNKNOWN_ACTIVITY: str = "unknown"
+
+
+class KnowledgeKey(StrEnum):
+    """
+    Keys exposed by the memory port's knowledge dictionary.
+    """
+
+    SCREENS = "screens"
+    HASH = "hash"
+    ACTIVITY = "activity"
+    DESCRIPTION = "description"
+    EXPERIENCE_COUNT = "experience_count"
+
+
+class MemorySummaryKey(StrEnum):
+    """
+    Keys exposed by the runner's memory summary projection.
+    """
+
+    SCREENS = "screens"
+    TOTAL_SCREENS = "total_screens"
+    EXPERIENCE_COUNT = "experience_count"
+
+
 SSIM_K1: float = 0.01
 SSIM_K2: float = 0.03
 SSIM_GAUSSIAN_SIGMA: float = 1.5

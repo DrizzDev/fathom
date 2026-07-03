@@ -4,8 +4,6 @@ import unittest
 from typing import Tuple
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
-
 from fathom.constants import ActionType
 from fathom.constants.retries import RetryBranch, RetryKind, RetryMetadataField
 from fathom.constants.state import CompletionReason
@@ -15,6 +13,7 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.supervision import BlockReason
+from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
 
 
 class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):

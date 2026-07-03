@@ -5,9 +5,20 @@ from unittest.mock import patch
 
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
+from fathom.adapters.interaction.noop import NoopInteraction
+from fathom.adapters.interaction.orm.postgres import (
+    PostgresInteraction as RepositoryPostgresInteraction,
+)
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
-from fathom.runtime.factories import DeviceFactory
-from fathom.schemas.configuration import DeviceConfiguration, RemoteDeviceConfiguration
+from fathom.constants.storage import InteractionBackend
+from fathom.runtime.factories import DeviceFactory, InteractionFactory
+from fathom.schemas.configuration import (
+    DeviceConfiguration,
+    InteractionStorageConfiguration,
+    NoopInteractionConfiguration,
+    PostgresInteractionConfiguration,
+    RemoteDeviceConfiguration,
+)
 
 
 class DeviceFactoryTest(unittest.TestCase):
@@ -54,3 +65,69 @@ class DeviceFactoryTest(unittest.TestCase):
             )
 
         self.assertIsInstance(device, ADBRemoteDeviceAdapter)
+
+
+class InteractionFactoryTest(unittest.TestCase):
+    """
+    Verify backend dispatch and missing-configuration handling.
+    """
+
+    def test_noop_backend_returns_noop_adapter(self) -> None:
+        """
+        Selecting the noop backend returns the noop adapter.
+        """
+
+        configuration = InteractionStorageConfiguration(
+            backend=InteractionBackend.NOOP,
+            noop=NoopInteractionConfiguration(),
+        )
+        adapter = InteractionFactory().create(configuration=configuration)
+        self.assertIsInstance(adapter, NoopInteraction)
+
+    def test_postgres_backend_returns_repository_adapter_by_default(self) -> None:
+        """
+        Selecting Postgres defaults to the repository-backed adapter.
+        """
+
+        configuration = InteractionStorageConfiguration(
+            backend=InteractionBackend.POSTGRES,
+            postgres=PostgresInteractionConfiguration(
+                host="localhost",
+                user="fathom",
+                password="secret",
+                database="fathom",
+            ),
+        )
+        adapter = InteractionFactory().create(configuration=configuration)
+        self.assertIsInstance(adapter, RepositoryPostgresInteraction)
+
+    def test_envelope_rejects_postgres_backend_without_postgres_config(self) -> None:
+        """
+        Envelope construction enforces matching nested configuration.
+        """
+
+        with self.assertRaises(ValueError):
+            InteractionStorageConfiguration(backend=InteractionBackend.POSTGRES)
+
+    def test_envelope_rejects_noop_backend_without_noop_config(self) -> None:
+        """
+        Envelope construction enforces matching nested configuration.
+        """
+
+        with self.assertRaises(ValueError):
+            InteractionStorageConfiguration(backend=InteractionBackend.NOOP)
+
+    def test_postgres_pool_max_must_be_at_least_min(self) -> None:
+        """
+        Postgres pool sizing must be self-consistent at validation time.
+        """
+
+        with self.assertRaises(ValueError):
+            PostgresInteractionConfiguration(
+                host="x",
+                user="fathom",
+                password="secret",
+                database="fathom",
+                pool_min_size=10,
+                pool_max_size=5,
+            )

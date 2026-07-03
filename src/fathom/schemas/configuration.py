@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, ClassVar, Dict, Literal, Optional, Set, Type, Union
+from typing import Any, ClassVar, Dict, Literal, Optional, Set, Tuple, Type, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from fathom.constants.collaboration import JobKind
 from fathom.constants.llm import (
     DEFAULT_PRIORITY_FAILURE_THRESHOLD,
     DEFAULT_PRIORITY_LATENCY_THRESHOLD,
@@ -26,7 +27,32 @@ from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_TIMEOUT,
     DEFAULT_QUALIFIER_USE_CACHE,
 )
-from fathom.constants.storage import StorageBackend
+from fathom.constants.scheduler import (
+    JOB_SCHEDULER_DEFAULT_BATCH_SIZE,
+    JOB_SCHEDULER_DEFAULT_FAILURE_BACKOFF,
+    JOB_SCHEDULER_DEFAULT_LEASE,
+    JOB_SCHEDULER_DEFAULT_MAX_ATTEMPTS,
+    JOB_SCHEDULER_DEFAULT_POLL_INTERVAL,
+    JOB_SCHEDULER_DEFAULT_RECOVERY_INTERVAL,
+    JOB_SCHEDULER_DEFAULT_RETRY_BACKOFF,
+    JobSchedulerKind,
+)
+from fathom.constants.storage import (
+    INTERACTION_POSTGRES_APPLICATION_NAME,
+    INTERACTION_POSTGRES_DEFAULT_DATABASE,
+    INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
+    INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE,
+    INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE,
+    INTERACTION_POSTGRES_DEFAULT_PORT,
+    INTERACTION_POSTGRES_DEFAULT_SCHEMA,
+    INTERACTION_POSTGRES_DEFAULT_SSL,
+    INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
+    INTERACTION_SLOW_QUERY_THRESHOLD,
+    InteractionBackend,
+    PostgresMigrationMode,
+    PostgresSslMode,
+    StorageBackend,
+)
 from fathom.schemas.artifact import PipelineConfiguration
 from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.checkpoint import (
@@ -682,6 +708,7 @@ class ExecutionConfiguration(BaseModel):
     """
 
     max_retries: int = Field(default=3, description="Maximum retries for physical actions")
+
     stability_wait: float = Field(
         ge=0.0,
         le=1.5,
@@ -722,6 +749,170 @@ class TelemetryConfiguration(BaseModel):
     )
 
 
+class PostgresInteractionConfiguration(BaseModel):
+    """
+    Configuration for the Postgres interaction adapter.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dsn: Optional[str] = Field(default=None, min_length=1)
+    host: Optional[str] = Field(default=None, min_length=1)
+    port: int = Field(default=INTERACTION_POSTGRES_DEFAULT_PORT, ge=1, le=65535)
+
+    user: Optional[str] = Field(default=None, min_length=1)
+    password: Optional[str] = Field(default=None, min_length=1)
+
+    database: str = Field(default=INTERACTION_POSTGRES_DEFAULT_DATABASE, min_length=1)
+    schema_name: str = Field(default=INTERACTION_POSTGRES_DEFAULT_SCHEMA, min_length=1)
+
+    pool_min_size: int = Field(default=INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE, ge=1)
+    pool_max_size: int = Field(default=INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE, ge=1)
+    statement_timeout: int = Field(
+        ge=0,
+        default=INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
+    )
+
+    application_name: str = Field(default=INTERACTION_POSTGRES_APPLICATION_NAME, min_length=1)
+    ssl: PostgresSslMode = Field(default=INTERACTION_POSTGRES_DEFAULT_SSL)
+    migration_mode: PostgresMigrationMode = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE
+    )
+
+    slow_query_threshold: int = Field(
+        default=INTERACTION_SLOW_QUERY_THRESHOLD,
+        ge=0,
+        description="Slow-query log threshold, in milliseconds.",
+    )
+
+    @model_validator(mode="after")
+    def __validate_pool_sizes(self) -> "PostgresInteractionConfiguration":
+        """
+        Ensure the maximum pool size is not smaller than the minimum.
+        """
+
+        if self.pool_max_size < self.pool_min_size:
+            raise ValueError("pool_max_size must be greater than or equal to pool_min_size")
+
+        return self
+
+    @model_validator(mode="after")
+    def __validate_connection_mode(self) -> "PostgresInteractionConfiguration":
+        """
+        Require a DSN or the discrete host, user, and password fields.
+        """
+
+        if self.dsn is not None:
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("host", self.host),
+                ("user", self.user),
+                ("password", self.password),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "PostgresInteractionConfiguration requires either `dsn` or all of "
+                f"`host`, `user`, `password`; missing: {', '.join(missing)}."
+            )
+
+        return self
+
+
+class NoopInteractionConfiguration(BaseModel):
+    """
+    Configuration for the noop interaction adapter.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class InteractionStorageConfiguration(BaseModel):
+    """
+    Selects the interaction storage backend and its matching configuration.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    backend: InteractionBackend = Field(description="Selected interaction backend")
+
+    noop: Optional[NoopInteractionConfiguration] = None
+    postgres: Optional[PostgresInteractionConfiguration] = None
+
+    @model_validator(mode="after")
+    def __validate_backend(self) -> "InteractionStorageConfiguration":
+        """
+        Require the nested configuration that matches the selected backend.
+        """
+
+        if self.backend == InteractionBackend.POSTGRES and self.postgres is None:
+            raise ValueError("backend=postgres requires postgres configuration")
+
+        if self.backend == InteractionBackend.NOOP and self.noop is None:
+            raise ValueError("backend=noop requires noop configuration")
+
+        return self
+
+
+class InProcessJobSchedulerConfiguration(BaseModel):
+    """
+    Configuration for the in-process durable job scheduler.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner: str = Field(min_length=1)
+    tenant: str = Field(min_length=1)
+    kinds: Tuple[JobKind, ...] = Field(default_factory=tuple)
+
+    lease: int = Field(default=JOB_SCHEDULER_DEFAULT_LEASE, gt=0)
+    batch_size: int = Field(default=JOB_SCHEDULER_DEFAULT_BATCH_SIZE, gt=0)
+    poll_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_POLL_INTERVAL, ge=0)
+
+    max_attempts: int = Field(default=JOB_SCHEDULER_DEFAULT_MAX_ATTEMPTS, gt=0)
+    retry_backoff: int = Field(default=JOB_SCHEDULER_DEFAULT_RETRY_BACKOFF, ge=0)
+    failure_backoff: int = Field(default=JOB_SCHEDULER_DEFAULT_FAILURE_BACKOFF, ge=0)
+    recovery_interval: int = Field(default=JOB_SCHEDULER_DEFAULT_RECOVERY_INTERVAL, ge=0)
+
+
+class NoopJobSchedulerConfiguration(BaseModel):
+    """
+    Configuration for disabled durable job dispatch.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class JobSchedulerConfiguration(BaseModel):
+    """
+    Selects the durable job scheduler backend and its matching configuration.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    noop: Optional[NoopJobSchedulerConfiguration] = None
+    inprocess: Optional[InProcessJobSchedulerConfiguration] = None
+    kind: JobSchedulerKind = Field(description="Selected job scheduler kind")
+
+    @model_validator(mode="after")
+    def __validate_kind(self) -> "JobSchedulerConfiguration":
+        """
+        Require the nested configuration that matches the selected scheduler kind.
+        """
+
+        if self.kind == JobSchedulerKind.IN_PROCESS and self.inprocess is None:
+            raise ValueError("kind=inprocess requires inprocess configuration")
+
+        if self.kind == JobSchedulerKind.NOOP and self.noop is None:
+            raise ValueError("kind=noop requires noop configuration")
+
+        return self
+
+
 class FathomConfiguration(BaseModel):
     """
     Root configuration container for the Fathom runtime.
@@ -737,5 +928,8 @@ class FathomConfiguration(BaseModel):
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
     intent: IntentConfiguration = Field(default_factory=IntentConfiguration)
-    exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
     qualifier: QualifierConfiguration = Field(default_factory=QualifierConfiguration)
+    exploration: ExplorationConfiguration = Field(default_factory=ExplorationConfiguration)
+
+    scheduler: Optional[JobSchedulerConfiguration] = None
+    interaction: Optional[InteractionStorageConfiguration] = None

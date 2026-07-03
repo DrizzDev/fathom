@@ -5,13 +5,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders.agent import AgentFixtures
-
 from fathom.constants import SignalType
 from fathom.core.agent.state import AgentState
 from fathom.runtime.executor import GraphExecutor
 from fathom.schemas.abort import AbortDecision
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from tests.builders.agent import AgentFixtures
 
 
 class GraphExecutorRealignmentTest(unittest.IsolatedAsyncioTestCase):

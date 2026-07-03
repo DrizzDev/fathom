@@ -4,6 +4,7 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock
 
+from fathom.adapters.interaction.noop import NoopInteraction
 from fathom.constants.storage import StorageBackend
 from fathom.core.services.qualifier import (
     LLMIntentQualifier,
@@ -42,6 +43,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
             .with_llm(port=MagicMock(spec=LLMPort))
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
         )
 
     def test_default_qualifier_when_enabled_is_llm_backed_with_supplied_llm(self) -> None:
@@ -55,6 +57,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
             .with_llm(port=llm)
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
             .build()
         )
         # The runner is the only public surface; reach in via name-mangled attribute to assert
@@ -74,6 +77,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
             .with_config(configuration=configuration)
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
             .build()
         )
         installed = runner._FathomRunner__qualifier  # type: ignore[attr-defined]
@@ -104,6 +108,7 @@ class FathomBuilderQualifierDefaultTest(unittest.TestCase):
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
             .with_qualifier_config(configuration=custom)
+            .with_interaction(port=NoopInteraction())
             .build()
         )
         installed_config = runner._FathomRunner__config.qualifier  # type: ignore[attr-defined]
@@ -172,6 +177,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
             .with_assembly(assembly=self.__assembly(), llm_factory=factory)
+            .with_interaction(port=NoopInteraction())
             .build()
         )
 
@@ -204,6 +210,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             .with_llm(port=planner)
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
             .build()
         )
 
@@ -227,6 +234,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             .with_perception(port=MagicMock(spec=PerceptionPort))
             .with_assembly(assembly=self.__assembly(), llm_factory=factory)
             .with_qualifier(port=explicit)
+            .with_interaction(port=NoopInteraction())
             .build()
         )
 
@@ -253,6 +261,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
             .with_assembly(assembly=self.__assembly(), llm_factory=factory)
+            .with_interaction(port=NoopInteraction())
             .build()
         )
 
@@ -275,7 +284,9 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             port=MagicMock(spec=DevicePort)
         ).with_perception(port=MagicMock(spec=PerceptionPort)).with_qualifier_config(
             configuration=custom
-        ).with_assembly(assembly=self.__assembly(), llm_factory=factory).build()
+        ).with_assembly(assembly=self.__assembly(), llm_factory=factory).with_interaction(
+            port=NoopInteraction()
+        ).build()
 
         captured = factory.captured[0]
         self.assertEqual(captured.model, "gemini-2.5-flash")
@@ -306,6 +317,7 @@ class FathomBuilderStorageUnificationTest(unittest.TestCase):
             .with_llm(port=MagicMock(spec=LLMPort))
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
         )
 
     def test_with_storage_propagates_configuration_into_runner_config(self) -> None:

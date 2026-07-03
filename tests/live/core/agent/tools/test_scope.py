@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Final, FrozenSet
 
 import pytest
-from tests.fixtures.intents import VERIFY_TOOLS, IntentCorpus
 
 from fathom.constants.tools import ToolName, TurnMode
 from fathom.core.agent.tools.registry import DEFAULT_TOOL_POLICIES
@@ -13,6 +12,7 @@ from fathom.interfaces.llm import LLMPort
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.schemas.tools import ToolPolicyContext
+from tests.fixtures.intents import VERIFY_TOOLS, IntentCorpus
 
 
 def _tool_set_for(*, sub_goal: SubGoal, hitl: bool) -> FrozenSet[ToolName]:

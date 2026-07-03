@@ -10,6 +10,7 @@ from fathom.schemas.run import (
     InteractionConfiguration,
     MemoryConfiguration,
     ModelSelectionConfiguration,
+    Principal,
     RealignmentPolicy,
     ResourceConfiguration,
     RunMetadata,
@@ -23,12 +24,25 @@ class TestRunRequest(unittest.TestCase):
     Unit tests for the canonical run request contract.
     """
 
+    def __principal(self) -> Principal:
+        """
+        Build a deterministic Principal for tests.
+        """
+
+        return Principal(
+            tenant="tenant-1",
+            operator="user-1",
+            agent="agent:fathom",
+            conversation="conversation-123",
+        )
+
     def test_intent_run_request_uses_canonical_nested_sections(self) -> None:
         """
         Validate the canonical host-agnostic run request shape.
         """
 
         request = IntentRunRequest(
+            principal=self.__principal(),
             objective=IntentObjectiveConfiguration(
                 max_steps=25,
                 use_xml=True,
@@ -42,7 +56,6 @@ class TestRunRequest(unittest.TestCase):
                 signal_type=SignalAdapterType.INTERACTIVE,
             ),
             memory=MemoryConfiguration(
-                conversation_id="conversation-123",
                 context_scope=ContextScope.CONVERSATION,
             ),
             resources=ResourceConfiguration(
@@ -111,7 +124,33 @@ class TestRunRequest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             IntentRunRequest(
+                principal=self.__principal(),
                 resources=ResourceConfiguration(targets=[]),
+                objective=IntentObjectiveConfiguration(intent="Open Airbnb"),
+            )
+
+    def test_run_request_requires_principal(self) -> None:
+        """
+        Validate that canonical requests reject missing identity.
+        """
+
+        with self.assertRaises(ValueError):
+            IntentRunRequest(
+                resources=ResourceConfiguration(
+                    targets=[
+                        TargetConfiguration(
+                            device_configuration={
+                                "type": "REMOTE",
+                                "platform": "ANDROID",
+                                "remote": {
+                                    "session_id": "s",
+                                    "execution_id": "e",
+                                    "provider_url": "https://example",
+                                },
+                            }
+                        )
+                    ]
+                ),
                 objective=IntentObjectiveConfiguration(intent="Open Airbnb"),
             )
 
@@ -121,6 +160,7 @@ class TestRunRequest(unittest.TestCase):
         """
 
         request = ExplorationRunRequest(
+            principal=self.__principal(),
             objective=ExplorationObjectiveConfiguration(max_steps=30),
             resources=ResourceConfiguration(
                 targets=[

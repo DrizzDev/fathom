@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import signal
 import time
 from logging import getLogger
@@ -27,12 +26,14 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
+from fathom.runtime.cleanup import ResourceCloser
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
     RuntimeDeviceDefaultsResolverPort,
 )
 from fathom.runtime.factories import (
     DeviceFactory,
+    InteractionFactory,
     LLMFactory,
     PerceptionFactory,
     SignalFactory,
@@ -162,6 +163,12 @@ class CommandExecutor:
         device_configuration = self.__resolve_device_configuration(request=request)
         llm_configuration = assembly_builder.build_planner_model_configuration(request=request)
         telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
+        interaction_storage_configuration = (
+            assembly_builder.build_interaction_storage_configuration(
+                request=request,
+                path_manager=path_manager,
+            )
+        )
 
         partial_resources: List[Any] = []
 
@@ -185,6 +192,13 @@ class CommandExecutor:
             )
             partial_resources.append(telemetry_adapter)
 
+            interaction_adapter = InteractionFactory().create(
+                configuration=interaction_storage_configuration,
+            )
+            partial_resources.append(interaction_adapter)
+
+            await interaction_adapter.initialize()
+
             builder = (
                 Fathom.builder(path_manager=path_manager)
                 .with_llm(port=llm_adapter)
@@ -192,6 +206,7 @@ class CommandExecutor:
                 .with_signal(port=signal_adapter)
                 .with_telemetry(port=telemetry_adapter)
                 .with_perception(port=perception_adapter)
+                .with_interaction(port=interaction_adapter)
                 .with_runtime_configuration(loader=RuntimeConfigLoader(settings=self.__settings))
                 .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
             )
@@ -217,31 +232,12 @@ class CommandExecutor:
     async def __drain_partial_resources(*, resources: list[Any]) -> None:
         """
         Best-effort drain of every adapter created during a failed build.
-
-        Adapters expose cleanup() (async) or close() (async or sync) depending
-        on the kind. Probe for each, isolate per-resource errors, drain in
-        reverse-creation order.
         """
 
-        for resource in reversed(resources):
-            try:
-                cleanup = getattr(resource, "cleanup", None)
-                if cleanup is not None:
-                    result = cleanup()
-                    if inspect.isawaitable(result):
-                        await result
-                    continue
-
-                close = getattr(resource, "close", None)
-                if close is None:
-                    continue
-
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-
-            except Exception as exception:
-                logger.warning("CLI partial-build resource cleanup failed: %s", exception)
+        await ResourceCloser(
+            logger=logger,
+            message="CLI partial-build resource cleanup failed",
+        ).drain(resources=resources)
 
     async def __run_intent_workflow(self, *, request: IntentRunRequest) -> IntentResult:
         """
@@ -267,11 +263,15 @@ class CommandExecutor:
             raise FathomError("Runner is not initialized")
 
         return await self.__runner.run_intent(
+            principal=request.principal,
             intent=request.objective.intent,
             use_xml=request.objective.use_xml,
             max_steps=request.objective.max_steps,
             request_id=request.runtime.session_id,
+            context_scope=request.memory.context_scope,
             realignment=request.interaction.realignment,
+            package_name=request.objective.package_name,
+            execution_id=request.runtime.execution_id,
         )
 
     def __print_execution_summary(self, *, result: IntentResult) -> None:
@@ -456,8 +456,10 @@ class CommandExecutor:
 
             with console.status("[bold green]Exploring...[/bold green]", spinner="earth"):
                 result = await self.__runner.run_exploration(
+                    principal=request.principal,
                     max_steps=request.objective.max_steps,
                     request_id=request.runtime.session_id,
+                    execution_id=request.runtime.execution_id,
                 )
 
             table = Table(title="Exploration Results", border_style="green")
@@ -475,6 +477,7 @@ class CommandExecutor:
         except (asyncio.CancelledError, KeyboardInterrupt):
             console.print("\n[bold red]Exploration cancelled by user.[/bold red]")
             return 1
+
         except Exception as exception:
             logger.exception("Unexpected exploration error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")

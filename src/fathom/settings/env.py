@@ -12,6 +12,19 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_SLOW_THRESHOLD,
     DEFAULT_PRIORITY_WINDOW,
 )
+from fathom.constants.storage import (
+    INTERACTION_DEFAULT_BACKEND,
+    INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
+    INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE,
+    INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE,
+    INTERACTION_POSTGRES_DEFAULT_PORT,
+    INTERACTION_POSTGRES_DEFAULT_SCHEMA,
+    INTERACTION_POSTGRES_DEFAULT_SSL,
+    INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
+    InteractionBackend,
+    PostgresMigrationMode,
+    PostgresSslMode,
+)
 
 # Calculate project root from this file's location
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -124,6 +137,104 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
+    # Interaction storage tunables
+    interaction_backend: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "FATHOM_INTERACTION_BACKEND",
+            "DRIZZ_FATHOM_INTERACTION_BACKEND",
+        ),
+    )
+    interaction_postgres_dsn: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_DSN",
+            "FATHOM_INTERACTION_POSTGRES_DSN",
+        ),
+    )
+    interaction_postgres_host: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_HOST",
+            "FATHOM_INTERACTION_POSTGRES_HOST",
+        ),
+    )
+    interaction_postgres_port: int = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_PORT,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_PORT",
+            "FATHOM_INTERACTION_POSTGRES_PORT",
+        ),
+    )
+    interaction_postgres_user: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_USER",
+            "FATHOM_INTERACTION_POSTGRES_USER",
+        ),
+    )
+    interaction_postgres_password: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_PASSWORD",
+            "FATHOM_INTERACTION_POSTGRES_PASSWORD",
+        ),
+    )
+    interaction_postgres_database: str = Field(
+        default="fathom",
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_DATABASE",
+            "FATHOM_INTERACTION_POSTGRES_DATABASE",
+        ),
+    )
+    interaction_postgres_schema: str = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_SCHEMA,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_SCHEMA",
+            "FATHOM_INTERACTION_POSTGRES_SCHEMA",
+        ),
+    )
+    interaction_postgres_pool_min_size: int = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_POOL_MIN_SIZE,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_POOL_MIN_SIZE",
+            "FATHOM_INTERACTION_POSTGRES_POOL_MIN_SIZE",
+        ),
+    )
+    interaction_postgres_pool_max_size: int = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_POOL_MAX_SIZE,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_POOL_MAX_SIZE",
+            "FATHOM_INTERACTION_POSTGRES_POOL_MAX_SIZE",
+        ),
+    )
+    interaction_postgres_statement_timeout: int = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_STATEMENT_TIMEOUT,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_STATEMENT_TIMEOUT",
+            "FATHOM_INTERACTION_POSTGRES_STATEMENT_TIMEOUT",
+        ),
+    )
+    interaction_postgres_ssl: PostgresSslMode = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_SSL,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_SSL",
+            "FATHOM_INTERACTION_POSTGRES_SSL",
+        ),
+    )
+    interaction_postgres_migration_mode: PostgresMigrationMode = Field(
+        default=INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
+        validation_alias=AliasChoices(
+            "DRIZZ_FATHOM_POSTGRES_MIGRATION_MODE",
+            "FATHOM_INTERACTION_POSTGRES_MIGRATION_MODE",
+        ),
+    )
+
+    # CLI principal fallbacks
+    cli_tenant: Optional[str] = Field(default=None, alias="FATHOM_CLI_TENANT")
+    cli_operator: Optional[str] = Field(default=None, alias="FATHOM_CLI_OPERATOR")
+    cli_workspace: Optional[str] = Field(default=None, alias="FATHOM_CLI_WORKSPACE")
+
     # Per-workflow run-log directory (mirror of the structured log stream written when --log-file is passed on the CLI).
     # Lives under assets/ so artifact retention and cleanup share a single root.
     run_logs_path: Path = Field(
@@ -170,6 +281,29 @@ class FathomSettings(BaseSettings):
     @property
     def google_credentials_dict(self) -> Optional[Dict[str, Any]]:
         return self.google_credentials_json
+
+    @property
+    def resolved_interaction_backend(self) -> str:
+        """
+        Resolve the durable interaction backend from explicit or detected config.
+        """
+
+        if self.interaction_backend:
+            return self.interaction_backend
+
+        if self.interaction_postgres_dsn:
+            return InteractionBackend.POSTGRES.value
+
+        if all(
+            (
+                self.interaction_postgres_host,
+                self.interaction_postgres_user,
+                self.interaction_postgres_password,
+            )
+        ):
+            return InteractionBackend.POSTGRES.value
+
+        return INTERACTION_DEFAULT_BACKEND.value
 
     # Environment file support
     model_config = SettingsConfigDict(

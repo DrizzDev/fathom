@@ -91,10 +91,10 @@ class PhaseAnnouncer:
         await self.__close()
 
         await self.__telemetry.info(
+            self.__message.intent.derived,
             intent=intent,
             sub_goals=sub_goals,
             type=FathomEvent.PLAN_SYNTHESIZED,
-            message=self.__message.intent.derived,
         )
 
     async def pause(self) -> None:
@@ -203,9 +203,9 @@ class PhaseAnnouncer:
             for _ in range(budget.limit):
                 await asyncio.sleep(budget.threshold)
                 await self.__telemetry.info(
+                    budget.message,
                     intent=intent,
                     phase=kind.value,
-                    message=budget.message,
                     type=FathomEvent.PHASE_HEARTBEAT,
                 )
         except asyncio.CancelledError:

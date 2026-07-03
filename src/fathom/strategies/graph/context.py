@@ -25,6 +25,7 @@ from fathom.core.perception.observation import ScreenObservationService
 from fathom.core.runtime import RuntimeEventEmitter
 from fathom.core.services.abort import AbortDetectorFactory
 from fathom.core.services.action import ActionExecutor
+from fathom.core.services.artifacts import ArtifactCatalog
 from fathom.core.services.audit import AuditService
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.exporter import ScriptExporter
@@ -32,6 +33,7 @@ from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
 from fathom.core.services.perception import PerceptionService
+from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
@@ -91,11 +93,18 @@ class GraphContext:
         perception_configuration: PerceptionConfiguration,
         use_xml: bool,
         max_steps: int,
+        execution_id: str,
         workflow_id: str,
         package_name: str,
+        tenant: str,
+        thread: str,
+        requester: str,
+        responder: str,
+        workspace: Optional[str] = None,
         ocr: Optional[OcrPort] = None,
         reasoner: Optional[Reasoner] = None,
         trace: Optional[TraceService] = None,
+        recorder: Optional[ConversationRecorder] = None,
         planner: Optional[StepPlanner] = None,
         auditor: Optional[AuditService] = None,
         vision: Optional[VisionService] = None,
@@ -147,7 +156,13 @@ class GraphContext:
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
+        self.__execution_id = execution_id
         self.__workflow_id = workflow_id
+        self.__tenant = tenant
+        self.__thread = thread
+        self.__workspace = workspace
+        self.__requester = requester
+        self.__responder = responder
         self.__package_name = package_name
         self.__configuration = configuration
         self.__perception_configuration = perception_configuration
@@ -177,6 +192,7 @@ class GraphContext:
         )
 
         self.__signal = signal
+        self.__recorder = recorder
         self.__hitl = HITLService(
             phase=phase,
             signal=signal,
@@ -245,6 +261,7 @@ class GraphContext:
             ledger=memory,
             workflow_id=workflow_id,
         )
+        self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
 
         self.__ocr = ocr or NoopOcr()
         self.__icons = icons or NoopIconDetector()
@@ -517,12 +534,76 @@ class GraphContext:
         return self.__workflow_id
 
     @property
+    def execution_id(self) -> str:
+        """
+        Returns the conversation ledger execution identifier.
+        """
+
+        return self.__execution_id
+
+    @property
+    def tenant(self) -> str:
+        """
+        Returns the tenant that owns recorded conversation data.
+        """
+
+        return self.__tenant
+
+    @property
+    def thread(self) -> str:
+        """
+        Returns the conversation thread identifier for recording.
+        """
+
+        return self.__thread
+
+    @property
+    def workspace(self) -> Optional[str]:
+        """
+        Returns the optional workspace boundary for recording.
+        """
+
+        return self.__workspace
+
+    @property
+    def requester(self) -> str:
+        """
+        Returns the actor that requested the workflow.
+        """
+
+        return self.__requester
+
+    @property
+    def responder(self) -> str:
+        """
+        Returns the actor that responds for the workflow.
+        """
+
+        return self.__responder
+
+    @property
+    def recorder(self) -> Optional[ConversationRecorder]:
+        """
+        Returns the optional conversation recorder.
+        """
+
+        return self.__recorder
+
+    @property
     def package_name(self) -> str:
         """
         Returns the set package name.
         """
 
         return self.__package_name
+
+    @property
+    def artifact_catalog(self) -> ArtifactCatalog:
+        """
+        Returns the artifact catalog bound to the shared path manager.
+        """
+
+        return self.__artifact_catalog
 
     @property
     def realignment(self) -> RealignmentPolicy:

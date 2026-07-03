@@ -7,6 +7,10 @@ from fathom.adapters.device.local.adb import ADBDevice
 from fathom.adapters.device.local.ios import IOSDevice
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
+from fathom.adapters.interaction.noop import NoopInteraction
+from fathom.adapters.interaction.orm.postgres import (
+    PostgresInteraction as RepositoryPostgresInteraction,
+)
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
@@ -14,6 +18,8 @@ from fathom.adapters.perception.ios import (
     IOSNativePerceptionAdapter,
 )
 from fathom.adapters.perception.remote import RemotePerceptionAdapter
+from fathom.adapters.scheduler.inprocess import InProcessJobScheduler
+from fathom.adapters.scheduler.noop import NoopJobScheduler
 from fathom.adapters.signal.interactive import InteractiveSignal
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.signal.socket import SocketSignal
@@ -26,23 +32,35 @@ from fathom.adapters.telemetry.structlog import StructlogAdapter
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.constants.run import SignalAdapterType
+from fathom.constants.scheduler import JobSchedulerKind
+from fathom.constants.storage import InteractionBackend
+from fathom.core.exceptions import StorageConfigurationError
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.factory import (
     DeviceFactoryPort,
+    InteractionFactoryPort,
+    JobSchedulerFactoryPort,
     LLMFactoryPort,
     PerceptionFactoryPort,
     SignalFactoryPort,
     TelemetryFactoryPort,
 )
+from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.scheduler import JobSchedulerPort
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.configuration import (
     DeviceConfiguration,
+    InProcessJobSchedulerConfiguration,
+    InteractionStorageConfiguration,
+    JobSchedulerConfiguration,
     LLMConfiguration,
+    NoopJobSchedulerConfiguration,
+    PostgresInteractionConfiguration,
     StorageConfiguration,
     TelemetryConfiguration,
 )
@@ -227,3 +245,110 @@ class StorageFactory:
             return active_storages[0]
 
         return CompositeStorage(storages=active_storages)
+
+
+class InteractionFactory(InteractionFactoryPort):
+    """
+    Factory dispatching interaction-storage backends from typed configuration.
+
+    Mirrors DeviceFactory: one backend enum, one nested config per backend,
+    factory raises a typed StorageConfigurationError when the matching nested
+    configuration is missing. The Pydantic envelope already validates this at
+    construction time; the factory checks again so direct callers get the
+    same error path as wire-validated requests.
+    """
+
+    def create(self, *, configuration: InteractionStorageConfiguration) -> InteractionPort:
+        """
+        Build the interaction-storage adapter for the selected backend.
+        """
+
+        if configuration.backend == InteractionBackend.POSTGRES:
+            return self.__create_postgres(configuration=configuration.postgres)
+
+        if configuration.backend == InteractionBackend.NOOP:
+            return self.__create_noop()
+
+        raise NotImplementedError(
+            f"Interaction backend {configuration.backend.value} is not implemented"
+        )
+
+    def __create_postgres(
+        self, *, configuration: Optional[PostgresInteractionConfiguration]
+    ) -> InteractionPort:
+        """
+        Build a Postgres-backed interaction adapter.
+        """
+
+        if configuration is None:
+            raise StorageConfigurationError(
+                backend=InteractionBackend.POSTGRES.value,
+                message="Postgres interaction storage requires a configuration",
+            )
+        return RepositoryPostgresInteraction(configuration=configuration)
+
+    def __create_noop(self) -> InteractionPort:
+        """
+        Build a noop interaction adapter that swallows writes.
+        """
+
+        return NoopInteraction()
+
+
+class JobSchedulerFactory(JobSchedulerFactoryPort):
+    """
+    Factory dispatching durable-job schedulers from typed configuration.
+    """
+
+    def create(
+        self,
+        *,
+        interaction: InteractionPort,
+        configuration: JobSchedulerConfiguration,
+    ) -> JobSchedulerPort:
+        """
+        Build the scheduler adapter for the selected dispatcher kind.
+        """
+
+        if configuration.kind == JobSchedulerKind.IN_PROCESS:
+            return self.__create_inprocess(
+                interaction=interaction,
+                configuration=configuration.inprocess,
+            )
+        if configuration.kind == JobSchedulerKind.NOOP:
+            return self.__create_noop(configuration=configuration.noop)
+
+        raise NotImplementedError(f"Job scheduler {configuration.kind.value} is not implemented")
+
+    def __create_inprocess(
+        self,
+        *,
+        interaction: InteractionPort,
+        configuration: Optional[InProcessJobSchedulerConfiguration],
+    ) -> JobSchedulerPort:
+        """
+        Build an in-process durable-job scheduler.
+        """
+
+        if configuration is None:
+            raise StorageConfigurationError(
+                backend=JobSchedulerKind.IN_PROCESS.value,
+                message="In-process job scheduler requires a configuration",
+            )
+
+        return InProcessJobScheduler(interaction=interaction, configuration=configuration)
+
+    def __create_noop(
+        self, *, configuration: Optional[NoopJobSchedulerConfiguration]
+    ) -> JobSchedulerPort:
+        """
+        Build a noop scheduler adapter.
+        """
+
+        if configuration is None:
+            raise StorageConfigurationError(
+                backend=JobSchedulerKind.NOOP.value,
+                message="Noop job scheduler requires a configuration",
+            )
+
+        return NoopJobScheduler()

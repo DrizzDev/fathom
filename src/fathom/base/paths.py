@@ -170,3 +170,10 @@ class SharedPathManager:
         identifier = workflow_id.strip() or "default" if workflow_id else "default"
 
         return self.get_checkpoint_directory() / f"checkpoints__{identifier}.db"
+
+    def get_interaction_db_path(self) -> Path:
+        """
+        Path to the local Fathom conversation database.
+        """
+
+        return self.memory_path / "fathom.db"

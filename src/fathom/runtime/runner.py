@@ -1,22 +1,53 @@
 from __future__ import annotations
 
+import asyncio
 import time
-import uuid
+from datetime import datetime, timezone
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    cast,
+    runtime_checkable,
+)
 
+from pydantic import JsonValue
+
+from fathom.adapters.signing.noop import NoopSigner
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
+from fathom.constants.collaboration import (
+    ActorKind,
+    ArtifactBackend,
+    TaskCode,
+)
 from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
+from fathom.constants.screen import (
+    MEMORY_SUMMARY_HASH_PREVIEW_LENGTH,
+    MEMORY_SUMMARY_RECENT_LIMIT,
+    MEMORY_SUMMARY_UNKNOWN_ACTIVITY,
+    KnowledgeKey,
+    MemorySummaryKey,
+)
 from fathom.constants.state import CompletionReason
+from fathom.conversation.identity import InteractionIdentity
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
+from fathom.core.exceptions import IdentityError, InteractionError
 from fathom.core.execution.engine import ExecutionEngine
+from fathom.core.services.artifacts import ArtifactCatalog
+from fathom.core.services.conversation import ConversationService, Ports
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
+from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.knowledge import KnowledgePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -28,15 +59,62 @@ from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.runtime.inspection import RuntimeConfigurationInspector
 from fathom.schemas.configuration import FathomConfiguration
+from fathom.schemas.conversation import ActorInput
 from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.qualification import QualificationVerdict
+from fathom.schemas.recording import Completion, Handle, Output, Run, ScriptOutput
 from fathom.schemas.results import ExplorationResult, IntentResult
-from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.run import Principal, RealignmentPolicy
 from fathom.strategies.exploration import ExplorationStrategy
 from fathom.strategies.intent import IntentStrategy
 from fathom.version import VersionInfo
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 logger = getLogger(__name__)
+
+
+@runtime_checkable
+class TelemetryIdentityUpdater(Protocol):
+    """
+    Optional telemetry capability for workflow-scoped routing identity.
+    """
+
+    def update_identity(self, *, identity: str) -> None:
+        """
+        Update telemetry routing identity for the active workflow.
+        """
+
+        ...
+
+
+@runtime_checkable
+class CancellableStrategy(Protocol):
+    """
+    Optional strategy capability for cooperative cancellation.
+    """
+
+    def cancel(self) -> None:
+        """
+        Request cooperative cancellation from the strategy.
+        """
+
+        ...
+
+
+@runtime_checkable
+class AsyncCloser(Protocol):
+    """
+    Optional adapter capability for releasing async transport resources.
+    """
+
+    async def close(self) -> None:
+        """
+        Close adapter-owned transport resources.
+        """
+
+        ...
 
 
 class FathomRunner:
@@ -58,47 +136,23 @@ class FathomRunner:
         *,
         llm: LLMPort,
         device: DevicePort,
-        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
         knowledge: KnowledgePort,
         telemetry: TelemetryPort,
+        perception: PerceptionPort,
         summarizer: SummarizationPort,
         qualifier: IntentQualifierPort,
         path_manager: SharedPathManager,
         config: Optional[FathomConfiguration] = None,
+        interaction: Optional[InteractionPort] = None,
         realignment: Optional[RealignmentPolicy] = None,
-        runtime_configuration: Optional[RuntimeConfigLoader] = None,
         owned_resources: Optional[List[LLMPort]] = None,
+        runtime_configuration: Optional[RuntimeConfigLoader] = None,
     ) -> None:
         """
         Initialize runner with all configured ports.
-
-        ``runtime_configuration`` is the application-layer translator that the
-        caller pre-bound to its own :class:`FathomSettings` (in the
-        Temporal worker registry, service bridges, the CLI, ...).
-        It is propagated to :class:`IntentStrategy` and
-        :class:`ExplorationStrategy` so :class:`AdapterAssembly`
-        observes the same settings the caller built — not a fresh
-        ``FathomSettings()`` that only resolves fathom's own env
-        aliases and silently misses deployment-prefixed names like
-        ``DRIZZ_GOOGLE_APPLICATION_CREDENTIALS_JSON``.
-
-        ``owned_resources``: optional list of LLM ports the runner takes
-        ownership of for cleanup purposes. Used by SDK callers that construct
-        the runner via FathomBuilder with .with_assembly(...) — the builder
-        creates a dedicated qualifier LLM internally and hands it to the
-        runner so the caller doesn't have to track it separately. Temporal /
-        CLI callers use RunnerComposition at the composition root instead and
-        pass nothing here.
-
-        Hexagonal note: we deliberately accept the *loader*
-        (Application layer) for runtime_configuration, never the raw
-        :class:`FathomSettings` (Infrastructure). The loader keeps the
-        settings as a private reference; nothing in the runner /
-        strategy can hand the credentials material to a logger or out
-        as a Temporal activity argument.
         """
 
         self.__llm = llm
@@ -111,12 +165,21 @@ class FathomRunner:
         self.__signal = signal
         self.__storage = storage
         self.__telemetry = telemetry
-        self.__qualifier = qualifier
         self.__summarizer = summarizer
+
+        self.__qualifier = qualifier
+        self.__interaction = interaction
+
         self.__runtime_configuration = runtime_configuration
+        self.__recorder = self.__recorder_for(interaction=interaction)
+
         self.__path_manager = path_manager
+
+        self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
+
         self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
+
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
         self.__phase = PhaseAnnouncer(
             telemetry=telemetry,
@@ -127,11 +190,11 @@ class FathomRunner:
         self.__engine = ExecutionEngine(
             llm=llm,
             device=device,
-            perception=perception,
             memory=memory,
             signal=signal,
             storage=storage,
             telemetry=telemetry,
+            perception=perception,
             path_manager=path_manager,
         )
         self.__context_manager: Optional[ContextManager] = None
@@ -143,7 +206,7 @@ class FathomRunner:
 
     def __log_configuration_summary(self) -> None:
         """
-        Emit a single structured log line summarizing the wired configuration.
+        Emit one structured log line summarizing the runner configuration.
         """
 
         inspector = RuntimeConfigurationInspector()
@@ -173,6 +236,14 @@ class FathomRunner:
                 "runtime_configuration_bound": self.__runtime_configuration is not None,
             },
         )
+
+    def __sync_telemetry_identity(self, *, workflow: str) -> None:
+        """
+        Update telemetry routing identity when the adapter supports it.
+        """
+
+        if isinstance(self.__telemetry, TelemetryIdentityUpdater):
+            self.__telemetry.update_identity(identity=workflow)
 
     @property
     def engine(self) -> ExecutionEngine:
@@ -208,27 +279,51 @@ class FathomRunner:
 
     async def run_intent(
         self,
+        *,
         intent: str,
+        request_id: str,
+        principal: Principal,
         max_steps: int = 50,
         use_xml: bool = False,
-        request_id: Optional[str] = None,
+        execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
-        conversation_id: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
         context_scope: ContextScope = ContextScope.EXECUTION,
     ) -> IntentResult:
         """
         Execute intent-based workflow.
+
+        All identity is supplied via `principal`; there are no silent fallbacks.
+        `request_id` is required and becomes the workflow id used for artifact
+        directories and telemetry routing. When recording is enabled, the
+        recorder reserves the execution id before strategy execution starts.
         """
 
-        start_time = time.time()
-        workflow_id = request_id or uuid.uuid4().hex[:8]
+        if not request_id:
+            raise IdentityError(field="request_id", message="request_id is required")
 
-        # Synchronize telemetry identity with workflow_id for routing
-        # update_identity is available on some telemetry implementations
-        telemetry_with_identity = cast("Any", self.__telemetry)
-        if hasattr(telemetry_with_identity, "update_identity"):
-            telemetry_with_identity.update_identity(identity=workflow_id)
+        if not execution_id and self.__recorder is None:
+            raise IdentityError(
+                field="execution_id",
+                message="No execution identity is available for this run.",
+            )
+
+        start_time = time.time()
+        started = datetime.now(tz=timezone.utc)
+
+        workflow_id = request_id
+
+        tenant = principal.tenant
+        thread = principal.conversation
+
+        responder = principal.agent
+        requester = principal.operator
+        workspace = principal.workspace
+
+        handle: Optional[Handle] = None
+        requested_package = package_name
+
+        self.__sync_telemetry_identity(workflow=workflow_id)
 
         await self.__telemetry.info(
             "Starting intent workflow",
@@ -239,21 +334,77 @@ class FathomRunner:
         )
 
         rejection = await self.__qualify_or_reject(
-            intent=intent, workflow_id=workflow_id, start_time=start_time
+            intent=intent,
+            start_time=start_time,
+            workflow_id=workflow_id,
         )
         if rejection is not None:
             return rejection
 
-        # Read device state only after the gate has allowed the run.
+        # Read device state only after the qualifier has allowed the run.
         if not package_name:
             package_name = await self.__device.get_current_package()
 
-        # Initialize context namespace
-        namespace = (
-            conversation_id
-            if context_scope == ContextScope.CONVERSATION and conversation_id
-            else workflow_id
+        if self.__device.configuration:
+            device_serial = self.__device.configuration.identifier
+        else:
+            device_serial = None
+
+        await self.__telemetry.info(
+            "Intent workflow qualified",
+            intent=intent,
+            max_steps=max_steps,
+            workflow_id=workflow_id,
+            package_name=package_name,
+            device_serial=device_serial,
+            context_scope=context_scope,
         )
+
+        if self.__recorder is not None:
+            self.__recorder.health.reset()
+            handle = await self.__recorder.record_run_started(
+                run=Run(
+                    tenant=tenant,
+                    thread=thread,
+                    intent=intent,
+                    workspace=workspace,
+                    workflow=workflow_id,
+                    execution=execution_id,
+                    package=requested_package,
+                    requester=ActorInput(
+                        id=requester,
+                        name=requester,
+                        kind=ActorKind.HUMAN,
+                    ),
+                    responder=ActorInput(
+                        id=responder,
+                        name=responder,
+                        kind=ActorKind.AGENT,
+                        model=self.__llm_model(),
+                        provider=self.__llm_provider(),
+                    ),
+                    created=started,
+                    metadata={
+                        "starting_package": package_name,
+                        "context_scope": context_scope.value,
+                    },
+                )
+            )
+            if handle is not None:
+                execution_id = handle.execution
+
+        if not execution_id:
+            raise IdentityError(
+                field="execution_id",
+                message="Conversation recording did not reserve an execution identity.",
+            )
+
+        identity = InteractionIdentity(execution=execution_id)
+
+        # Initialize context namespace. Conversation-scoped runs share memory
+        # across runs in the same conversation; execution-scoped runs are
+        # isolated by workflow id.
+        namespace = thread if context_scope == ContextScope.CONVERSATION else workflow_id
 
         # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=namespace)
@@ -262,12 +413,19 @@ class FathomRunner:
         # Create and execute strategy
         strategy = IntentStrategy(
             intent=intent,
+            tenant=tenant,
+            thread=thread,
             llm=self.__llm,
+            requester=requester,
+            responder=responder,
+            workspace=workspace,
             device=self.__device,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             workflow_id=workflow_id,
+            execution_id=execution_id,
+            recorder=self.__recorder,
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
@@ -275,8 +433,8 @@ class FathomRunner:
             perception=self.__perception,
             path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
-            max_steps=max_steps or self.__config.intent.max_steps,
             runtime_configuration=self.__runtime_configuration,
+            max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )
         self.__current_strategy = strategy
@@ -297,14 +455,14 @@ class FathomRunner:
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
 
-            # Get memory summary under a bounded abandonable phase so a stuck SQLite read
-            # never gates result delivery.
+            # Bound memory summary so a stuck store read cannot block result delivery.
             raw_memory_summary = await AbandonablePhase(
+                workflow_id=workflow_id,
                 phase=FinalizationPhase.MEMORY_SUMMARY,
                 timeout=self.__config.intent.finalization.runtime.memory_summary,
-                workflow_id=workflow_id,
             ).execute(awaitable=self.__get_memory_summary())
-            memory_summary: Dict[str, Any] = raw_memory_summary if raw_memory_summary else {}
+
+            memory_summary: Dict[str, JsonValue] = raw_memory_summary if raw_memory_summary else {}
 
             # Build IntentResult
             duration = time.time() - start_time
@@ -313,13 +471,20 @@ class FathomRunner:
             if is_cancelled:
                 error = None
                 success = False
-                status = "failed"
-                completion_reason = CompletionReason.CANCELLED.value
+                status = "cancelled"
+                completion_reason = self.__completion_reason(
+                    status=status,
+                    fallback=(
+                        strategy.completion_reason
+                        or str(progress.get("completion_reason") or "").strip()
+                        or CompletionReason.CANCELLED.value
+                    ),
+                )
             else:
                 success = execution_result.success
                 error = execution_result.error
                 status = "completed" if execution_result.success else "failed"
-                completion_reason = (
+                raw_completion_reason = (
                     strategy.completion_reason
                     or str(progress.get("completion_reason") or "").strip()
                     or execution_result.error
@@ -328,6 +493,11 @@ class FathomRunner:
                         if execution_result.success
                         else CompletionReason.FAILED.value
                     )
+                )
+                completion_reason = self.__completion_reason(
+                    error=error,
+                    status=status,
+                    fallback=raw_completion_reason,
                 )
 
             result = IntentResult(
@@ -338,101 +508,150 @@ class FathomRunner:
                 success=success,
                 duration=duration,
                 workflow_id=workflow_id,
+                subgoal_count=subgoal_count,
+                script=strategy.final_script,
                 memory_summary=memory_summary,
+                skipped_subgoals=skipped_subgoals,
+                step_results=strategy.step_results,
+                executed_subgoals=executed_subgoals,
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
-                executed_subgoals=executed_subgoals,
-                skipped_subgoals=skipped_subgoals,
-                subgoal_count=subgoal_count,
-                step_results=strategy.step_results,
-            )
-
-            terminal_event = self.__terminal_event(
-                is_cancelled=is_cancelled,
-                success=result.success,
-            )
-            terminal_message = self.__terminal_message(
-                event=terminal_event,
-                completion_reason=completion_reason,
-            )
-
-            logger.info(
-                "Workflow outcome resolved",
-                extra={
-                    "event": "workflow.outcome.resolved",
-                    "duration": duration,
-                    "workflow.id": workflow_id,
-                    "steps.taken": result.steps_taken,
-                    "completion.reason": completion_reason,
-                    "outcome": "cancelled"
-                    if is_cancelled
-                    else ("completed" if result.success else "failed"),
-                },
             )
 
             await self.__telemetry.info(
-                terminal_message,
+                "Workflow execution finalized",
                 duration=duration,
-                type=terminal_event,
                 success=result.success,
                 steps_taken=result.steps_taken,
-                completion_reason=completion_reason,
+                type=FathomEvent.WORKFLOW_COMPLETED,
             )
+
+            if self.__recorder is not None and handle is not None:
+                finished = datetime.now(tz=timezone.utc)
+
+                await self.__recorder.record_run_finished(
+                    completion=Completion(
+                        handle=handle,
+                        status=result.status,
+                        success=result.success,
+                        reason=result.completion_reason,
+                        result=identity.message(name="result"),
+                        code=self.__task_code(
+                            success=result.success, reason=result.completion_reason
+                        ),
+                        metadata={},
+                        finished=finished,
+                        error=result.error,
+                        steps=result.steps_taken,
+                        elapsed=int(duration * 1000),
+                    )
+                )
+                await self.__record_generated_script(
+                    title=intent,
+                    handle=handle,
+                    created=finished,
+                    content=result.script,
+                    metadata={"source": "finalization"},
+                )
+                await self.__record_workflow_artifacts(
+                    handle=handle,
+                    script_title=intent,
+                    package_name=package_name,
+                )
 
             return result
 
+        except Exception as exception:
+            await self.__telemetry.warning(
+                "Run failed before completion",
+                workflow_id=workflow_id,
+                error=str(exception),
+                error_type=type(exception).__name__,
+            )
+            if self.__recorder is not None and handle is not None:
+                finished = datetime.now(tz=timezone.utc)
+
+                try:
+                    progress = strategy.get_progress()
+                    steps = int(progress.get("step_count") or 0)
+
+                    await self.__recorder.record_run_failed(
+                        completion=Completion(
+                            steps=steps,
+                            metadata={},
+                            handle=handle,
+                            success=False,
+                            status="failed",
+                            finished=finished,
+                            error=str(exception),
+                            code=TaskCode.UNKNOWN_ERROR,
+                            reason=self.__completion_reason(
+                                error=str(exception),
+                                status=CompletionReason.FAILED.value,
+                                fallback=CompletionReason.FAILED.value,
+                            ),
+                            result=identity.message(name="result"),
+                            elapsed=int((time.time() - start_time) * 1000),
+                        )
+                    )
+                    await self.__record_workflow_artifacts(
+                        handle=handle,
+                        script_title=intent,
+                        package_name=package_name,
+                    )
+                except InteractionError as interaction_exception:
+                    await self.__telemetry.warning(
+                        "Failed to record interaction failure",
+                        workflow_id=workflow_id,
+                        error=str(interaction_exception),
+                    )
+
+            raise
+
         finally:
-            await self.__phase.shutdown()
             self.__current_strategy = None
-
-    @staticmethod
-    def __terminal_event(*, is_cancelled: bool, success: bool) -> FathomEvent:
-        """
-        Return the terminal workflow event matching the resolved outcome.
-        """
-
-        if is_cancelled:
-            return FathomEvent.WORKFLOW_CANCELLED
-
-        if success:
-            return FathomEvent.WORKFLOW_COMPLETED
-
-        return FathomEvent.WORKFLOW_FAILED
-
-    @staticmethod
-    def __terminal_message(*, event: FathomEvent, completion_reason: str) -> str:
-        """
-        Return the user-facing terminal workflow message.
-        """
-
-        if event is FathomEvent.WORKFLOW_CANCELLED:
-            return "Run cancelled by operator."
-
-        if event is FathomEvent.WORKFLOW_FAILED:
-            reason = completion_reason.strip() or CompletionReason.FAILED.value
-            return f"Run failed: {reason}"
-
-        return "All wrapped up."
 
     async def run_exploration(
         self,
+        *,
+        request_id: str,
+        principal: Principal,
         max_steps: int = 100,
-        request_id: Optional[str] = None,
+        execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
     ) -> ExplorationResult:
         """
         Execute exploration workflow.
+
+        `request_id` is required and becomes the workflow id. When recording is
+        enabled, the recorder reserves the execution id before exploration starts.
         """
 
-        start_time = time.time()
-        workflow_id = request_id or uuid.uuid4().hex[:8]
+        if not request_id:
+            raise IdentityError(field="request_id", message="request_id is required")
 
-        # Synchronize telemetry identity with workflow_id for routing
-        # update_identity is available on some telemetry implementations
-        telemetry_with_identity = cast("Any", self.__telemetry)
-        if hasattr(telemetry_with_identity, "update_identity"):
-            telemetry_with_identity.update_identity(identity=workflow_id)
+        if not execution_id and self.__recorder is None:
+            raise IdentityError(
+                field="execution_id",
+                message="No execution identity is available for this run.",
+            )
+
+        start_time = time.time()
+        started = datetime.now(tz=timezone.utc)
+
+        workflow_id = request_id
+        tenant = principal.tenant
+        thread = principal.conversation
+
+        responder = principal.agent
+        requester = principal.operator
+        workspace = principal.workspace
+
+        intent = "Explore application structure"
+        handle: Optional[Handle] = None
+
+        self.__sync_telemetry_identity(workflow=workflow_id)
 
         # Use provided package name or fetch from device
         if not package_name:
@@ -451,26 +670,70 @@ class FathomRunner:
             device_serial=device_serial,
         )
 
+        if self.__recorder is not None:
+            self.__recorder.health.reset()
+
+            handle = await self.__recorder.record_run_started(
+                run=Run(
+                    intent=intent,
+                    tenant=tenant,
+                    thread=thread,
+                    workspace=workspace,
+                    workflow=workflow_id,
+                    package=package_name,
+                    execution=execution_id,
+                    requester=ActorInput(
+                        id=requester,
+                        name=requester,
+                        kind=ActorKind.HUMAN,
+                    ),
+                    responder=ActorInput(
+                        id=responder,
+                        name=responder,
+                        kind=ActorKind.AGENT,
+                        model=self.__llm_model(),
+                        provider=self.__llm_provider(),
+                    ),
+                    created=started,
+                    metadata={"mode": "exploration"},
+                )
+            )
+            if handle is not None:
+                execution_id = handle.execution
+
+        if not execution_id:
+            raise IdentityError(
+                field="execution_id",
+                message="Conversation recording did not reserve an execution identity.",
+            )
+
+        identity = InteractionIdentity(execution=execution_id)
+
         # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
-        self.__context_manager.set_roadmap(intent="Explore application structure")
+        self.__context_manager.set_roadmap(intent=intent)
 
         strategy = ExplorationStrategy(
+            tenant=tenant,
+            thread=thread,
             llm=self.__llm,
+            requester=requester,
+            responder=responder,
             device=self.__device,
-            perception=self.__perception,
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
             workflow_id=workflow_id,
+            execution_id=execution_id,
             package_name=package_name,
             telemetry=self.__telemetry,
             configuration=self.__config,
+            perception=self.__perception,
             path_manager=self.__path_manager,
             seed=self.__config.exploration.random_seed,
             timeout=float(self.__config.exploration.timeout),
-            max_steps=max_steps or self.__config.exploration.max_steps,
             runtime_configuration=self.__runtime_configuration,
+            max_steps=max_steps or self.__config.exploration.max_steps,
         )
 
         self.__current_strategy = strategy
@@ -488,8 +751,9 @@ class FathomRunner:
             discovered_activities = list({node.activity for node in graph.nodes.values()})
 
             # Calculate coverage (percentage of screens explored vs total discovered)
-            unique_screens = stats.get("unique_screens", 0)
             unexplored = stats.get("unexplored", 0)
+            unique_screens = stats.get("unique_screens", 0)
+
             coverage_percentage = (
                 ((unique_screens - unexplored) / unique_screens * 100.0)
                 if unique_screens > 0
@@ -509,11 +773,11 @@ class FathomRunner:
                 error=execution_result.error,
                 unique_screens=unique_screens,
                 success=execution_result.success,
-                steps_executed=progress.get("steps", 0),
                 coverage_percentage=coverage_percentage,
                 completion_reason="Exploration completed",
                 discovered_activities=discovered_activities,
                 total_actions=stats.get("total_actions", 0),
+                steps_executed=progress.get("steps", 0),
                 total_transitions=stats.get("total_transitions", 0),
                 status="completed" if execution_result.success else "failed",
             )
@@ -525,7 +789,77 @@ class FathomRunner:
                 unique_screens=result.unique_screens,
             )
 
+            if self.__recorder is not None and handle is not None:
+                finished = datetime.now(tz=timezone.utc)
+
+                await self.__recorder.record_run_finished(
+                    completion=Completion(
+                        handle=handle,
+                        finished=finished,
+                        error=result.error,
+                        status=result.status,
+                        success=result.success,
+                        steps=result.steps_executed,
+                        elapsed=int(duration * 1000),
+                        reason=result.completion_reason,
+                        result=identity.message(name="result"),
+                        metadata={"mode": "exploration"},
+                        code=self.__task_code(
+                            success=result.success, reason=result.completion_reason
+                        ),
+                    )
+                )
+                await self.__record_workflow_artifacts(
+                    handle=handle,
+                    package_name=package_name,
+                    script_title="Exploration script",
+                )
+
             return result
+
+        except Exception as exception:
+            await self.__telemetry.warning(
+                "Exploration run failed before completion",
+                workflow_id=workflow_id,
+                error=str(exception),
+                error_type=type(exception).__name__,
+            )
+            if self.__recorder is not None and handle is not None:
+                finished = datetime.now(tz=timezone.utc)
+
+                try:
+                    progress = strategy.get_progress()
+                    steps = int(progress.get("steps") or 0)
+
+                    await self.__recorder.record_run_failed(
+                        completion=Completion(
+                            steps=steps,
+                            handle=handle,
+                            success=False,
+                            status="failed",
+                            finished=finished,
+                            error=str(exception),
+                            code=TaskCode.UNKNOWN_ERROR,
+                            reason=CompletionReason.FAILED.value,
+                            result=identity.message(name="result"),
+                            elapsed=int((time.time() - start_time) * 1000),
+                            metadata={"mode": "exploration"},
+                        )
+                    )
+                    await self.__record_workflow_artifacts(
+                        handle=handle,
+                        package_name=package_name,
+                        script_title="Exploration script",
+                    )
+
+                except InteractionError as interaction_exception:
+                    await self.__telemetry.warning(
+                        "Failed to record exploration failure",
+                        workflow_id=workflow_id,
+                        error=str(interaction_exception),
+                    )
+
+            raise
 
         finally:
             self.__current_strategy = None
@@ -538,10 +872,8 @@ class FathomRunner:
         if self.__current_strategy:
             logger.warning("Workflow cancellation requested")
 
-            # Call cancel method on strategy if it has one
-            strategy_with_cancel = cast("Any", self.__current_strategy)
-            if hasattr(strategy_with_cancel, "cancel"):
-                strategy_with_cancel.cancel()
+            if isinstance(self.__current_strategy, CancellableStrategy):
+                self.__current_strategy.cancel()
             else:
                 logger.warning("Strategy does not support cancellation")
 
@@ -575,163 +907,54 @@ class FathomRunner:
 
     async def cleanup(self) -> None:
         """
-        Cleanup all runner resources via abandonable phases so a stuck step cannot wedge the host.
+        Cleanup all resources held by the runner and its ports.
         """
 
-        cleanup_budget = self.__config.intent.finalization.runtime.cleanup
+        # 0. Phase announcer — stop any heartbeat/background telemetry.
+        try:
+            await self.__phase.shutdown()
+        except Exception as exception:
+            logger.warning(f"[FathomRunner] phase shutdown failed: {exception}")
 
-        async def __context_manager_shutdown() -> None:
-            """
-            Context manager shutdown wrapped for capture by AbandonablePhase.
-            """
-
-            if self.__context_manager is None:
-                return
+        # 1. Context manager — drain persist queue, cancel background tasks
+        if self.__context_manager is not None:
             try:
                 await self.__context_manager.shutdown()
             except Exception as exception:
-                logger.warning(
-                    "context_manager shutdown failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.context_manager.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
+                logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
 
-        async def __phase_shutdown() -> None:
-            """
-            Cancel any in-flight phase pulse so the heartbeat task cannot outlive the workflow.
-            """
+        # 2. LLM — delete cached content, close clients
+        try:
+            await self.__llm.cleanup()
+        except Exception as exception:
+            logger.warning(f"[FathomRunner] llm cleanup failed: {exception}")
 
+        for resource in self.__owned_resources:
             try:
-                await self.__phase.shutdown()
+                await resource.cleanup()
             except Exception as exception:
-                logger.warning(
-                    "phase announcer shutdown failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.phase.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
+                logger.warning(f"[FathomRunner] owned resource cleanup failed: {exception}")
 
-        async def __llm_cleanup() -> None:
-            """
-            LLM port cleanup wrapped for capture by AbandonablePhase.
-            """
-
-            try:
-                await self.__llm.cleanup()
-            except Exception as exception:
-                logger.warning(
-                    "llm cleanup failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.llm.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
-
-        async def __owned_resources_cleanup() -> None:
-            """
-            Dedicated LLMs (e.g. qualifier LLM) handed over by the SDK builder path.
-
-            Temporal / CLI callers pass nothing — they manage these via
-            RunnerComposition.resources at the composition root; the list is
-            empty for them.
-            """
-
-            for resource in self.__owned_resources:
-                try:
-                    await resource.cleanup()
-                except Exception as exception:
-                    logger.warning(
-                        "owned resource cleanup failed: %s",
-                        exception,
-                        extra={
-                            "event": "fathom.runner.cleanup.owned_resource.failed",
-                            "exception.type": type(exception).__name__,
-                            "exception.message": str(exception),
-                        },
-                    )
-
-        async def __device_close() -> None:
-            """
-            Device port close wrapped for capture by AbandonablePhase.
-            """
-
-            if not hasattr(self.__device, "close"):
-                return
+        # 3. Device — close HTTP client (ADB remote, iOS remote)
+        if isinstance(self.__device, AsyncCloser):
             try:
                 await self.__device.close()
             except Exception as exception:
-                logger.warning(
-                    "device close failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.device.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
+                logger.warning(f"[FathomRunner] device close failed: {exception}")
 
-        async def __telemetry_close() -> None:
-            """
-            Telemetry port close wrapped for capture by AbandonablePhase.
-            """
-
-            if not hasattr(self.__telemetry, "close"):
-                return
+        # 4. Telemetry — close Redis connection if applicable
+        if isinstance(self.__telemetry, AsyncCloser):
             try:
                 await self.__telemetry.close()
             except Exception as exception:
-                logger.warning(
-                    "telemetry close failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.telemetry.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
+                logger.warning(f"[FathomRunner] telemetry close failed: {exception}")
 
-        async def __storage_close() -> None:
-            """
-            Storage port close wrapped for capture by AbandonablePhase.
-            """
-
-            if not hasattr(self.__storage, "close"):
-                return
+        # 5. Interaction — close durable conversation pools.
+        if self.__interaction is not None:
             try:
-                await self.__storage.close()
+                await self.__interaction.aclose()
             except Exception as exception:
-                logger.warning(
-                    "storage close failed: %s",
-                    exception,
-                    extra={
-                        "event": "fathom.runner.cleanup.storage.failed",
-                        "exception.type": type(exception).__name__,
-                        "exception.message": str(exception),
-                    },
-                )
-
-        for awaitable in (
-            __phase_shutdown(),
-            __context_manager_shutdown(),
-            __llm_cleanup(),
-            __owned_resources_cleanup(),
-            __device_close(),
-            __telemetry_close(),
-            __storage_close(),
-        ):
-            await AbandonablePhase(
-                phase=FinalizationPhase.RUNNER_CLEANUP,
-                timeout=cleanup_budget,
-            ).execute(awaitable=awaitable)
+                logger.warning(f"[FathomRunner] interaction close failed: {exception}")
 
         logger.info("[FathomRunner] cleanup completed")
 
@@ -744,9 +967,6 @@ class FathomRunner:
     ) -> Optional[IntentResult]:
         """
         Qualify the intent before any device interaction.
-
-        A rejected intent must never touch the device — package lookup, ADB round-trips, anything.
-        Returns a populated IntentResult when the gate blocks the run; returns None when the run is allowed to proceed.
         """
 
         logger.info(
@@ -763,7 +983,6 @@ class FathomRunner:
             await self.__phase.shutdown()
 
         qualifier_latency = time.perf_counter() - qualifier_started_at
-
         gate_policy = QualificationGatePolicy(configuration=self.__config.qualifier)
         blocked = gate_policy.should_block(verdict=verdict)
 
@@ -777,6 +996,7 @@ class FathomRunner:
         }
         if verdict.rationale.category == RationaleCategory.QUALIFIER_ERROR:
             verdict_log_extra["reasoning"] = verdict.rationale.reasoning
+
         logger.info("[FathomRunner] Qualifier returned verdict", extra=verdict_log_extra)
 
         verdict_payload: Dict[str, Any] = {
@@ -807,7 +1027,9 @@ class FathomRunner:
             )
 
         await self.__telemetry.info(
-            "Got it, getting started...", type=FathomEvent.INTENT_QUALIFIED, **verdict_payload
+            "Got it, getting started...",
+            type=FathomEvent.INTENT_QUALIFIED,
+            **verdict_payload,
         )
         logger.info(
             "[FathomRunner] Qualifier allowed the intent, proceeding to execution",
@@ -831,32 +1053,17 @@ class FathomRunner:
         verdict_payload: Dict[str, Any],
     ) -> IntentResult:
         """
-        Emit the rejection notification and produce a terminal IntentResult.
-
-        The run is marked as completed because the intent has been fully handled by the
-        qualifier; success is False because no UI action was attempted.
+        Emit the rejection notification and build a terminal result.
         """
 
         user_message = verdict.message or DEFAULT_REJECTION_MESSAGE
         duration = time.time() - start_time
 
-        # INTENT_REJECTED carries the full verdict for clients that switch on it.
         await self.__telemetry.warning(
-            user_message, type=FathomEvent.INTENT_REJECTED, **verdict_payload
+            user_message,
+            type=FathomEvent.INTENT_REJECTED,
+            **verdict_payload,
         )
-
-        logger.info(
-            "[FathomRunner] Rejection emitted to client",
-            extra={
-                "duration": duration,
-                "workflow_id": workflow_id,
-                "completion_reason": CompletionReason.NOT_EXECUTABLE.value,
-            },
-        )
-
-        # WORKFLOW_COMPLETED is dual-emitted so legacy consumers (Genymotion,
-        # Temporal activity result handlers) that key off the terminal event
-        # still receive a completion signal. The run *is* terminating here.
         await self.__telemetry.info(
             "All wrapped up.",
             success=False,
@@ -864,11 +1071,12 @@ class FathomRunner:
             duration=duration,
             type=FathomEvent.WORKFLOW_COMPLETED,
         )
+
         try:
             await self.__phase.shutdown()
         except Exception as exception:
             logger.warning(
-                "Runner: phase.shutdown after qualifier-reject failed: %s; terminal event already emitted",
+                "Runner phase shutdown after qualifier rejection failed: %s",
                 exception,
             )
 
@@ -890,70 +1098,357 @@ class FathomRunner:
             completion_reason=CompletionReason.NOT_EXECUTABLE.value,
         )
 
-    async def __get_memory_summary(self) -> Dict[str, Any]:
+    async def __record_workflow_artifacts(
+        self,
+        *,
+        handle: Handle,
+        package_name: str,
+        script_title: str,
+    ) -> None:
+        """
+        Record workflow-scope artifacts (history, script) into the timeline.
+
+        Per-step artifacts (screenshots, traces, xml, annotated) are recorded
+        from the graph node boundary inside the strategy, so they reach the
+        database as soon as the step finishes. Anything without a step prefix
+        in its filename is owned by the workflow and persisted here at the end
+        of the run.
+        """
+
+        if self.__recorder is None:
+            return
+
+        identity = InteractionIdentity(execution=handle.execution)
+
+        logger.info(
+            "Recording workflow artifacts",
+            extra={
+                "event": "conversation.artifacts.workflow.started",
+                "workflow.id": handle.workflow,
+                "conversation.id": handle.thread,
+            },
+        )
+        artifacts = await self.__artifact_catalog.discover(
+            workflow=handle.workflow,
+            only_workflow_scope=True,
+            package_name=package_name,
+        )
+
+        recorded = 0
+        for path, stat in artifacts:
+            captured_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+
+            metadata: Dict[str, JsonValue] = {
+                "filename": path.name,
+                "captured_at": captured_at.isoformat(),
+                "category": self.__artifact_catalog.category(path=path),
+            }
+
+            resolved_kind = self.__artifact_catalog.kind(path=path)
+
+            if resolved_kind is not None:
+                try:
+                    await self.__recorder.record_artifact(
+                        output=Output(
+                            uri=str(path),
+                            task=handle.task,
+                            size=stat.st_size,
+                            metadata=metadata,
+                            kind=resolved_kind,
+                            created=captured_at,
+                            tenant=handle.tenant,
+                            thread=handle.thread,
+                            actor=handle.responder,
+                            workflow=handle.workflow,
+                            execution=handle.execution,
+                            workspace=handle.workspace,
+                            backend=ArtifactBackend.LOCAL,
+                            id=identity.artifact(path=path),
+                            mime=self.__artifact_catalog.mime(path=path),
+                            retention=self.__artifact_catalog.retention(path=path),
+                        )
+                    )
+                    recorded += 1
+                except Exception:
+                    logger.exception(
+                        "Workflow artifact recording failed",
+                        extra={
+                            "event": "conversation.artifacts.workflow.failed",
+                            "path": str(path),
+                            "workflow.id": handle.workflow,
+                            "conversation.id": handle.thread,
+                        },
+                    )
+            else:
+                logger.warning(
+                    "Skipping unclassified workflow artifact",
+                    extra={
+                        "event": "conversation.artifacts.workflow.skipped",
+                        "path": str(path),
+                        "workflow.id": handle.workflow,
+                        "conversation.id": handle.thread,
+                    },
+                )
+            if self.__artifact_catalog.is_script(path=path):
+                await self.__record_script_content(
+                    path=path,
+                    handle=handle,
+                    task=handle.task,
+                    metadata=metadata,
+                    title=script_title,
+                    created=captured_at,
+                )
+        logger.info(
+            "Recorded workflow artifacts",
+            extra={
+                "event": "conversation.artifacts.workflow.completed",
+                "workflow.id": handle.workflow,
+                "artifacts.recorded": recorded,
+                "conversation.id": handle.thread,
+                "artifacts.discovered": len(artifacts),
+            },
+        )
+
+    async def __record_script_content(
+        self,
+        *,
+        task: str,
+        title: str,
+        path: Path,
+        handle: Handle,
+        created: datetime,
+        metadata: Dict[str, JsonValue],
+    ) -> None:
+        """
+        Persist generated script text as an editable script domain record.
+        """
+
+        if self.__recorder is None:
+            return
+
+        try:
+            content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        except FileNotFoundError:
+            return
+
+        await self.__record_generated_script(
+            task=task,
+            title=title,
+            handle=handle,
+            content=content,
+            created=created,
+            script_name=str(path),
+            metadata={**metadata, "uri": str(path)},
+        )
+
+    async def __record_generated_script(
+        self,
+        *,
+        title: str,
+        handle: Handle,
+        created: datetime,
+        content: Optional[str],
+        metadata: Dict[str, JsonValue],
+        task: Optional[str] = None,
+        script_name: str = "final",
+    ) -> None:
+        """
+        Persist generated script text without depending on artifact file discovery.
+        """
+
+        if self.__recorder is None or content is None or not content.strip():
+            return
+
+        identity = InteractionIdentity(execution=handle.execution)
+
+        logger.info(
+            "Recording generated script",
+            extra={
+                "event": "conversation.script.record.started",
+                "workflow.id": handle.workflow,
+                "script.name": script_name,
+                "conversation.id": handle.thread,
+            },
+        )
+        await self.__recorder.record_script(
+            output=ScriptOutput(
+                title=title,
+                artifact=None,
+                content=content,
+                created=created,
+                metadata=metadata,
+                tenant=handle.tenant,
+                thread=handle.thread,
+                actor=handle.responder,
+                task=task or handle.task,
+                workflow=handle.workflow,
+                execution=handle.execution,
+                workspace=handle.workspace,
+                summary="Generated script export.",
+                id=identity.script(name=script_name),
+            )
+        )
+        logger.info(
+            "Recorded generated script",
+            extra={
+                "event": "conversation.script.record.completed",
+                "workflow.id": handle.workflow,
+                "conversation.id": handle.thread,
+                "script.name": script_name,
+            },
+        )
+
+    def __recorder_for(
+        self, *, interaction: Optional[InteractionPort]
+    ) -> Optional[ConversationRecorder]:
+        """
+        Build the optional conversation recorder from the interaction port.
+        """
+
+        if interaction is None:
+            return None
+
+        return ConversationRecorder(
+            telemetry=self.__telemetry,
+            conversation=ConversationService(
+                signer=NoopSigner(),
+                ports=self.__ports(interaction=interaction),
+            ),
+        )
+
+    def __ports(self, *, interaction: InteractionPort) -> Ports:
+        """
+        Map the configured interaction adapter into conversation service ports.
+        """
+
+        return Ports(interaction=interaction)
+
+    def __completion_reason(
+        self,
+        *,
+        status: str,
+        fallback: str,
+        error: Optional[str] = None,
+    ) -> str:
+        """
+        Return the recorded completion reason without synthetic terminal prose.
+        """
+
+        return (error or fallback or status).strip() or status
+
+    def __task_code(self, *, success: bool, reason: str) -> TaskCode:
+        """
+        Resolve the terminal task code for a workflow result.
+        """
+
+        if success:
+            return TaskCode.COMPLETED
+
+        normalized = reason.casefold().strip()
+
+        if normalized in {
+            CompletionReason.CANCELLED.value.casefold(),
+            CompletionReason.OPERATOR_ABORTED.value.casefold(),
+        }:
+            return TaskCode.USER_CANCELLED
+
+        if normalized == CompletionReason.MAX_STEPS.value.casefold():
+            return TaskCode.TIMEOUT
+
+        return TaskCode.UNKNOWN_ERROR
+
+    def __llm_provider(self) -> str:
+        """
+        Derive a stable provider hint from the configured LLM adapter.
+        """
+
+        provider = self.__llm.__class__.__name__.removesuffix("LLM").lower()
+        return provider or "unknown"
+
+    def __llm_model(self) -> Optional[str]:
+        """
+        Return the configured model name when the adapter exposes one.
+        """
+
+        model = self.__llm.model_name
+        if isinstance(model, str) and model:
+            return model
+
+        return None
+
+    async def __get_memory_summary(self) -> Dict[str, JsonValue]:
         """
         Get memory summary from memory port.
         """
 
         try:
-            # Get all knowledge from memory provider
             knowledge = await self.__memory.get_all_knowledge()
+            raw_screens = knowledge.get(KnowledgeKey.SCREENS, [])
+            screens: List[JsonValue] = list(raw_screens) if isinstance(raw_screens, list) else []
 
-            # Extract screens information
-            screens = knowledge.get("screens", [])
-
-            # Format for CLI display
-            screens_formatted = []
-            for screen in screens[:10]:  # Last 10 screens
-                screens_formatted.append(
+            recent: List[JsonValue] = []
+            for screen in screens[:MEMORY_SUMMARY_RECENT_LIMIT]:
+                if not isinstance(screen, dict):
+                    continue
+                hashed = str(screen.get(KnowledgeKey.HASH) or "")[
+                    :MEMORY_SUMMARY_HASH_PREVIEW_LENGTH
+                ]
+                recent.append(
                     {
-                        "hash": screen.get("hash", "")[:12],
-                        "activity": screen.get("activity", "unknown"),
-                        "description": screen.get("description", ""),
+                        KnowledgeKey.HASH.value: hashed,
+                        KnowledgeKey.DESCRIPTION.value: str(
+                            screen.get(KnowledgeKey.DESCRIPTION) or ""
+                        ),
+                        KnowledgeKey.ACTIVITY.value: str(
+                            screen.get(KnowledgeKey.ACTIVITY) or MEMORY_SUMMARY_UNKNOWN_ACTIVITY
+                        ),
                     }
                 )
 
-            # Count experiences
-            experience_count = knowledge.get("experience_count", 0)
+            experience = knowledge.get(KnowledgeKey.EXPERIENCE_COUNT, 0)
+            experience_count = experience if isinstance(experience, int) else 0
 
             return {
-                "screens": screens_formatted,
-                "total_screens": len(screens),
-                "experience_count": experience_count,
+                MemorySummaryKey.SCREENS.value: recent,
+                MemorySummaryKey.TOTAL_SCREENS.value: len(screens),
+                MemorySummaryKey.EXPERIENCE_COUNT.value: experience_count,
             }
         except Exception as exception:
             await self.__telemetry.warning(f"Failed to get memory summary: {exception}")
             return {
-                "screens": [],
-                "total_screens": 0,
-                "experience_count": 0,
+                MemorySummaryKey.SCREENS.value: [],
+                MemorySummaryKey.TOTAL_SCREENS.value: 0,
+                MemorySummaryKey.EXPERIENCE_COUNT.value: 0,
             }
 
-    async def __export_graph(self, graph: ExplorationGraph) -> Dict[str, Any]:
+    async def __export_graph(self, graph: ExplorationGraph) -> Dict[str, JsonValue]:
         """
         Export exploration graph to dictionary.
         """
 
         try:
-            nodes_dict = {}
+            nodes: Dict[str, JsonValue] = {}
 
             for fingerprint, node in graph.nodes.items():
-                nodes_dict[fingerprint] = {
+                actions: List[JsonValue] = list(node.actions)
+                transitions: Dict[str, JsonValue] = dict(node.transitions)
+                nodes[fingerprint] = {
+                    "actions": actions,
                     "visits": node.visits,
                     "activity": node.activity,
-                    "actions": list(node.actions),
-                    "transitions": node.transitions,
+                    "transitions": transitions,
                 }
 
-            edges_list = [
+            edges: List[JsonValue] = [
                 {"origin": origin, "action": action, "destination": dest}
                 for origin, action, dest in graph.edges
             ]
+            stats = cast("Dict[str, JsonValue]", graph.get_stats())
 
             return {
-                "nodes": nodes_dict,
-                "edges": edges_list,
-                "stats": graph.get_stats(),
+                "nodes": nodes,
+                "edges": edges,
+                "stats": stats,
             }
         except Exception as exception:
             await self.__telemetry.warning(f"Failed to export graph: {exception}")

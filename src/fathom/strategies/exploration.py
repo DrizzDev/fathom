@@ -35,10 +35,15 @@ class ExplorationStrategy:
         self,
         max_steps: int,
         timeout: float,
+        execution_id: str,
         workflow_id: str,
         package_name: str,
         seed: Optional[int],
         *,
+        tenant: str,
+        thread: str,
+        requester: str,
+        responder: str,
         llm: LLMPort,
         device: DevicePort,
         perception: PerceptionPort,
@@ -52,6 +57,7 @@ class ExplorationStrategy:
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
+        self.__execution_id = execution_id
         intent = "Explore application"
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
@@ -76,12 +82,17 @@ class ExplorationStrategy:
             use_xml=False,
             device=device,
             signal=signal,
+            tenant=tenant,
+            thread=thread,
             memory=memory,
             storage=storage,
+            requester=requester,
+            responder=responder,
             telemetry=telemetry,
             max_steps=max_steps,
             perception=perception,
             workflow_id=workflow_id,
+            execution_id=execution_id,
             package_name=package_name,
             path_manager=path_manager,
             configuration=configuration,
