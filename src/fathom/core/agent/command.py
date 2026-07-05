@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fathom.constants.capability import PayloadField, TargetRequirement
+from fathom.constants import ActionType
+from fathom.constants.capability import CompletionMode, PayloadField, TargetRequirement
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.exceptions import ToolValidationError
+from fathom.schemas.capability import CommandProfile
 from fathom.schemas.gemini_tools import ExecuteAction
 from fathom.schemas.results import ToolErrorFeedback
 from fathom.schemas.tools import AcceptedCommand, ToolCommand
@@ -22,7 +24,9 @@ class CommandGate:
 
         self.__catalog = catalog
 
-    def validate(self, *, command: ToolCommand) -> AcceptedCommand:
+    def validate(
+        self, *, command: ToolCommand, directive: Optional[ActionType] = None
+    ) -> AcceptedCommand:
         """
         Return an accepted command or raise structured model feedback.
         """
@@ -51,7 +55,59 @@ class CommandGate:
                 )
             )
 
+        self.__validate_directive(command=command, directive=directive)
+
         return AcceptedCommand(action_type=command.action_type, payload=command.payload)
+
+    def __validate_directive(
+        self, *, command: ToolCommand, directive: Optional[ActionType]
+    ) -> None:
+        """
+        Reject commands that cannot satisfy a mandatory active directive contract.
+        """
+
+        if directive is None:
+            return
+
+        directed = self.__catalog.profile(action_type=directive)
+        if directed.completion is not CompletionMode.CAPTURE_VERIFIED:
+            return
+
+        emitted = self.__catalog.profile(action_type=command.action_type)
+        if emitted.completion is CompletionMode.CAPTURE_VERIFIED:
+            return
+
+        raise self.__error(
+            message=self.__directive_message(
+                directive=directive,
+                required=self.__required_fields(profile=directed),
+                action_type=command.action_type,
+            )
+        )
+
+    @staticmethod
+    def __directive_message(
+        *, directive: ActionType, required: str, action_type: ActionType
+    ) -> str:
+        """
+        Return model feedback for a command that cannot satisfy the active directive.
+        """
+
+        return (
+            f"The active '{directive.value}' sub-goal needs an executable command with "
+            f"{required}. The emitted '{action_type.value}' command cannot complete it."
+        )
+
+    @staticmethod
+    def __required_fields(*, profile: CommandProfile) -> str:
+        """
+        Return the profile's required payload fields as model-readable text.
+        """
+
+        if not (required := profile.contract.required):
+            return "no additional fields"
+
+        return ", ".join(sorted(field.value.lower() for field in required))
 
     @staticmethod
     def __has_field(*, payload: ExecuteAction, field: PayloadField) -> bool:

@@ -3,24 +3,24 @@ from __future__ import annotations
 import json
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Tuple
 
 from pydantic import ValidationError
 
 from fathom.constants.flow import LaunchProvenance
+from fathom.constants.generation import COMPLETION_ASSERTIONS_FILENAME
 from fathom.core.exceptions import ScriptExportError
 from fathom.core.services.generation.assembler import EvidenceAssembler
 from fathom.core.services.generation.distiller import Distiller
 from fathom.core.services.generation.normalizer import RunTraceNormalizer
 from fathom.interfaces.evidence import EvidenceSource
 from fathom.interfaces.paths import HistoryPaths
-from fathom.schemas.flow import Evidence, RunObjective
+from fathom.schemas.flow import CompletionAssertion, Evidence, RunObjective
 from fathom.schemas.generation import Distillation, NormalizedTrace
 from fathom.schemas.steps import StepHistory, StepRecord
 
 if TYPE_CHECKING:
     from pathlib import Path
-
 
 logger = getLogger(__name__)
 
@@ -96,6 +96,7 @@ class HistoryEvidenceSource(EvidenceSource):
             reason=distillation.reason,
             partial=distillation.partial,
             discarded=distillation.discarded,
+            assertions=self.__assertions(execution_id=execution_id),
         )
         self.__log_assembled(execution_id=execution_id, evidence=evidence, started=started)
 
@@ -164,6 +165,7 @@ class HistoryEvidenceSource(EvidenceSource):
                 "script.validation_count": sum(
                     1 for step in evidence.steps if step.event == "validation"
                 ),
+                "script.assertion_count": len(evidence.assertions),
             },
         )
 
@@ -193,6 +195,28 @@ class HistoryEvidenceSource(EvidenceSource):
         except ValidationError as exception:
             raise ScriptExportError(
                 f"Malformed execution trace for execution '{execution_id}': {exception}"
+            ) from exception
+
+    def __assertions(self, *, execution_id: str) -> Tuple[CompletionAssertion, ...]:
+        """
+        Load terminal verifier assertions for the execution when available.
+        """
+
+        path = self.__path_manager.get_history_directory(session_id=execution_id).joinpath(
+            COMPLETION_ASSERTIONS_FILENAME
+        )
+        if not path.exists():
+            return ()
+
+        try:
+            with path.open(mode="r") as handle:
+                raw = json.load(handle)
+            if not isinstance(raw, list):
+                raise TypeError("completion assertions must be a JSON list")
+            return tuple(CompletionAssertion.model_validate(item) for item in raw)
+        except (json.JSONDecodeError, TypeError, ValidationError) as exception:
+            raise ScriptExportError(
+                f"Malformed completion assertions for execution '{execution_id}': {exception}"
             ) from exception
 
     def __path(self, *, execution_id: str) -> Path:

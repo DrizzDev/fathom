@@ -21,7 +21,7 @@ from fathom.core.agent.stuck_source import StuckSourceResolver
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.context.manager import ContextManager
-from fathom.core.exceptions import InvariantViolation
+from fathom.core.exceptions import InvariantViolation, ToolValidationError
 from fathom.core.prompts.escalation import EscalationPromptBuilder
 from fathom.core.prompts.rejection import RepeatedFailureRejectionPromptBuilder
 from fathom.core.runtime.identity import TargetIdentity
@@ -29,7 +29,7 @@ from fathom.core.services.vision import SubGoalContext, VisionService
 from fathom.schemas.actions import Action
 from fathom.schemas.escalation import EscalationDecision, EscalationPolicy, StuckSource
 from fathom.schemas.observation import ScreenObservation
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult, ToolErrorFeedback
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
@@ -276,7 +276,16 @@ class StepPlanner:
             visual_hash=self.__compute_simple_hash(capture=capture),
             failures=cast("List[str]", state.build_context().get("relevant_failures", [])),
         )
-        analysis = self.__materialize_command(analysis=analysis)
+        try:
+            analysis = self.__materialize_command(
+                analysis=analysis, current_sub_goal=current_sub_goal
+            )
+        except ToolValidationError as exception:
+            return self.__retry_tool_command(
+                state=state,
+                analysis=analysis,
+                feedback=exception.feedback,
+            )
         self.__audit_kind_emission(analysis=analysis, current_sub_goal=current_sub_goal)
 
         if analysis.action is None:
@@ -675,7 +684,9 @@ class StepPlanner:
             failed_actions={str(failure) for failure in failures},
         )
 
-    def __materialize_command(self, *, analysis: AnalysisResult) -> AnalysisResult:
+    def __materialize_command(
+        self, *, analysis: AnalysisResult, current_sub_goal: Optional[SubGoal]
+    ) -> AnalysisResult:
         """
         Build the executable action for a parsed execute_ui command after catalog validation.
         """
@@ -684,9 +695,47 @@ class StepPlanner:
         if command is None:
             return analysis
 
-        accepted = self.__command_gate.validate(command=command)
+        accepted = self.__command_gate.validate(
+            command=command,
+            directive=current_sub_goal.directive if current_sub_goal is not None else None,
+        )
         action = self.__action_builder.build(command=accepted)
         return analysis.model_copy(update={"action": action})
+
+    def __retry_tool_command(
+        self,
+        *,
+        state: AgentState,
+        analysis: AnalysisResult,
+        feedback: ToolErrorFeedback,
+    ) -> PlanResult:
+        """
+        Return model retry feedback when a parsed tool command fails validation.
+        """
+
+        state.set_rejection_history(
+            self.__vision.build_rejection_history_from_analysis(
+                analysis=analysis,
+                rejection_reason=f"REJECTED: {feedback.message}",
+            )
+        )
+        logger.warning(
+            "Planner rejected command before execution",
+            extra={
+                "component": "core.agent.planner",
+                "event": "planner.command.rejected",
+                "reason": feedback.message,
+            },
+        )
+        return PlanResult(
+            step=None,
+            is_complete=False,
+            should_retry=True,
+            metrics=analysis.metrics,
+            memories=analysis.memories,
+            reason=feedback.message,
+            metadata=analysis.metadata or {},
+        )
 
     @staticmethod
     def __command(*, analysis: AnalysisResult) -> Optional[ToolCommand]:

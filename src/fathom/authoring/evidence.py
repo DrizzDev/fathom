@@ -31,6 +31,8 @@ class AuthoringEvidenceBuilder:
     """
 
     __VALIDATION = "validation"
+    __MANIFEST_SUFFIXES: Tuple[str, ...] = (".json", ".xml")
+    __IMAGE_SUFFIXES: Tuple[str, ...] = (".gif", ".jpg", ".jpeg", ".png", ".webp")
 
     def build_run(
         self, *, evidence: Evidence, drafts: Tuple[AuthoringDraft, ...] = ()
@@ -41,12 +43,13 @@ class AuthoringEvidenceBuilder:
 
         return AuthoringEvidence(
             run=RunAuthoringEvidence(
+                drafts=drafts,
                 source=evidence,
                 run=self.__run(evidence=evidence),
                 steps=self.__steps(evidence=evidence),
                 episodes=self.__episodes(evidence=evidence),
                 artifacts=self.__artifacts(evidence=evidence),
-                drafts=drafts,
+                assertions=evidence.assertions,
             )
         )
 
@@ -222,13 +225,7 @@ class AuthoringEvidenceBuilder:
         references: List[AuthoringArtifactReference] = []
 
         for artifact in evidence.artifacts:
-            references.append(
-                AuthoringArtifactReference(
-                    uri=artifact,
-                    kind=AuthoringArtifactKind.TEXT,
-                    role=AuthoringArtifactRole.OTHER,
-                )
-            )
+            references.append(self.__artifact_reference(uri=artifact))
 
         for step in evidence.steps:
             if step_index is not None and step.index != step_index:
@@ -237,6 +234,29 @@ class AuthoringEvidenceBuilder:
             references.extend(self.__step_references(step=step))
 
         return tuple(references)
+
+    @staticmethod
+    def __artifact_reference(*, uri: str) -> AuthoringArtifactReference:
+        """
+        Classify a run-level artifact reference by its path suffix.
+        """
+
+        suffix = uri.lower().rsplit(".", 1)
+        extension = f".{suffix[-1]}" if len(suffix) == 2 else ""
+
+        if extension in AuthoringEvidenceBuilder.__IMAGE_SUFFIXES:
+            kind = AuthoringArtifactKind.IMAGE
+            role = AuthoringArtifactRole.CONTEXT
+
+        elif extension in AuthoringEvidenceBuilder.__MANIFEST_SUFFIXES:
+            role = AuthoringArtifactRole.TREE
+            kind = AuthoringArtifactKind.MANIFEST
+
+        else:
+            role = AuthoringArtifactRole.LOG
+            kind = AuthoringArtifactKind.TEXT
+
+        return AuthoringArtifactReference(uri=uri, kind=kind, role=role)
 
     @staticmethod
     def __has_after_artifact(*, step: EvidenceStep) -> bool:
@@ -312,7 +332,7 @@ class AuthoringEvidenceBuilder:
                 references=references,
                 step_index=step.index,
                 kind=AuthoringArtifactKind.TRACE,
-                role=AuthoringArtifactRole.OTHER,
+                role=AuthoringArtifactRole.TRACE,
             )
 
         return tuple(references)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fathom.schemas.authoring.artifact import AuthoringArtifact, AuthoringArtifactReference
 from fathom.schemas.authoring.configuration import (
+    AuthoringArtifactConfiguration,
     AuthoringConfiguration,
     RunConfiguration,
     StepAuthoringConfiguration,
@@ -24,7 +25,6 @@ from fathom.schemas.authoring.evidence import (
 )
 from fathom.schemas.authoring.packet import AuthoringPacket
 from fathom.schemas.authoring.reference import (
-    DRIZZ_COMMANDS,
     AuthoringDialectReference,
     CommandDoc,
     CommandExample,
@@ -39,7 +39,6 @@ __all__ = [
     "AuthoringStep",
     "AuthoringTask",
     "CommandExample",
-    "DRIZZ_COMMANDS",
     "AuthoringDraft",
     "AuthoringPacket",
     "AuthoringScreen",
@@ -60,4 +59,5 @@ __all__ = [
     "AuthoringDialectReference",
     "AuthoringArtifactReference",
     "StepAuthoringConfiguration",
+    "AuthoringArtifactConfiguration",
 ]

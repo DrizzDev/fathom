@@ -237,7 +237,14 @@ Your sole responsibility is to evaluate a mobile screenshot and definitively det
 Return ONLY a valid JSON object matching this schema. Do not include markdown formatting or explanations outside the JSON.
 {
   "is_complete": boolean, // True ONLY if the terminal state is visually confirmed.
-  "reason": "string" // Factual explanation of what is visually missing, or why it is complete.
+  "reason": "string", // Factual explanation of what is visually missing, or why it is complete.
+  "assertions": [
+    {
+      "id": "string", // Stable short id for the proven terminal state.
+      "kind": "VISIBLE", // One of VISIBLE, PRESENT, ENABLED, DISABLED.
+      "subject": "string" // Complete UI state subject that can become a final Validate command.
+    }
+  ] // Required and non-empty when is_complete=true; empty when is_complete=false.
 }"""
 
 VERIFICATION_USER_TEMPLATE = """User Intent: {intent}

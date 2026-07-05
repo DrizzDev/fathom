@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -13,14 +13,16 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
     BASELINE_SCRIPT_FILENAME,
+    COMPLETION_ASSERTIONS_FILENAME,
     ScriptArtifactMode,
+    ScriptArtifactScope,
     ScriptSource,
     ScriptStatus,
 )
 from fathom.core.artifact.pipeline import ArtifactPipeline
 from fathom.interfaces.storage import StoragePort
 from fathom.schemas.artifact import ArtifactRecord, ScriptPayload
-from fathom.schemas.flow import Issue, RunObjective
+from fathom.schemas.flow import CompletionAssertion, Issue, RunObjective
 from fathom.schemas.generation import (
     BaselineArtifact,
     GenerationResult,
@@ -45,7 +47,7 @@ class HistoryService:
     All outputs are saved to assets/history/{date}/{package}/{session}/ directory.
     """
 
-    __EXECUTION = "execution"
+    __EXECUTION = ScriptArtifactScope.EXECUTION.value
 
     def __init__(
         self,
@@ -564,23 +566,49 @@ class HistoryService:
                 )
             )
 
+    def save_completion_assertions(self, *, assertions: Tuple[CompletionAssertion, ...]) -> None:
+        """
+        Persist terminal verifier assertions for script authoring evidence.
+        """
+
+        if not assertions:
+            return
+
+        path = self.__get_history_file_path(
+            package_name=self.__EXECUTION,
+            filename=COMPLETION_ASSERTIONS_FILENAME,
+        )
+        payload = [assertion.model_dump(mode="json") for assertion in assertions]
+
+        with path.open(mode="w") as handle:
+            handle.write(json.dumps(obj=payload, indent=2))
+
+        logger.info(
+            "completion assertions persisted",
+            extra={
+                "event": "script.completion.assertions.persisted",
+                "execution.id": self.__execution_id,
+                "assertion.count": len(assertions),
+            },
+        )
+
     @time_it(operation="history.read_baseline_outcome")
     async def read_baseline_outcome(self, *, step_number: int) -> BaselineArtifact:
         """
         Read the latest persisted baseline; promote a generated one to the canonical script, else report failure.
         """
 
-        package_name = self.__resolve_export_package_name(history=self.__load_execution_history())
+        artifact_scope = self.__EXECUTION
         logger.info(
             "baseline read started",
             extra={
                 "event": "script.baseline.read.started",
-                "script.package": package_name,
+                "script.scope": artifact_scope,
                 "execution.id": self.__execution_id,
             },
         )
 
-        artifact = self.__read_baseline(package_name=package_name)
+        artifact = self.__read_baseline(artifact_scope=artifact_scope)
 
         if artifact is None:
             return self.__baseline_unavailable(
@@ -591,7 +619,7 @@ class HistoryService:
             "baseline read completed",
             extra={
                 "event": "script.baseline.read.completed",
-                "script.package": package_name,
+                "script.scope": artifact_scope,
                 "execution.id": self.__execution_id,
                 "script.status": artifact.metadata.status.value,
                 "script.issue_codes": [issue.code.value for issue in artifact.metadata.issues],
@@ -601,15 +629,15 @@ class HistoryService:
 
         if artifact.metadata.status is ScriptStatus.GENERATED and (artifact.text or "").strip():
             promoted = await self.__promote_baseline(
-                artifact=artifact, package_name=package_name, step_number=step_number
+                artifact=artifact, artifact_scope=artifact_scope, step_number=step_number
             )
             if promoted and self.__artifact_mode is ScriptArtifactMode.NORMAL:
-                self.__cleanup_baseline(package_name=package_name)
+                self.__cleanup_baseline(artifact_scope=artifact_scope)
 
         return artifact
 
     async def __promote_baseline(
-        self, *, artifact: BaselineArtifact, package_name: str, step_number: int
+        self, *, artifact: BaselineArtifact, artifact_scope: str, step_number: int
     ) -> bool:
         """
         Promote a generated baseline to the canonical script; promotion is best-effort and never fatal.
@@ -618,7 +646,7 @@ class HistoryService:
         try:
             await self.__persist_script(
                 step_number=step_number,
-                package_name=self.__EXECUTION,
+                package_name=artifact_scope,
                 source=ScriptSource.BASELINE,
                 result=GenerationResult(
                     text=artifact.text or "", attempts=1, review=artifact.metadata.review
@@ -629,7 +657,7 @@ class HistoryService:
                 "baseline promotion to canonical script failed",
                 extra={
                     "event": "script.baseline.promote_failed",
-                    "script.package": package_name,
+                    "script.scope": artifact_scope,
                     "execution.id": self.__execution_id,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
@@ -641,20 +669,20 @@ class HistoryService:
             "baseline promoted to canonical script",
             extra={
                 "event": "script.baseline.promoted",
-                "script.package": package_name,
+                "script.scope": artifact_scope,
                 "execution.id": self.__execution_id,
                 "script.line_count": len((artifact.text or "").splitlines()),
             },
         )
         return True
 
-    def __cleanup_baseline(self, *, package_name: str) -> None:
+    def __cleanup_baseline(self, *, artifact_scope: str) -> None:
         """
         Remove baseline handoff artifacts after successful promotion in normal artifact mode.
         """
 
         for filename in (BASELINE_SCRIPT_FILENAME, BASELINE_METADATA_FILENAME):
-            path = self.__get_history_file_path(package_name=package_name, filename=filename)
+            path = self.__get_history_file_path(package_name=artifact_scope, filename=filename)
             try:
                 path.unlink(missing_ok=True)
             except Exception as exception:  # noqa: BLE001 — cleanup must not invalidate promotion
@@ -662,7 +690,7 @@ class HistoryService:
                     event="script.baseline.cleanup_failed",
                     message="baseline handoff artifact cleanup failed",
                     exception=exception,
-                    context={"script.package": package_name, "script.path": path.name},
+                    context={"script.scope": artifact_scope, "script.path": path.name},
                 )
                 continue
 
@@ -670,25 +698,25 @@ class HistoryService:
             "baseline handoff artifacts cleaned up",
             extra={
                 "event": "script.baseline.cleaned",
-                "script.package": package_name,
+                "script.scope": artifact_scope,
                 "execution.id": self.__execution_id,
             },
         )
 
-    def __read_baseline(self, *, package_name: str) -> Optional[BaselineArtifact]:
+    def __read_baseline(self, *, artifact_scope: str) -> Optional[BaselineArtifact]:
         """
         Load the persisted baseline script and its metadata sidecar, or None when no metadata exists.
         """
 
         metadata_path = self.__get_history_file_path(
-            package_name=package_name, filename=BASELINE_METADATA_FILENAME
+            package_name=artifact_scope, filename=BASELINE_METADATA_FILENAME
         )
         if not metadata_path.exists():
             logger.info(
                 "baseline artifact missing at finalization",
                 extra={
                     "event": "script.baseline.read.missing",
-                    "script.package": package_name,
+                    "script.scope": artifact_scope,
                     "execution.id": self.__execution_id,
                 },
             )
@@ -703,7 +731,7 @@ class HistoryService:
                 extra={
                     "event": "script.baseline.read.failed_metadata",
                     "execution.id": self.__execution_id,
-                    "script.package": package_name,
+                    "script.scope": artifact_scope,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -712,7 +740,7 @@ class HistoryService:
 
         text: Optional[str] = None
         text_path = self.__get_history_file_path(
-            package_name=package_name, filename=BASELINE_SCRIPT_FILENAME
+            package_name=artifact_scope, filename=BASELINE_SCRIPT_FILENAME
         )
 
         if text_path.exists():
@@ -725,7 +753,7 @@ class HistoryService:
                     extra={
                         "event": "script.baseline.read.failed_text",
                         "execution.id": self.__execution_id,
-                        "script.package": package_name,
+                        "script.scope": artifact_scope,
                         "exception.type": type(exception).__name__,
                         "exception.message": str(exception),
                     },
@@ -739,7 +767,7 @@ class HistoryService:
                 "baseline metadata marked generated but script text was unavailable",
                 extra={
                     "event": "script.baseline.read.missing_text",
-                    "script.package": package_name,
+                    "script.scope": artifact_scope,
                     "execution.id": self.__execution_id,
                 },
             )

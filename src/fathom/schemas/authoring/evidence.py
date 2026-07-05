@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from fathom.schemas.authoring.artifact import AuthoringArtifactReference
 from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.base import SealedModel
-from fathom.schemas.flow import Evidence, Flow, Report
+from fathom.schemas.flow import CompletionAssertion, Evidence, Flow, Report
 from fathom.schemas.steps import StepGoal
 
 
@@ -152,6 +152,9 @@ class RunAuthoringEvidence(SealedModel):
     )
     drafts: Tuple[AuthoringDraft, ...] = Field(
         default_factory=tuple, description="Step drafts available to whole-run authoring."
+    )
+    assertions: Tuple[CompletionAssertion, ...] = Field(
+        default_factory=tuple, description="Terminal assertions available to completed scripts."
     )
 
 

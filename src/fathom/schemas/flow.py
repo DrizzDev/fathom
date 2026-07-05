@@ -5,6 +5,7 @@ from typing import Literal, Optional, Tuple, Union
 from pydantic import Field, model_validator
 
 from fathom.constants.flow import (
+    AssertionSource,
     CheckKind,
     IssueCode,
     LaunchProvenance,
@@ -210,6 +211,10 @@ class CheckNode(Node):
 
     kind: Literal[NodeKind.CHECK] = NodeKind.CHECK
     checks: Tuple[Check, ...] = Field(min_length=1, description="Assertions to verify.")
+    assertion_ids: Tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Completion assertion identifiers grounding this validation.",
+    )
 
 
 class MapNode(Node):
@@ -398,6 +403,25 @@ class StepCapture(SealedModel):
     )
 
 
+class CompletionAssertion(SealedModel):
+    """
+    Terminal assertion proven by execution verification and available to script authoring.
+    """
+
+    id: str = Field(min_length=1, description="Stable assertion identifier within the execution.")
+    kind: CheckKind = Field(description="Validation kind proven by the verifier.")
+    source: AssertionSource = Field(description="System component that produced the assertion.")
+    subject: str = Field(min_length=1, description="Visible state or data subject that was proven.")
+
+    reason: Optional[str] = Field(default=None, description="Verifier rationale for the assertion.")
+    step_index: Optional[int] = Field(
+        default=None, ge=0, description="Execution step after which the assertion was proven."
+    )
+    artifacts: Tuple[str, ...] = Field(
+        default_factory=tuple, description="Artifacts inspected to prove the assertion."
+    )
+
+
 class EvidenceStep(SealedModel):
     """
     One recorded execution step exposed to script generation.
@@ -454,6 +478,9 @@ class Evidence(SealedModel):
     )
     artifacts: Tuple[str, ...] = Field(
         default_factory=tuple, description="Run-level artifact references."
+    )
+    assertions: Tuple[CompletionAssertion, ...] = Field(
+        default_factory=tuple, description="Terminal assertions proven outside normal steps."
     )
     partial: bool = Field(
         default=False, description="True when no successful goal validation was recorded."

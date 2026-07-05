@@ -28,14 +28,49 @@ class RunConfiguration(SealedModel):
     )
 
 
+class AuthoringArtifactConfiguration(SealedModel):
+    """
+    Configuration for artifact payloads attached to authoring model requests.
+    """
+
+    include_images: bool = Field(
+        default=True,
+        description="Whether screenshot and trace image artifacts are attached to authoring requests.",
+    )
+    include_manifests: bool = Field(
+        default=True,
+        description="Whether manifest or UI-tree artifacts are embedded in authoring requests.",
+    )
+    include_text: bool = Field(
+        default=True,
+        description="Whether text artifacts such as logs or OCR output are embedded in authoring requests.",
+    )
+
+    max_images: int = Field(
+        ge=0,
+        default=2,
+        description="Maximum image artifacts attached to one authoring request.",
+    )
+    max_text_artifacts: int = Field(
+        ge=0,
+        default=3,
+        description="Maximum text or manifest artifacts embedded in one authoring request.",
+    )
+    max_text_characters: int = Field(
+        ge=0,
+        default=8000,
+        description="Maximum characters read from each text or manifest artifact.",
+    )
+
+
 class AuthoringConfiguration(SealedModel):
     """
     Configuration for script authoring modes.
     """
 
     attempts: int = Field(
-        default=3,
         ge=1,
+        default=3,
         description="Maximum authoring attempts before falling back or failing.",
     )
     step: StepAuthoringConfiguration = Field(
@@ -45,4 +80,8 @@ class AuthoringConfiguration(SealedModel):
     run: RunConfiguration = Field(
         default_factory=RunConfiguration,
         description="Whole-run authoring configuration.",
+    )
+    artifacts: AuthoringArtifactConfiguration = Field(
+        default_factory=AuthoringArtifactConfiguration,
+        description="Artifact payload limits for authoring model requests.",
     )

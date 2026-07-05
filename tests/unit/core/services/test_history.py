@@ -13,6 +13,7 @@ from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
     BASELINE_SCRIPT_FILENAME,
     ScriptArtifactMode,
+    ScriptArtifactScope,
     ScriptSource,
     ScriptStatus,
 )
@@ -57,12 +58,12 @@ class RecordingRefresher(ScriptRefresher):
         self.scheduled: List[Tuple[str, RunObjective]] = []
         self.drains = 0
 
-    def schedule(self, *, run: str, objective: RunObjective) -> None:
+    def schedule(self, *, execution_id: str, objective: RunObjective) -> None:
         """
-        Record the scheduled run and objective.
+        Record the scheduled execution and objective.
         """
 
-        self.scheduled.append((run, objective))
+        self.scheduled.append((execution_id, objective))
 
     async def drain(self) -> None:
         """
@@ -96,7 +97,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return HistoryService(
-            workflow_id="wf-1",
+            execution_id="wf-1",
             package_name="com.app.one",
             path_manager=StubPathManager(directory=directory),
             refresher=refresher,
@@ -126,7 +127,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
         Read the workflow trace's ordered records.
         """
 
-        payload: Dict[str, Any] = json.loads((directory / "history__workflow.json").read_text())
+        payload: Dict[str, Any] = json.loads((directory / "history__execution.json").read_text())
         records: List[Dict[str, Any]] = payload["history"]
         return records
 
@@ -210,7 +211,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            (directory / "history__workflow.json").write_text("{ not valid json")
+            (directory / "history__execution.json").write_text("{ not valid json")
             service = self.__service(directory=directory)
 
             await service.save_step(
@@ -219,7 +220,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
                 execution_activity="com.meesho.supply",
             )
 
-            backups = list(directory.glob("history__workflow.corrupt.*.json"))
+            backups = list(directory.glob("history__execution.corrupt.*.json"))
             self.assertEqual(len(backups), 1)
             self.assertEqual(
                 [record["step_number"] for record in self.__trace(directory=directory)], [0]
@@ -243,8 +244,8 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(len(refresher.scheduled), 1)
-            run, objective = refresher.scheduled[0]
-            self.assertEqual(run, "wf-1")
+            execution_id, objective = refresher.scheduled[0]
+            self.assertEqual(execution_id, "wf-1")
             self.assertEqual(objective.intent, "open and verify")
             self.assertEqual(objective.package, "com.meesho.supply")
 
@@ -277,7 +278,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
                 execution_activity="com.meesho.supply",
             )
 
-            self.assertTrue((directory / "history__workflow.json").exists())
+            self.assertTrue((directory / "history__execution.json").exists())
             self.assertFalse((directory / "history__com.meesho.supply.json").exists())
             self.assertFalse((directory / "history__com.meesho.supply.yaml").exists())
 
@@ -299,7 +300,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
                 execution_activity="com.meesho.supply",
             )
 
-            self.assertTrue((directory / "history__workflow.json").exists())
+            self.assertTrue((directory / "history__execution.json").exists())
             self.assertTrue((directory / "history__com.meesho.supply.json").exists())
             self.assertTrue((directory / "history__com.meesho.supply.yaml").exists())
 
@@ -322,7 +323,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return HistoryService(
-            workflow_id="wf-1",
+            execution_id="wf-1",
             package_name=self.PACKAGE,
             path_manager=StubPathManager(directory=directory),
             artifact_mode=artifact_mode,
@@ -332,12 +333,12 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
         self, *, directory: Path, metadata: ScriptFileMetadata, text: Optional[str]
     ) -> None:
         """
-        Write a baseline artifact (metadata always, script when present) scoped by the service package.
+        Write an execution-scoped baseline artifact.
         """
 
         def __scoped(filename: str) -> Path:
             stem, _, ext = filename.rpartition(".")
-            return directory / f"{stem}__{self.PACKAGE}.{ext}"
+            return directory / f"{stem}__{ScriptArtifactScope.EXECUTION.value}.{ext}"
 
         __scoped(BASELINE_METADATA_FILENAME).write_text(metadata.model_dump_json())
         if text is not None:
@@ -364,16 +365,23 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
             self.assertEqual(artifact.text, "OPEN_APP: com.app.one\nTap on Search box")
             self.assertEqual(
-                (directory / "script__workflow.txt").read_text(),
+                (directory / "script__execution.txt").read_text(),
                 "OPEN_APP: com.app.one\nTap on Search box",
             )
             metadata = ScriptFileMetadata.model_validate_json(
-                (directory / "script.meta__workflow.json").read_text()
+                (directory / "script.meta__execution.json").read_text()
             )
 
             self.assertIs(metadata.source, ScriptSource.BASELINE)
-            self.assertFalse((directory / f"script.baseline__{self.PACKAGE}.txt").exists())
-            self.assertFalse((directory / f"script.baseline.meta__{self.PACKAGE}.json").exists())
+            self.assertFalse(
+                (directory / f"script.baseline__{ScriptArtifactScope.EXECUTION.value}.txt").exists()
+            )
+            self.assertFalse(
+                (
+                    directory
+                    / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+                ).exists()
+            )
 
     async def test_generated_baseline_metadata_without_script_text_fails_with_diagnostic(
         self,
@@ -397,7 +405,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
             self.assertEqual(artifact.metadata.issues[0].code, IssueCode.BASELINE_UNAVAILABLE)
-            self.assertFalse((directory / "script__workflow.txt").exists())
+            self.assertFalse((directory / "script__execution.txt").exists())
 
     async def test_generated_baseline_with_unreadable_script_text_fails_with_diagnostic(
         self,
@@ -416,7 +424,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 text=None,
             )
-            (directory / f"script.baseline__{self.PACKAGE}.txt").mkdir()
+            (directory / f"script.baseline__{ScriptArtifactScope.EXECUTION.value}.txt").mkdir()
 
             with self.assertLogs(HistoryService.__module__, level="INFO") as captured:
                 artifact = await service.read_baseline_outcome(step_number=2)
@@ -425,7 +433,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("script.baseline.read.failed_text", events)
             self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
             self.assertEqual(artifact.metadata.issues[0].code, IssueCode.BASELINE_UNAVAILABLE)
-            self.assertFalse((directory / "script__workflow.txt").exists())
+            self.assertFalse((directory / "script__execution.txt").exists())
 
     async def test_debug_mode_keeps_baseline_after_promotion(self) -> None:
         """
@@ -446,8 +454,15 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             artifact = await service.read_baseline_outcome(step_number=2)
 
             self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
-            self.assertTrue((directory / f"script.baseline__{self.PACKAGE}.txt").exists())
-            self.assertTrue((directory / f"script.baseline.meta__{self.PACKAGE}.json").exists())
+            self.assertTrue(
+                (directory / f"script.baseline__{ScriptArtifactScope.EXECUTION.value}.txt").exists()
+            )
+            self.assertTrue(
+                (
+                    directory
+                    / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+                ).exists()
+            )
 
     async def test_baseline_outcome_failed_when_artifact_missing(self) -> None:
         """
@@ -462,6 +477,30 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
             self.assertIsNone(artifact.text)
             self.assertEqual(artifact.metadata.issues[0].code, IssueCode.BASELINE_UNAVAILABLE)
+
+    async def test_baseline_outcome_ignores_package_scoped_artifact(self) -> None:
+        """
+        Finalization reads the execution-scoped baseline, never the terminal package artifact.
+        """
+
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            service = self.__service(directory=directory)
+            metadata = ScriptFileMetadata(
+                source=ScriptSource.BASELINE, status=ScriptStatus.GENERATED
+            )
+            (directory / f"script.baseline.meta__{self.PACKAGE}.json").write_text(
+                metadata.model_dump_json()
+            )
+            (directory / f"script.baseline__{self.PACKAGE}.txt").write_text(
+                "OPEN_APP: com.google.android.gms\nTap on Wrong package"
+            )
+
+            artifact = await service.read_baseline_outcome(step_number=2)
+
+            self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
+            self.assertEqual(artifact.metadata.issues[0].code, IssueCode.BASELINE_UNAVAILABLE)
+            self.assertFalse((directory / "script__execution.txt").exists())
 
     async def test_baseline_outcome_passes_through_failed_metadata(self) -> None:
         """
@@ -485,7 +524,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
             self.assertEqual(artifact.metadata.issues[0].code, IssueCode.EMPTY_SCRIPT)
-            self.assertFalse((directory / "script__workflow.txt").exists())
+            self.assertFalse((directory / "script__execution.txt").exists())
 
     async def test_unreadable_baseline_metadata_logs_failed_metadata(self) -> None:
         """
@@ -495,7 +534,9 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
             service = self.__service(directory=directory)
-            (directory / f"script.baseline.meta__{self.PACKAGE}.json").write_text("{ not json")
+            (
+                directory / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+            ).write_text("{ not json")
 
             with self.assertLogs(HistoryService.__module__, level="INFO") as captured:
                 artifact = await service.read_baseline_outcome(step_number=2)

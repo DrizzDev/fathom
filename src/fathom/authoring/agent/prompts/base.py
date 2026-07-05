@@ -24,9 +24,12 @@ class AuthoringPrompt(ABC):
         "Read task.intent and the task-specific evidence view before selecting commands.",
         "Use dialect.commands as the supported command reference; do not emit unsupported nodes.",
         "Use action, target, guard, capture, launch, observation, rationale, artifacts, and review as evidence, not as text to copy mechanically.",
+        "When screenshots are attached, inspect visible UI state, target identity, and validation evidence; when manifests or UI trees are attached, use them to disambiguate element role and structure.",
+        "Artifacts are optional; if they are absent, author from the recorded execution data without pretending visual or manifest evidence was available.",
         "Choose exact targets when the evidence identifies a stable UI element; choose relative or dynamic targets when the action selected an item by order, query, filter, condition, or runtime context.",
         "Collapse repeated attempts when one episode shows several tries toward one user-level purpose.",
         "Keep separate commands when the evidence shows separate user-level purposes.",
+        "For completed run authoring, end with a Validate node grounded in supplied completion assertions; cite the assertion id in assertion_ids.",
     )
 
     def system_instruction(self) -> str:
@@ -54,13 +57,18 @@ class AuthoringPrompt(ABC):
 
         return "\n\n".join(
             (
-                "# Context",
-                "The packet contains the task, evidence, artifacts, dialect guide, command constraints, and few-shot examples.",
+                "# Dialect Reference",
+                "Use this language reference for every output node. The same reference applies to step, run, and repair authoring.",
                 "```json",
-                packet.model_dump_json(exclude_none=True),
+                packet.dialect.model_dump_json(exclude_none=True),
+                "```",
+                "# Evidence",
+                "Use this task evidence, drafts, review feedback, and artifact references as the only source of truth.",
+                "```json",
+                packet.task.model_dump_json(exclude_none=True),
                 "```",
                 "# Task",
-                "Based on the packet above, return the best Flow for this task and target dialect.",
+                "Based on the dialect reference and evidence above, return the best Flow for this task.",
             )
         )
 

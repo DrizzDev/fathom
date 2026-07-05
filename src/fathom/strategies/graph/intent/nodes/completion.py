@@ -4,7 +4,6 @@ import asyncio
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
-from fathom.constants import ActionType
 from fathom.constants.capability import CompletionMode
 from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
@@ -107,9 +106,7 @@ class SubGoalEvaluator:
         active = cast("SubGoal", current)
         emitted_kind = action_kind_for(step_result.step.action.action_type)
 
-        if self.__is_capture_completion(
-            active=active, action_type=step_result.step.action.action_type
-        ):
+        if self.__requires_capture_completion(active=active):
             decision = self.__capture_policy.evaluate(
                 step_result=step_result,
                 capture_store=self.__context.capture_store,
@@ -254,20 +251,16 @@ class SubGoalEvaluator:
 
         return current is not None and has_sub_goals
 
-    def __is_capture_completion(self, *, active: SubGoal, action_type: ActionType) -> bool:
+    def __requires_capture_completion(self, *, active: SubGoal) -> bool:
         """
-        Whether both the active sub-goal's directive and the emitted command complete via captured value.
+        Return whether the active directive can only advance through captured evidence.
         """
 
         if active.directive is None:
             return False
 
-        emitted = self.__context.catalog.profile(action_type=action_type).completion
         directed = self.__context.catalog.profile(action_type=active.directive).completion
-        return (
-            emitted is CompletionMode.CAPTURE_VERIFIED
-            and directed is CompletionMode.CAPTURE_VERIFIED
-        )
+        return directed is CompletionMode.CAPTURE_VERIFIED
 
     @staticmethod
     def __capture_evidence(
@@ -278,18 +271,21 @@ class SubGoalEvaluator:
         """
 
         request = step_result.step.action.capture
+
         if decision.outcome is GateOutcome.ADVANCE and request is not None:
             note = f"capture.verified: stored '{request.name}'"
+
         elif decision.retain_reason is not None:
             note = f"capture.retained: {decision.retain_reason.value}"
+
         else:
             note = "capture.retained"
 
         return CompletionEvidence(
+            notes=(note,),
+            screen=ScreenEvidence(evolved=False),
             claim=ClaimEvidence(asserted=False, justified=False),
             action=ActionEvidence(dispatched=False, executed=step_result.executed),
-            screen=ScreenEvidence(evolved=False),
-            notes=(note,),
         )
 
     async def __semantic_similarity(
@@ -302,8 +298,9 @@ class SubGoalEvaluator:
         Cosine similarity between rationale and sub-goal via embedding port + cache; ``None`` on any failure.
         """
 
-        cache = self.__context.embedding_cache
         embedder = self.__context.embedder
+        cache = self.__context.embedding_cache
+
         if cache is None or embedder is None:
             logger.info(
                 "Semantic similarity unavailable; embedder or cache missing",
@@ -349,9 +346,9 @@ class SubGoalEvaluator:
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.error",
+                    "sub_goal.index": sub_goal.index,
                     "error.kind": type(exception).__name__,
                     "error.message": str(exception),
-                    "sub_goal.index": sub_goal.index,
                 },
             )
             return None
@@ -375,8 +372,8 @@ class SubGoalEvaluator:
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.dimension_mismatch",
-                    "error.message": str(exception),
                     "sub_goal.index": sub_goal.index,
+                    "error.message": str(exception),
                 },
             )
             return None
@@ -386,8 +383,8 @@ class SubGoalEvaluator:
             extra={
                 "component": "graph.intent.completion",
                 "event": "completion.semantic_similarity.resolved",
-                "sub_goal.index": sub_goal.index,
                 "similarity.score": score,
+                "sub_goal.index": sub_goal.index,
                 "rationale.length": len(rationale),
             },
         )

@@ -9,6 +9,7 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
     BASELINE_SCRIPT_FILENAME,
+    ScriptArtifactScope,
     ScriptSource,
     ScriptStatus,
 )
@@ -141,12 +142,18 @@ class BaselineRefresher(ScriptRefresher):
             )
             artifact = self.__failure(exception=exception)
             self.__persist(
-                execution_id=execution_id, package_name=objective.package, artifact=artifact
+                execution_id=execution_id,
+                artifact_scope=ScriptArtifactScope.EXECUTION.value,
+                artifact=artifact,
             )
             return
 
         self.__log_built(execution_id=execution_id, artifact=artifact, started=started)
-        self.__persist(execution_id=execution_id, package_name=objective.package, artifact=artifact)
+        self.__persist(
+            execution_id=execution_id,
+            artifact_scope=ScriptArtifactScope.EXECUTION.value,
+            artifact=artifact,
+        )
 
     def __log_built(self, *, execution_id: str, artifact: BaselineArtifact, started: float) -> None:
         """
@@ -200,7 +207,7 @@ class BaselineRefresher(ScriptRefresher):
         )
 
     def __persist(
-        self, *, execution_id: str, package_name: str, artifact: BaselineArtifact
+        self, *, execution_id: str, artifact_scope: str, artifact: BaselineArtifact
     ) -> None:
         """
         Atomically write the metadata sidecar and, when generated, the baseline script; never raises.
@@ -210,12 +217,12 @@ class BaselineRefresher(ScriptRefresher):
             directory = self.__path_manager.get_history_directory(session_id=execution_id)
             script_path = self.__scoped(
                 directory=directory,
-                package_name=package_name,
+                scope=artifact_scope,
                 filename=BASELINE_SCRIPT_FILENAME,
             )
             metadata_path = self.__scoped(
                 directory=directory,
-                package_name=package_name,
+                scope=artifact_scope,
                 filename=BASELINE_METADATA_FILENAME,
             )
 
@@ -235,7 +242,7 @@ class BaselineRefresher(ScriptRefresher):
                 extra={
                     "event": "script.baseline.refresh.persist_failed",
                     "execution.id": execution_id,
-                    "script.package": package_name,
+                    "script.scope": artifact_scope,
                     "exception.type": type(exception).__name__,
                     "exception.message": str(exception),
                 },
@@ -247,7 +254,7 @@ class BaselineRefresher(ScriptRefresher):
             extra={
                 "event": "script.baseline.refresh.persisted",
                 "execution.id": execution_id,
-                "script.package": package_name,
+                "script.scope": artifact_scope,
                 "script.metadata_file": metadata_path.name,
                 "script.status": artifact.metadata.status.value,
                 "script.script_file": script_path.name if artifact.text is not None else None,
@@ -255,13 +262,13 @@ class BaselineRefresher(ScriptRefresher):
         )
 
     @staticmethod
-    def __scoped(*, directory: Path, filename: str, package_name: str) -> Path:
+    def __scoped(*, directory: Path, filename: str, scope: str) -> Path:
         """
-        Scope an artifact filename by package so multi-package sessions never collide.
+        Scope an artifact filename by execution-level artifact scope.
         """
 
         stem, _, ext = filename.rpartition(".")
-        scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
+        scoped = f"{stem}__{scope}.{ext}" if stem and ext else f"{filename}__{scope}"
 
         return directory / scoped
 

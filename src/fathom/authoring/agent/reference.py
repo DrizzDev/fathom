@@ -1,12 +1,9 @@
 from __future__ import annotations
 
+from fathom.constants.authoring.drizz import DRIZZ_COMMANDS, DRIZZ_GUIDE
 from fathom.constants.dialect import DialectName
 from fathom.core.exceptions import ConfigurationError
-from fathom.schemas.authoring.reference import (
-    DRIZZ_COMMANDS,
-    DRIZZ_GUIDE,
-    AuthoringDialectReference,
-)
+from fathom.schemas.authoring.reference import AuthoringDialectReference
 
 
 class AuthoringReferenceProvider:

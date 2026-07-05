@@ -56,7 +56,7 @@ class Policy:
         issues.extend(self.__target_content(indexed=indexed, index=index))
         issues.extend(self.__type_content(indexed=indexed, index=index))
         issues.extend(self.__wait_content(indexed=indexed, index=index))
-        issues.extend(self.__validation_content(indexed=indexed, index=index))
+        issues.extend(self.__validation_content(indexed=indexed, index=index, evidence=evidence))
         issues.extend(self.__ungrounded_scrolls(indexed=indexed, index=index))
         issues.extend(self.__redundant_scrolls(indexed=indexed, index=index))
         issues.extend(self.__ungrounded_stores(indexed=indexed, index=index))
@@ -294,7 +294,11 @@ class Policy:
         return issues
 
     def __validation_content(
-        self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
+        self,
+        *,
+        indexed: List[Tuple[int, FlowNode]],
+        index: Dict[int, EvidenceStep],
+        evidence: Evidence,
     ) -> List[Issue]:
         """
         Reject validation subjects that differ from recorded validation target content.
@@ -306,6 +310,9 @@ class Policy:
             if not isinstance(node, CheckNode):
                 continue
 
+            if self.__matches_completion_assertions(node=node, evidence=evidence):
+                continue
+
             recorded_targets = tuple(
                 target
                 for step in node.source_steps
@@ -314,7 +321,7 @@ class Policy:
             )
 
             for check in node.checks:
-                if not self.__matches_grounding(text=check.subject, candidates=recorded_targets):
+                if not self.__matches_validation(text=check.subject, candidates=recorded_targets):
                     issues.append(
                         Issue(
                             node_index=position,
@@ -330,6 +337,30 @@ class Policy:
                     break
 
         return issues
+
+    @classmethod
+    def __matches_completion_assertions(cls, *, node: CheckNode, evidence: Evidence) -> bool:
+        """
+        Return whether the check is grounded in supplied completion assertions.
+        """
+
+        if not node.assertion_ids:
+            return False
+
+        selected = tuple(
+            assertion for assertion in evidence.assertions if assertion.id in node.assertion_ids
+        )
+        if len(selected) != len(node.assertion_ids):
+            return False
+
+        return all(
+            any(
+                check.kind is assertion.kind
+                and cls.__matches_validation(text=check.subject, candidates=(assertion.subject,))
+                for assertion in selected
+            )
+            for check in node.checks
+        )
 
     def __ungrounded_scrolls(
         self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
@@ -551,24 +582,21 @@ class Policy:
         Return evidence strings that can ground a validation assertion subject.
         """
 
-        if recorded.target.export and not cls.__contains(
-            text=recorded.target.export, fragment=recorded.target.name
-        ):
+        if recorded.target.export:
             return (recorded.target.export,)
 
-        narrative = tuple(
-            text
-            for text in (
-                recorded.goal.description if recorded.goal is not None else None,
-                recorded.rationale,
-                recorded.observation,
-            )
-            if text
-        )
-        if narrative:
-            return narrative
-
         return cls.__target_grounding(recorded=recorded)
+
+    @classmethod
+    def __matches_validation(cls, *, text: str, candidates: Tuple[str, ...]) -> bool:
+        """
+        Return whether a validation subject exactly matches recorded validation evidence.
+        """
+
+        normalized = cls.__normalized(text=text)
+        return bool(normalized) and any(
+            normalized == cls.__normalized(text=candidate) for candidate in candidates
+        )
 
     @classmethod
     def __condition_grounding(cls, *, recorded: EvidenceStep) -> Tuple[str, ...]:
@@ -603,17 +631,6 @@ class Policy:
         return bool(normalized) and any(
             normalized in cls.__normalized(text=candidate) for candidate in candidates
         )
-
-    @classmethod
-    def __contains(cls, *, text: Optional[str], fragment: Optional[str]) -> bool:
-        """
-        Return whether a non-empty fragment is contained in text after normalization.
-        """
-
-        if not text or not fragment:
-            return False
-
-        return cls.__normalized(text=fragment) in cls.__normalized(text=text)
 
     @classmethod
     def __grounding_summary(cls, *, candidates: Tuple[str, ...]) -> str:
@@ -850,11 +867,15 @@ class Policy:
             if step.event == self.__VALIDATION and step.outcome.success
         }
         terminal = nodes[-1] if nodes else None
-        grounded = (
+        validation_grounded = (
             terminal is not None
             and terminal.kind is NodeKind.CHECK
             and bool(set(terminal.source_steps) & validations)
         )
+        assertion_grounded = isinstance(
+            terminal, CheckNode
+        ) and self.__matches_completion_assertions(node=terminal, evidence=evidence)
+        grounded = validation_grounded or assertion_grounded
 
         if evidence.partial:
             return self.__partial_completion(flow=flow, terminal=terminal, grounded=grounded)

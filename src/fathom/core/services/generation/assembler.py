@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 from fathom.constants import ActionType
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.flow import (
+    CompletionAssertion,
     Evidence,
     EvidenceStep,
     StepCapture,
@@ -35,19 +36,22 @@ class EvidenceAssembler:
         partial: bool = False,
         discarded: Tuple[int, ...] = (),
         reason: Optional[str] = None,
+        assertions: Tuple[CompletionAssertion, ...] = (),
     ) -> Evidence:
         """
         Build the evidence aggregate from a normalized trace of launches and step records.
         """
 
+        completed = bool(assertions)
         return Evidence(
-            intent=intent,
             goal=goal,
+            intent=intent,
+            assertions=assertions,
+            reason=None if completed else reason,
+            partial=False if completed else partial,
+            discarded=discarded,
             package=self.__package(trace=trace, fallback=package),
             steps=tuple(self.__entry(entry=entry) for entry in trace.entries),
-            partial=partial,
-            discarded=discarded,
-            reason=reason,
         )
 
     def __entry(self, *, entry: NormalizedEntry) -> EvidenceStep:

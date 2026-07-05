@@ -13,6 +13,7 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.gemini_tools import ExecuteAction
 from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.supervision import BlockReason
 from fathom.schemas.tools import ToolCommand, ToolResponse
 from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
@@ -155,6 +156,55 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         assert result.step is not None
         self.assertEqual(result.step.action.action_type, ActionType.TAP)
         self.assertEqual(result.step.action.target, "Search box")
+
+    async def test_rejects_validate_command_during_store_subgoal(self) -> None:
+        """
+        A STORE-directed sub-goal retries when the model emits validate instead of capture.
+        """
+
+        analysis = AnalysisResult(
+            action=None,
+            reasoning="The product price is visible.",
+            screen_description="Product detail",
+            tool_response=ToolResponse(
+                command=ToolCommand(
+                    action_type=ActionType.VALIDATE,
+                    payload=ExecuteAction(
+                        action_type="validate",
+                        validation_subject="Product price is visible",
+                        confidence=0.9,
+                    ),
+                )
+            ),
+        )
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        vision.build_rejection_history_from_analysis = Mock(return_value=[])
+
+        state = AgentFixtures.state(intent="Store product price")
+        state.set_sub_goals(
+            [
+                SubGoal(
+                    index=0,
+                    description="Store the product price as product.amount",
+                    directive=ActionType.STORE,
+                )
+            ]
+        )
+
+        result = await StepPlanner(vision_tool=vision).plan_step(
+            state=state,
+            reasoner=Mock(),
+            capture=ScreenFixtures.capture(activity="app"),
+            context_manager=AgentFixtures.context_manager(),
+            screen_width=100,
+            screen_height=200,
+            prompt_if_stuck=False,
+        )
+
+        self.assertIsNone(result.step)
+        self.assertTrue(result.should_retry)
+        self.assertIn("needs an executable command with capture", str(result.reason))
 
     async def test_does_not_block_persistent_screen_memory(self) -> None:
         """

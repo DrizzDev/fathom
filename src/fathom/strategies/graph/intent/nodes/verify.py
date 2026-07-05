@@ -6,6 +6,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Optional, Tuple, cast
 
+from fathom.constants.flow import AssertionSource, CheckKind
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
@@ -18,6 +19,7 @@ from fathom.core.prompts.templates import (
 )
 from fathom.schemas.artifact import ArtifactRecord, VerificationPayload
 from fathom.schemas.completion import CompletionVerdict
+from fathom.schemas.flow import CompletionAssertion
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.subgoal import SubGoal
@@ -33,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 MAX_VERIFICATION_EVIDENCE_CHARS = 500
 DEFAULT_ACCEPTED_VERIFICATION_REASON = "Verifier accepted completion without detailed rationale."
+MISSING_COMPLETION_ASSERTIONS_REASON = (
+    "Verification accepted completion without structured terminal assertions."
+)
 
 
 class VerifyNode:
@@ -189,6 +194,14 @@ class VerifyNode:
             data = json.loads(text)
             is_truly_complete = bool(data.get("is_complete", False))
             reason = str(data.get("reason", "Verification failed without specific reason."))
+            assertions = self.__assertions(data=data, capture=capture, reason=reason)
+            if (
+                is_truly_complete
+                and self.__requires_completion_assertions(mode=mode)
+                and not assertions
+            ):
+                is_truly_complete = False
+                reason = MISSING_COMPLETION_ASSERTIONS_REASON
 
         except asyncio.CancelledError:
             # Cooperative cancellation must propagate so the graph
@@ -240,11 +253,15 @@ class VerifyNode:
             and mode in {VerifyMode.SUB_GOAL, VerifyMode.PENDING_FINAL_COMMIT}
             and current_sub_goal is not None
         ):
+            if self.__requires_completion_assertions(mode=mode):
+                self.__save_assertions(assertions=assertions)
             result = self.__commit_acceptance(current_sub_goal=current_sub_goal, reason=reason)
             self.__provider.persistence.persist(result=result)
             return result
 
         if is_truly_complete:
+            if self.__requires_completion_assertions(mode=mode):
+                self.__save_assertions(assertions=assertions)
             self.__provider.context.agent_state.clear_verification_loop()
             self.__provider.context.agent_state.mark_complete(
                 reason=self.__accepted_reason(reason=reason)
@@ -532,6 +549,14 @@ class VerifyNode:
         return reason.strip() or DEFAULT_ACCEPTED_VERIFICATION_REASON
 
     @staticmethod
+    def __requires_completion_assertions(*, mode: VerifyMode) -> bool:
+        """
+        Return whether this verifier acceptance can become terminal script evidence.
+        """
+
+        return mode in {VerifyMode.FULL_INTENT, VerifyMode.PENDING_FINAL_COMMIT}
+
+    @staticmethod
     def __verification_evidence(*, reason: str) -> str:
         """
         Return evidence text that preserves whether the verifier supplied a rationale.
@@ -541,6 +566,104 @@ class VerifyNode:
             return DEFAULT_ACCEPTED_VERIFICATION_REASON
 
         return f"Verified by screenshot: {reason[:MAX_VERIFICATION_EVIDENCE_CHARS]}"
+
+    def __assertions(
+        self, *, data: object, capture: ScreenCapture, reason: str
+    ) -> Tuple[CompletionAssertion, ...]:
+        """
+        Parse terminal assertions returned by the verifier.
+        """
+
+        if not isinstance(data, dict):
+            return ()
+
+        raw_assertions = data.get("assertions")
+        if not isinstance(raw_assertions, list):
+            return ()
+
+        assertions = []
+        artifacts = self.__assertion_artifacts(capture=capture)
+        step_index = self.__provider.context.agent_state.step_count
+
+        for position, raw in enumerate(raw_assertions, start=1):
+            assertion = self.__assertion(
+                raw=raw,
+                reason=reason,
+                artifacts=artifacts,
+                position=position,
+                step_index=step_index,
+            )
+            if assertion is not None:
+                assertions.append(assertion)
+
+        return tuple(assertions)
+
+    @staticmethod
+    def __assertion(
+        *,
+        raw: object,
+        reason: str,
+        position: int,
+        step_index: int,
+        artifacts: Tuple[str, ...],
+    ) -> Optional[CompletionAssertion]:
+        """
+        Parse one verifier assertion object.
+        """
+
+        if not isinstance(raw, dict):
+            return None
+
+        subject = raw.get("subject")
+        kind = raw.get("kind")
+        if not isinstance(subject, str) or not subject.strip() or not isinstance(kind, str):
+            return None
+
+        try:
+            check_kind = CheckKind(kind.strip().upper())
+        except ValueError:
+            return None
+
+        raw_id = raw.get("id")
+        assertion_id = raw_id.strip() if isinstance(raw_id, str) and raw_id.strip() else None
+
+        return CompletionAssertion(
+            kind=check_kind,
+            reason=reason,
+            artifacts=artifacts,
+            step_index=step_index,
+            source=AssertionSource.VERIFICATION,
+            subject=subject.strip(),
+            id=assertion_id or f"terminal.{position}",
+        )
+
+    @staticmethod
+    def __assertion_artifacts(*, capture: ScreenCapture) -> Tuple[str, ...]:
+        """
+        Return artifact references inspected by verification.
+        """
+
+        return tuple(
+            uri for uri in (capture.screenshot_uri, capture.annotated_uri) if uri is not None
+        )
+
+    def __save_assertions(self, *, assertions: Tuple[CompletionAssertion, ...]) -> None:
+        """
+        Persist terminal assertions for downstream script authoring.
+        """
+
+        if not assertions:
+            logger.warning(
+                "Verifier accepted completion without structured assertions",
+                extra={
+                    "component": "graph.intent.verify",
+                    "event": "verify.assertions.missing",
+                    "workflow.id": self.__provider.context.workflow_id,
+                },
+            )
+            return
+
+        self.__provider.context.history.save_completion_assertions(assertions=assertions)
 
     def __verification_loop_screen(self, *, capture: ScreenCapture) -> Optional[ScreenState]:
         """

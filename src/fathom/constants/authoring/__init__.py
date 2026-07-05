@@ -54,9 +54,11 @@ class AuthoringArtifactRole(StrEnum):
     LOG = "LOG"
     OCR = "OCR"
     TREE = "TREE"
+    TRACE = "TRACE"
     OTHER = "OTHER"
     AFTER = "AFTER"
     BEFORE = "BEFORE"
+    CONTEXT = "CONTEXT"
     ANNOTATED = "ANNOTATED"
 
 

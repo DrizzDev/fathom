@@ -12,9 +12,15 @@ from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.adapters.script.refresher import BaselineRefresher
+from fathom.authoring.adapters.artifacts import FileAuthoringArtifactProvider
 from fathom.authoring.adapters.store import FileAuthoringDraftStore
 from fathom.authoring.agent import AuthoringAgent
-from fathom.authoring.application import AuthoringRunner, StepAuthoringScheduler
+from fathom.authoring.application import (
+    AuthoringRequestBuilder,
+    AuthoringReviewer,
+    AuthoringRunner,
+    StepAuthoringScheduler,
+)
 from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DevicePlatform
@@ -306,8 +312,12 @@ class GraphContext:
         )
         self.__authoring = authoring or AuthoringService(
             llm=llm,
-            policy=Policy(),
-            dialect=dialect,
+            reviewer=AuthoringReviewer(policy=Policy(), dialect=dialect),
+            requests=AuthoringRequestBuilder(
+                artifacts=FileAuthoringArtifactProvider(
+                    configuration=configuration.authoring.artifacts
+                )
+            ),
             use_cache=configuration.llm.use_cache,
             attempts=configuration.authoring.attempts,
         )

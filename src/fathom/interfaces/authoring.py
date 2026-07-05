@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, Tuple
 
+from fathom.interfaces.llm import PromptPart
 from fathom.schemas.authoring import AuthoringResponse, AuthoringTask
 from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.flow import RunObjective
@@ -35,6 +36,19 @@ class AuthoringDraftStore(Protocol):
     async def list(self, *, execution_id: str) -> Tuple[AuthoringDraft, ...]:
         """
         Return drafts recorded for one execution.
+        """
+
+        ...
+
+
+class AuthoringArtifactProvider(Protocol):
+    """
+    Port for resolving authoring artifact references into model prompt parts.
+    """
+
+    def build(self, *, task: AuthoringTask) -> Tuple[PromptPart, ...]:
+        """
+        Return bounded artifact prompt parts for an authoring task.
         """
 
         ...

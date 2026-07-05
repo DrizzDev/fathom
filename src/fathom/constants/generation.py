@@ -5,6 +5,15 @@ from typing import Final
 
 BASELINE_SCRIPT_FILENAME: Final[str] = "script.baseline.txt"
 BASELINE_METADATA_FILENAME: Final[str] = "script.baseline.meta.json"
+COMPLETION_ASSERTIONS_FILENAME: Final[str] = "completion.assertions.json"
+
+
+class ScriptArtifactScope(StrEnum):
+    """
+    Filename scopes for script artifacts that are not tied to an app package.
+    """
+
+    EXECUTION = "execution"
 
 
 class ScriptSource(StrEnum):

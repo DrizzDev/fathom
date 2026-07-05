@@ -300,7 +300,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_store_subgoal_with_non_store_action_does_not_use_capture(self) -> None:
         """
-        A STORE sub-goal evaluated against a non-STORE action falls through to the legacy gate.
+        A STORE sub-goal evaluated against a non-STORE action still uses the capture contract.
         """
 
         checker = _StubCriterionChecker(
@@ -323,7 +323,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result)
-        self.assertEqual(checker.calls, 1)
+        self.assertEqual(checker.calls, 0)
 
     @staticmethod
     def __plan_with_analysis() -> PlanResult:

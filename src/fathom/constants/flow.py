@@ -48,6 +48,14 @@ class CheckKind(StrEnum):
     DISABLED = "DISABLED"
 
 
+class AssertionSource(StrEnum):
+    """
+    Source that produced a script-authoring assertion.
+    """
+
+    VERIFICATION = "VERIFICATION"
+
+
 class ScrollDirection(StrEnum):
     """
     Direction of a scroll gesture.

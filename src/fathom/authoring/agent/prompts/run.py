@@ -17,7 +17,9 @@ class RunAuthoringPrompt(AuthoringPrompt):
             "Task objective: author the complete run script. Read episodes as the "
             "user-level execution structure, then produce the clean replay sequence for "
             "the whole run. Merge repeated attempts only when they serve the same episode "
-            "purpose. Preserve recorded command semantics and runtime values. Keep "
-            "assertions that prove meaningful states. Return a complete Flow only when "
-            "the evidence proves completion; otherwise return a partial Flow."
+            "purpose. Use step drafts, screenshots, manifests, and other artifacts when "
+            "they are supplied to improve target wording and assertions. Preserve "
+            "recorded command semantics and runtime values. Keep assertions that prove "
+            "meaningful states. Return a complete Flow only when the evidence proves "
+            "completion; otherwise return a partial Flow."
         )

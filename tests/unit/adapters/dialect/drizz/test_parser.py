@@ -157,6 +157,18 @@ class DrizzLarkParserTest(unittest.TestCase):
         self.assertEqual(store.value, "cart total")
         self.assertEqual(store.name, "savedTotal")
 
+    def test_store_name_accepts_dotted_path(self) -> None:
+        """
+        A store variable may use a dotted path.
+        """
+
+        store = self.__parser.parse(text="Store 149 as product.amount\n").commands[0]
+
+        assert isinstance(store, StoreCommand)
+
+        self.assertEqual(store.value, "149")
+        self.assertEqual(store.name, "product.amount")
+
     def test_scroll_until_is_parsed(self) -> None:
         """
         A scroll-until command captures its direction and quoted target.
@@ -166,6 +178,7 @@ class DrizzLarkParserTest(unittest.TestCase):
 
         assert isinstance(scroll, ScrollCommand)
         self.assertEqual(scroll.direction, ScrollDirection.DOWN)
+
         assert scroll.until is not None
         self.assertEqual(scroll.until.text, "Load more")
 
@@ -176,6 +189,7 @@ class DrizzLarkParserTest(unittest.TestCase):
 
         gps = self.__parser.parse(text="SET_GPS(latitude=12.34, longitude=-56.78)\n").commands[0]
         assert isinstance(gps, SetGpsCommand)
+
         self.assertEqual(gps.latitude, 12.34)
         self.assertEqual(gps.longitude, -56.78)
 
@@ -186,8 +200,10 @@ class DrizzLarkParserTest(unittest.TestCase):
 
         colon = self.__parser.parse(text="OPEN_APP:com.example\n").commands[0]
         space = self.__parser.parse(text="OPEN_APP com.example\n").commands[0]
+
         assert isinstance(colon, OpenAppCommand)
         assert isinstance(space, OpenAppCommand)
+
         self.assertEqual(colon.package, "com.example")
         self.assertEqual(space.package, "com.example")
 
@@ -197,7 +213,9 @@ class DrizzLarkParserTest(unittest.TestCase):
         """
 
         typed = self.__parser.parse(text="Type 'Login' into name field\n").commands[0]
+
         assert isinstance(typed, TypeCommand)
+
         self.assertEqual(typed.value, "Login")
         self.assertEqual(typed.field.text, "name field")
 
@@ -207,6 +225,7 @@ class DrizzLarkParserTest(unittest.TestCase):
         """
 
         typed = self.__parser.parse(text='Type `He said "Hi"` into note field\n').commands[0]
+
         assert isinstance(typed, TypeCommand)
         self.assertEqual(typed.value, 'He said "Hi"')
 

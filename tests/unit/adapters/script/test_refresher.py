@@ -13,6 +13,7 @@ from fathom.constants.flow import LaunchProvenance
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
     BASELINE_SCRIPT_FILENAME,
+    ScriptArtifactScope,
     ScriptSource,
     ScriptStatus,
     SkipReason,
@@ -45,10 +46,10 @@ class _RecordingSource(EvidenceSource):
         self.__evidence = evidence
         self.reads: List[str] = []
 
-    async def read(self, *, run: str, objective: RunObjective) -> Evidence:
+    async def read(self, *, execution_id: str, objective: RunObjective) -> Evidence:
         _ = objective
 
-        self.reads.append(run)
+        self.reads.append(execution_id)
         if self.__error is not None:
             raise self.__error
 
@@ -65,6 +66,8 @@ class _StubPaths:
         self.__directory = directory
 
     def get_history_directory(self, *, session_id: str) -> Path:
+        _ = session_id
+
         return self.__directory
 
 
@@ -117,8 +120,8 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 EvidenceStep(
                     index=2,
-                    event="validation",
                     action="complete",
+                    event="validation",
                     outcome=StepOutcome(success=True),
                     target=StepTarget(export="Cart screen"),
                 ),
@@ -147,7 +150,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def __scoped(*, directory: Path, filename: str) -> Path:
         stem, _, ext = filename.rpartition(".")
-        return directory / f"{stem}__{PACKAGE}.{ext}"
+        return directory / f"{stem}__{ScriptArtifactScope.EXECUTION.value}.{ext}"
 
     async def test_schedule_then_drain_writes_generated_artifact(self) -> None:
         """
@@ -160,7 +163,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
                 source=_RecordingSource(evidence=self.__evidence()), directory=directory
             )
 
-            refresher.schedule(run="run-1", objective=self.__objective())
+            refresher.schedule(execution_id="run-1", objective=self.__objective())
             await refresher.drain()
 
             script = self.__scoped(directory=directory, filename=BASELINE_SCRIPT_FILENAME)
@@ -187,7 +190,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
                 source=_RecordingSource(error=RuntimeError("evidence read blew up")),
             )
 
-            refresher.schedule(run="run-1", objective=self.__objective())
+            refresher.schedule(execution_id="run-1", objective=self.__objective())
             await refresher.drain()
 
             script = self.__scoped(directory=directory, filename=BASELINE_SCRIPT_FILENAME)
@@ -213,7 +216,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
                 directory=directory,
                 source=_RecordingSource(evidence=self.__evidence()),
             )
-            generated.schedule(run="run-1", objective=self.__objective())
+            generated.schedule(execution_id="run-1", objective=self.__objective())
             await generated.drain()
             self.assertTrue(script.exists())
 
@@ -221,7 +224,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
                 directory=directory,
                 source=_RecordingSource(error=RuntimeError("evidence read blew up")),
             )
-            failed.schedule(run="run-1", objective=self.__objective())
+            failed.schedule(execution_id="run-1", objective=self.__objective())
             await failed.drain()
 
             self.assertFalse(script.exists())
@@ -244,7 +247,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertLogs(BaselineRefresher.__module__, level="WARNING") as captured:
-            refresher.schedule(run="run-1", objective=self.__objective())
+            refresher.schedule(execution_id="run-1", objective=self.__objective())
             await refresher.drain()
 
         self.assertIn("script.baseline.refresh.persist_failed", self.__events(captured.records))
@@ -259,7 +262,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
             refresher = self.__refresher(source=source, directory=Path(raw))
 
             for _ in range(5):
-                refresher.schedule(run="run-1", objective=self.__objective())
+                refresher.schedule(execution_id="run-1", objective=self.__objective())
 
             await refresher.drain()
 
@@ -281,7 +284,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
             with mock.patch(
                 "fathom.adapters.script.refresher.asyncio.create_task", side_effect=__reject
             ):
-                refresher.schedule(run="run-1", objective=self.__objective())
+                refresher.schedule(execution_id="run-1", objective=self.__objective())
 
             self.assertEqual(source.reads, [])
 
@@ -298,10 +301,10 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
             source = _RecordingSource(evidence=self.__evidence())
             refresher = self.__refresher(source=source, directory=Path(raw))
 
-            refresher.schedule(run="run-1", objective=self.__objective())
+            refresher.schedule(execution_id="run-1", objective=self.__objective())
             await refresher.drain()
 
-            refresher.schedule(run="run-2", objective=self.__objective())
+            refresher.schedule(execution_id="run-2", objective=self.__objective())
             await refresher.drain()
 
             self.assertEqual(source.reads, ["run-1", "run-2"])
@@ -364,7 +367,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with self.assertLogs(BaselineRefresher.__module__, level="INFO") as captured:
-                refresher.schedule(run="run-1", objective=self.__objective())
+                refresher.schedule(execution_id="run-1", objective=self.__objective())
                 await refresher.drain()
 
             events = self.__events(captured.records)
@@ -383,7 +386,7 @@ class BaselineRefresherTest(unittest.IsolatedAsyncioTestCase):
             )
 
             with self.assertLogs(BaselineRefresher.__module__, level="INFO") as captured:
-                refresher.schedule(run="run-1", objective=self.__objective())
+                refresher.schedule(execution_id="run-1", objective=self.__objective())
                 await refresher.drain()
 
             generated = next(

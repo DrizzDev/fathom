@@ -131,6 +131,26 @@ class CommandGateTest(unittest.TestCase):
 
         self.assertEqual(command.action_type, ActionType.VALIDATE)
 
+    def test_store_directive_rejects_non_capture_command(self) -> None:
+        """
+        A STORE-directed sub-goal can only be satisfied by a capture-verified command.
+        """
+
+        gate = CommandGate(catalog=CommandCatalogProvider().build())
+
+        with self.assertRaises(ToolValidationError):
+            gate.validate(
+                directive=ActionType.STORE,
+                command=ToolCommand(
+                    action_type=ActionType.VALIDATE,
+                    payload=ExecuteAction(
+                        action_type="validate",
+                        validation_subject="Product price is visible",
+                        confidence=0.9,
+                    ),
+                ),
+            )
+
     def test_rejects_command_missing_from_catalog(self) -> None:
         """
         Disabled or unavailable commands fail before action materialization.

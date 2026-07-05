@@ -4,12 +4,19 @@ import unittest
 from typing import FrozenSet, Optional, Tuple
 
 from fathom.constants.execution import LAUNCHER_PACKAGES
-from fathom.constants.flow import CheckKind, IssueCode, LaunchProvenance, ScrollDirection
+from fathom.constants.flow import (
+    AssertionSource,
+    CheckKind,
+    IssueCode,
+    LaunchProvenance,
+    ScrollDirection,
+)
 from fathom.core.dialect.policy import Policy
 from fathom.schemas.flow import (
     BranchNode,
     Check,
     CheckNode,
+    CompletionAssertion,
     Evidence,
     EvidenceStep,
     Flow,
@@ -435,6 +442,67 @@ class PolicyTest(unittest.TestCase):
         nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1), check)
 
         self.assertIn(IssueCode.INVENTED_VALIDATION, self.__codes(nodes=nodes))
+
+    def test_completion_assertion_can_ground_terminal_validation(self) -> None:
+        """
+        A verifier completion assertion can ground the mandatory terminal validation.
+        """
+
+        evidence = self.__partial_evidence().model_copy(
+            update={
+                "partial": False,
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.login",
+                        kind=CheckKind.VISIBLE,
+                        source=AssertionSource.VERIFICATION,
+                        subject="Phone Number input field",
+                    ),
+                ),
+            }
+        )
+        terminal = CheckNode(
+            source_steps=(1,),
+            assertion_ids=("terminal.login",),
+            checks=(Check(kind=CheckKind.VISIBLE, subject="Phone Number input field"),),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1), terminal)
+
+        codes = self.__codes(nodes=nodes, evidence=evidence)
+
+        self.assertNotIn(IssueCode.INVENTED_VALIDATION, codes)
+        self.assertNotIn(IssueCode.VALIDATION_SUBJECT_MISMATCH, codes)
+        self.assertNotIn(IssueCode.MISSING_GOAL_VALIDATION, codes)
+
+    def test_completion_assertion_rejects_wrong_terminal_subject(self) -> None:
+        """
+        A terminal validation citing verifier evidence must match the asserted subject.
+        """
+
+        evidence = self.__partial_evidence().model_copy(
+            update={
+                "partial": False,
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.login",
+                        kind=CheckKind.VISIBLE,
+                        source=AssertionSource.VERIFICATION,
+                        subject="Phone Number input field",
+                    ),
+                ),
+            }
+        )
+        terminal = CheckNode(
+            source_steps=(1,),
+            assertion_ids=("terminal.login",),
+            checks=(Check(kind=CheckKind.VISIBLE, subject="Buy Now button"),),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1), terminal)
+
+        codes = self.__codes(nodes=nodes, evidence=evidence)
+
+        self.assertIn(IssueCode.INVENTED_VALIDATION, codes)
+        self.assertIn(IssueCode.VALIDATION_SUBJECT_MISMATCH, codes)
 
     def test_partial_evidence_requires_partial_flow(self) -> None:
         """
@@ -1030,9 +1098,9 @@ class PolicyTest(unittest.TestCase):
             self.__codes(nodes=nodes, evidence=evidence),
         )
 
-    def test_validation_accepts_state_grounded_in_rationale(self) -> None:
+    def test_validation_rejects_state_grounded_only_in_rationale(self) -> None:
         """
-        A validation may assert the state named by the cited validation rationale.
+        A validation cannot assert a state that appears only in narrative rationale.
         """
 
         evidence = Evidence(
@@ -1060,6 +1128,47 @@ class PolicyTest(unittest.TestCase):
         )
         terminal = CheckNode(
             checks=(Check(kind=CheckKind.VISIBLE, subject="login screen"),), source_steps=(4,)
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
+
+        self.assertIn(
+            IssueCode.VALIDATION_SUBJECT_MISMATCH,
+            self.__codes(nodes=nodes, evidence=evidence),
+        )
+
+    def test_validation_accepts_recorded_structured_subject(self) -> None:
+        """
+        A validation subject matching the structured assertion export passes.
+        """
+
+        evidence = Evidence(
+            goal="home visible",
+            package="com.example",
+            intent="open and verify",
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    action="launch",
+                    event="launch",
+                    launch=StepLaunch(
+                        package="com.example",
+                        provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                    ),
+                ),
+                EvidenceStep(
+                    index=4,
+                    event="validation",
+                    action="complete",
+                    target=StepTarget(
+                        name="₹149",
+                        export="Product price ₹149 is visible",
+                    ),
+                ),
+            ),
+        )
+        terminal = CheckNode(
+            checks=(Check(kind=CheckKind.VISIBLE, subject="Product price ₹149 is visible"),),
+            source_steps=(4,),
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
 

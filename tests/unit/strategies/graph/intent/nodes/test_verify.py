@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
@@ -10,6 +11,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.flow import CompletionAssertion
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
@@ -91,6 +93,14 @@ class _Persistence:
         self.last = dict(result)
 
 
+class _History:
+    def __init__(self) -> None:
+        self.assertions: List[CompletionAssertion] = []
+
+    def save_completion_assertions(self, *, assertions: Tuple[CompletionAssertion, ...]) -> None:
+        self.assertions = list(assertions)
+
+
 class _Provider:
     def __init__(
         self,
@@ -117,6 +127,7 @@ class _Provider:
             agent_state=agent_state,
             artifact_pipeline=None,
             context_manager=_ContextManager(),
+            history=_History(),
         )
         self.persistence = _Persistence()
 
@@ -215,6 +226,26 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    @staticmethod
+    def _complete_with_assertion(*, reason: str) -> str:
+        """
+        Return a verifier completion response with terminal script evidence.
+        """
+
+        return json.dumps(
+            {
+                "is_complete": True,
+                "reason": reason,
+                "assertions": [
+                    {
+                        "id": "terminal.login",
+                        "kind": "VISIBLE",
+                        "subject": "Phone Number input field",
+                    }
+                ],
+            }
+        )
+
     async def test_subgoal_verification_advances_without_finishing_intent(self) -> None:
         provider = _Provider(
             agent_state=self._agent_state(),
@@ -259,7 +290,7 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         provider = _Provider(
             agent_state=self._final_agent_state(),
-            llm_content='{"is_complete": true, "reason": "SalarySe office is selected"}',
+            llm_content=self._complete_with_assertion(reason="SalarySe office is selected"),
         )
         node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
@@ -274,6 +305,11 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(provider.context.agent_state.all_sub_goals_complete())
         self.assertIn("User Intent: finish onboarding", provider.context.llm.prompts[0])
         self.assertNotIn("Step:", provider.context.llm.prompts[0])
+        self.assertEqual(len(provider.context.history.assertions), 1)
+        self.assertEqual(
+            provider.context.history.assertions[0].subject,
+            "Phone Number input field",
+        )
 
     async def test_pending_final_commit_blank_reason_does_not_mark_rationale_verified(
         self,
@@ -284,7 +320,7 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
 
         provider = _Provider(
             agent_state=self._final_agent_state(),
-            llm_content='{"is_complete": true, "reason": ""}',
+            llm_content=self._complete_with_assertion(reason=""),
         )
         node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
@@ -300,6 +336,32 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result[CommonStateKey.COMPLETION_REASON],
             "Verifier accepted completion without detailed rationale.",
+        )
+
+    async def test_pending_final_commit_without_assertions_is_rejected(self) -> None:
+        """
+        Final verification cannot accept completion without terminal script evidence.
+        """
+
+        provider = _Provider(
+            agent_state=self._final_agent_state(),
+            llm_content='{"is_complete": true, "reason": "Login is visible"}',
+        )
+        node = VerifyNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(
+            state={IntentStateKey.VERIFY_MODE: VerifyMode.PENDING_FINAL_COMMIT.value}
+        )  # type: ignore[arg-type]
+
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertEqual(provider.context.history.assertions, [])
+        self.assertEqual(
+            provider.context.context_manager.feedback,
+            [
+                "Verification failed: Verification accepted completion without structured "
+                "terminal assertions."
+            ],
         )
 
     async def test_pending_final_commit_rejection_keeps_final_subgoal_active(self) -> None:
