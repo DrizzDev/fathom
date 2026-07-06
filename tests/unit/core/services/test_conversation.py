@@ -19,7 +19,7 @@ from fathom.constants.collaboration import (
     TaskState,
     ThreadState,
 )
-from fathom.constants.conversation import EntryKind, Visibility
+from fathom.constants.conversation import THREAD_TITLE_MAX_LENGTH, EntryKind, Visibility
 from fathom.constants.signing import SigningStatus
 from fathom.constants.storage import PostgresMigrationMode
 from fathom.core.exceptions import InteractionError, ThreadNotFoundError
@@ -185,6 +185,50 @@ class TestConversationService(ConversationStoreTestCase):
         )
 
         self.assertIsNone(view.digest)
+
+    async def test_title_truncates_long_intent_title(self) -> None:
+        """
+        Auto-title writes fit the stored thread-title boundary.
+        """
+
+        await self.__interaction.create_actor(
+            request=CreateActor(
+                identity=self.__identity(id="actor-title"),
+                kind=ActorKind.HUMAN,
+                name="Aman",
+                created_at=self.__now,
+            )
+        )
+        await self.__interaction.create_thread(
+            request=CreateThread(
+                identity=self.__identity(id="thread-title"),
+                creator="actor-title",
+                created_at=self.__now,
+            )
+        )
+        await self.__interaction.join_thread(
+            request=JoinThread(
+                identity=self.__identity(id="member-title"),
+                thread="thread-title",
+                actor="actor-title",
+                role=MembershipRole.OWNER,
+                joined_at=self.__now,
+            )
+        )
+        title = " ".join(("Open Instamart, change the address, add products," for _ in range(12)))
+
+        view = await self.__service.title(
+            tenant="tenant-1",
+            thread="thread-title",
+            operator="actor-title",
+            title=title,
+            updated=self.__now,
+        )
+
+        self.assertIsNotNone(view.title)
+        assert view.title is not None
+        self.assertLessEqual(len(view.title), THREAD_TITLE_MAX_LENGTH)
+        self.assertEqual(title[:THREAD_TITLE_MAX_LENGTH].rstrip(), view.title)
 
     async def test_get_thread_hides_thread_from_non_member(self) -> None:
         """

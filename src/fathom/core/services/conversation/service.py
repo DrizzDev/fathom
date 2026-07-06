@@ -13,6 +13,7 @@ from fathom.constants.conversation import (
     SHA256_HEX_LENGTH,
     SUMMARY_MESSAGE_LIMIT,
     SUMMARY_SCRIPT_LIMIT,
+    THREAD_TITLE_MAX_LENGTH,
     TIMELINE_MAX_LIMIT,
     EntryKind,
     Visibility,
@@ -608,7 +609,7 @@ class ConversationService:
 
         result = await self.__ports.threads.title(
             request=InteractionSchemas.SetThreadTitle(
-                title=title,
+                title=self.__title(value=title),
                 tenant=tenant,
                 thread=thread,
                 updated_at=updated,
@@ -621,6 +622,18 @@ class ConversationService:
             )
         )
         return self.__thread_view(thread=result)
+
+    @staticmethod
+    def __title(*, value: str) -> str:
+        """
+        Return a stored thread title that fits the conversation title boundary.
+        """
+
+        title = " ".join(value.split())
+        if len(title) <= THREAD_TITLE_MAX_LENGTH:
+            return title
+
+        return title[:THREAD_TITLE_MAX_LENGTH].rstrip()
 
     async def list(
         self, *, query: ConversationSchemas.ConversationListQuery

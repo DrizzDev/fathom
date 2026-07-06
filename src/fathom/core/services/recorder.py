@@ -27,6 +27,7 @@ from fathom.constants.collaboration import (
 from fathom.constants.conversation import (
     RECORDER_BUILDER,
     REQUEST_EXPIRY_DAYS,
+    THREAD_TITLE_MAX_LENGTH,
     EntryKind,
     RecorderEvent,
 )
@@ -678,13 +679,13 @@ class ConversationRecorder:
                     request=ThreadCreate(
                         id=run.thread,
                         tenant=run.tenant,
-                        title=run.intent,
                         created=run.created,
                         metadata=run.metadata,
                         creator=run.requester,
                         workspace=run.workspace,
                         member=members.requester,
                         role=MembershipRole.REQUESTER,
+                        title=self.__title(intent=run.intent),
                     )
                 )
                 return
@@ -716,6 +717,18 @@ class ConversationRecorder:
                 role=MembershipRole.REQUESTER,
             )
         )
+
+    @staticmethod
+    def __title(*, intent: str) -> str:
+        """
+        Return a stored thread title that fits the conversation title boundary.
+        """
+
+        title = " ".join(intent.split())
+        if len(title) <= THREAD_TITLE_MAX_LENGTH:
+            return title
+
+        return title[:THREAD_TITLE_MAX_LENGTH].rstrip()
 
     async def __thread_exists(self, *, run: Run) -> bool:
         """

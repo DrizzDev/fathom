@@ -42,6 +42,7 @@ from fathom.constants.conversation import (
     SCRIPT_LIST_DEFAULT_LIMIT,
     SUMMARY_MESSAGE_LIMIT,
     SUMMARY_SCRIPT_LIMIT,
+    THREAD_TITLE_MAX_LENGTH,
     THREAD_TITLE_PREFIX_MAX_LENGTH,
     TIMELINE_DEFAULT_LIMIT,
     TIMELINE_MAX_LIMIT,
@@ -1297,7 +1298,11 @@ class SetThreadTitle(BaseModel):
 
     tenant: str = Field(description="Tenant that owns the thread.")
     thread: str = Field(description="Thread identifier to update.")
-    title: str = Field(min_length=1, description="Title to set when null.")
+    title: str = Field(
+        min_length=1,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="Title to set when null.",
+    )
     metadata: Metadata = Field(
         default_factory=Metadata,
         description="Metadata describing how the title was produced.",

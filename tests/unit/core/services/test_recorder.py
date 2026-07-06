@@ -25,7 +25,7 @@ from fathom.constants.collaboration import (
     TaskKind,
     TaskState,
 )
-from fathom.constants.conversation import EntryKind, Visibility
+from fathom.constants.conversation import THREAD_TITLE_MAX_LENGTH, EntryKind, Visibility
 from fathom.constants.events import FathomEvent
 from fathom.constants.storage import PostgresMigrationMode
 from fathom.conversation.identity import InteractionIdentity
@@ -323,6 +323,45 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         assert execution is not None
         self.assertEqual(handle.execution, execution.identity.id)
         self.assertEqual("workflow-1", execution.workflow_id)
+
+    async def test_record_run_started_truncates_thread_title_not_intent(self) -> None:
+        """
+        Long run intents fit the thread-title boundary while preserving intent payloads.
+        """
+
+        intent = " ".join(("Open Instamart, change the address, add products," for _ in range(12)))
+        run = self.__run().model_copy(update={"intent": intent})
+
+        handle = await self.__recorder.record_run_started(run=run)
+
+        assert handle is not None
+        threads = await self.__interaction.list_threads(
+            query=ThreadListQuery(tenant="tenant-1", actor="human-1")
+        )
+        execution = await self.__interaction.get_execution(
+            query=ExecutionQuery(tenant="tenant-1", thread="thread-1", execution=handle.execution)
+        )
+        messages = await self.__interaction.get_messages(
+            query=MessageCursorQuery(
+                tenant="tenant-1",
+                thread="thread-1",
+                kinds=(MessageKind.REQUEST,),
+            )
+        )
+
+        self.assertEqual(1, len(threads.items))
+        title = threads.items[0].title
+        self.assertIsNotNone(title)
+        assert title is not None
+        self.assertLessEqual(len(title), THREAD_TITLE_MAX_LENGTH)
+        self.assertEqual(intent[:THREAD_TITLE_MAX_LENGTH].rstrip(), title)
+
+        assert execution is not None
+        self.assertEqual(intent, execution.intent)
+        body = messages[0].content.body
+        self.assertIsInstance(body, dict)
+        assert isinstance(body, dict)
+        self.assertEqual(intent, body["intent"])
 
     async def test_explicit_summary_and_detail_are_preserved_on_result_body(self) -> None:
         """
