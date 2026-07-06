@@ -49,6 +49,17 @@ class AuthoringEpisode(SealedModel):
     )
 
 
+class AuthoringBaselineCommand(SealedModel):
+    """
+    One rendered baseline command and the evidence steps it represents.
+    """
+
+    text: str = Field(min_length=1, description="Rendered baseline command text.")
+    source_steps: Tuple[int, ...] = Field(
+        default_factory=tuple, description="Evidence step numbers represented by the command."
+    )
+
+
 class AuthoringBaseline(SealedModel):
     """
     Deterministic script scaffold available to whole-run authoring.
@@ -57,6 +68,10 @@ class AuthoringBaseline(SealedModel):
     content: str = Field(min_length=1, description="Rendered baseline script text.")
     partial: bool = Field(description="Whether the baseline is intentionally partial.")
     reason: Optional[str] = Field(default=None, description="Why the baseline is partial.")
+    commands: Tuple[AuthoringBaselineCommand, ...] = Field(
+        default_factory=tuple,
+        description="Rendered baseline commands with their evidence source steps.",
+    )
 
 
 class AuthoringCommand(SealedModel):

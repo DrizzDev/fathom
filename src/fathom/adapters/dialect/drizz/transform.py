@@ -34,6 +34,8 @@ class DrizzTransformer(Transformer[Token, object]):
     Transforms a Lark parse tree of rendered Drizz into the typed command AST.
     """
 
+    __ESCAPE = "\\"
+
     __DIRECTIONS: Dict[str, ScrollDirection] = {
         Direction.UP: ScrollDirection.UP,
         Direction.DOWN: ScrollDirection.DOWN,
@@ -272,7 +274,49 @@ class DrizzTransformer(Transformer[Token, object]):
 
     def __unquote(self, *, token: Token) -> str:
         """
-        Strip the surrounding double quotes from a string token.
+        Strip the surrounding quote delimiter and decode Drizz string escapes.
         """
 
-        return str(token)[1:-1]
+        return self.__unescape(value=str(token)[1:-1])
+
+    def __unescape(self, *, value: str) -> str:
+        """
+        Decode escaped delimiters, backslashes, and line-breaking characters.
+        """
+
+        out = []
+        escaping = False
+
+        for character in value:
+            if escaping:
+                out.append(self.__escaped(character=character))
+                escaping = False
+                continue
+
+            if character == self.__ESCAPE:
+                escaping = True
+                continue
+
+            out.append(character)
+
+        if escaping:
+            out.append(self.__ESCAPE)
+
+        return "".join(out)
+
+    @classmethod
+    def __escaped(cls, *, character: str) -> str:
+        """
+        Return the decoded value for one escaped character.
+        """
+
+        if character == "n":
+            return "\n"
+
+        if character == "r":
+            return "\r"
+
+        if character == "t":
+            return "\t"
+
+        return character

@@ -25,7 +25,11 @@ from fathom.constants.state import (
 )
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.config import RuntimeConfigLoader
-from fathom.core.exceptions import FinalizationTimeoutError, WorkflowCancelledError
+from fathom.core.exceptions import (
+    FinalizationTimeoutError,
+    LanguageComplianceError,
+    WorkflowCancelledError,
+)
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.core.services.directive import DirectivePolicy
 from fathom.core.services.recorder import ConversationRecorder
@@ -41,11 +45,16 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
-from fathom.schemas.authoring import AuthoringBaseline, AuthoringTask
+from fathom.schemas.authoring import AuthoringBaseline, AuthoringBaselineCommand, AuthoringTask
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.finalization import FinalizationBudgetPolicy
-from fathom.schemas.flow import Evidence, Issue, RunObjective
-from fathom.schemas.generation import GenerationResult, ScriptFileMetadata, ScriptReview
+from fathom.schemas.flow import Check, CheckNode, Evidence, Flow, Issue, RunObjective
+from fathom.schemas.generation import (
+    GenerationResult,
+    ScriptFileMetadata,
+    ScriptLineage,
+    ScriptReview,
+)
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
@@ -787,6 +796,8 @@ class IntentStrategy:
             drafts=drafts,
             evidence=evidence,
             baseline=baseline,
+            completion_validation=self.__terminal_assertion_lines(evidence=evidence),
+            require_completion_validation=self.__requires_terminal_assertion(evidence=evidence),
         )
         if draft_result is not None and self.__valid_script(result=draft_result):
             logger.info(
@@ -801,6 +812,68 @@ class IntentStrategy:
             return draft_result
 
         return None
+
+    def __terminal_assertion_lines(self, *, evidence: Evidence) -> Tuple[str, ...]:
+        """
+        Render verifier completion assertions as terminal Drizz validation lines.
+        """
+
+        if not self.__requires_terminal_assertion(evidence=evidence):
+            return ()
+
+        node = CheckNode(
+            source_steps=self.__assertion_source_steps(evidence=evidence),
+            assertion_ids=tuple(assertion.id for assertion in evidence.assertions),
+            checks=tuple(
+                Check(kind=assertion.kind, subject=assertion.subject)
+                for assertion in evidence.assertions
+            ),
+        )
+        flow = Flow(
+            nodes=(node,),
+            intent=self.__intent,
+            package=self.__graph_context.package_name,
+        )
+
+        try:
+            text = self.__graph_context.dialect.renderer.render(flow=flow)
+        except LanguageComplianceError as exception:
+            logger.exception(
+                "Terminal completion assertions could not be rendered for step drafts",
+                extra={
+                    "event": "authoring.step_drafts.terminal_unavailable",
+                    "reason": str(exception),
+                    "execution.id": self.__execution_id,
+                },
+            )
+            return ()
+
+        return tuple(line.strip() for line in text.splitlines() if line.strip())
+
+    @staticmethod
+    def __requires_terminal_assertion(*, evidence: Evidence) -> bool:
+        """
+        Return whether composed drafts need a terminal validation command.
+        """
+
+        return evidence.outcome is RunOutcome.COMPLETED and bool(evidence.assertions)
+
+    @staticmethod
+    def __assertion_source_steps(*, evidence: Evidence) -> Tuple[int, ...]:
+        """
+        Return valid source steps for verifier completion assertions.
+        """
+
+        steps: List[int] = []
+        fallback = evidence.steps[-1].index if evidence.steps else 0
+        valid = {step.index for step in evidence.steps if step.launch is None}
+
+        for assertion in evidence.assertions:
+            step = assertion.step_index if assertion.step_index in valid else fallback
+            if step not in steps:
+                steps.append(step)
+
+        return tuple(steps)
 
     def __valid_script(self, *, result: GenerationResult) -> bool:
         """
@@ -833,9 +906,9 @@ class IntentStrategy:
         reason = evidence.reason or f"Run ended with outcome '{run_outcome.value}'."
         return evidence.model_copy(
             update={
-                "outcome": run_outcome,
                 "partial": True,
                 "reason": reason,
+                "outcome": run_outcome,
             }
         )
 
@@ -862,17 +935,47 @@ class IntentStrategy:
 
         return AuthoringBaseline(
             content=artifact.text,
-            partial=artifact.metadata.review.partial,
             reason=artifact.metadata.review.reason,
+            partial=artifact.metadata.review.partial,
+            commands=self.__baseline_commands(
+                content=artifact.text,
+                lineage=artifact.metadata.review.lineage,
+            ),
         )
+
+    @staticmethod
+    def __baseline_commands(
+        *,
+        content: str,
+        lineage: Tuple[ScriptLineage, ...],
+    ) -> Tuple[AuthoringBaselineCommand, ...]:
+        """
+        Pair rendered baseline command text with its evidence source steps.
+        """
+
+        commands: List[AuthoringBaselineCommand] = []
+        lines = tuple(line.strip() for line in content.splitlines() if line.strip())
+
+        for position, line in enumerate(lines):
+            if position >= len(lineage):
+                continue
+
+            commands.append(
+                AuthoringBaselineCommand(
+                    text=line,
+                    source_steps=lineage[position].source_steps,
+                )
+            )
+
+        return tuple(commands)
 
     async def __cancelled_quality_script(
         self,
         *,
         timeout: float,
         started_at: float,
-        script_task: "asyncio.Task[Optional[GenerationResult]]",
         assembler: "IntentStrategy.__ResultAssembler",
+        script_task: "asyncio.Task[Optional[GenerationResult]]",
     ) -> Optional[GenerationResult]:
         """
         Await cancelled-run quality generation and return None when baseline fallback should run.
@@ -935,9 +1038,9 @@ class IntentStrategy:
     async def __deliver_cancelled_script(
         self,
         *,
+        started_at: float,
         quality: Optional[GenerationResult],
         assembler: "IntentStrategy.__ResultAssembler",
-        started_at: float,
     ) -> None:
         """
         Deliver a cancelled-run script through the shared quality-to-baseline finalization path.
@@ -971,8 +1074,8 @@ class IntentStrategy:
     async def __await_finalization_phase(
         self,
         *,
-        timeout: float,
         phase: str,
+        timeout: float,
         awaitable: Awaitable[_FinalizationResult],
     ) -> _FinalizationResult:
         """
@@ -1011,11 +1114,11 @@ class IntentStrategy:
                 await self.__graph_context.telemetry.info(
                     heartbeat.script_finalization,
                     intent=self.__intent,
-                    run_outcome=RunOutcome.CANCELLED.value,
-                    step=self.__graph_context.agent_state.step_count,
                     workflow_id=self.__workflow_id,
                     type=FathomEvent.PHASE_HEARTBEAT,
+                    run_outcome=RunOutcome.CANCELLED.value,
                     phase="fathom.finalization.history.script",
+                    step=self.__graph_context.agent_state.step_count,
                 )
                 failed_heartbeat_emits = 0
             except Exception:
@@ -1042,8 +1145,8 @@ class IntentStrategy:
         """
 
         return ScriptFileMetadata(
-            source=ScriptSource.BASELINE,
             status=ScriptStatus.FAILED,
+            source=ScriptSource.BASELINE,
             issues=(Issue(code=IssueCode.BASELINE_UNAVAILABLE, message=message),),
         )
 
@@ -1092,9 +1195,9 @@ class IntentStrategy:
                 else "script.finalization.step_drafts_selected"
             )
             await self.__graph_context.history.save_script(
+                result=quality,
                 step_number=step,
                 source=quality.source,
-                result=quality,
             )
             logger.info(
                 "finalization selected the authored script",
@@ -1104,15 +1207,15 @@ class IntentStrategy:
                     "workflow.id": self.__workflow_id,
                     "script.outcome": run_outcome.value,
                     "script.source": quality.source.value,
-                    "script.line_count": len(quality.text.splitlines()),
                     "script.partial": quality.review.partial,
+                    "script.line_count": len(quality.text.splitlines()),
                 },
             )
             await self.__emit_script_generated_event(
-                review=quality.review,
-                script_data=quality.text,
-                run_outcome=run_outcome,
                 source=quality.source,
+                review=quality.review,
+                run_outcome=run_outcome,
+                script_data=quality.text,
             )
             return
 
@@ -1170,8 +1273,8 @@ class IntentStrategy:
         *,
         run_outcome: RunOutcome,
         script_data: Optional[str],
-        source: ScriptSource = ScriptSource.QUALITY,
         review: Optional[ScriptReview] = None,
+        source: ScriptSource = ScriptSource.QUALITY,
     ) -> None:
         """
         Emit the SCRIPT_GENERATED terminal event whenever the run reaches finalization.
@@ -1202,12 +1305,12 @@ class IntentStrategy:
                 source=source.value,
                 is_empty=is_empty_script,
                 partial=script_review.partial,
-                review_reason=script_review.reason,
-                discarded_steps=list(script_review.discarded),
                 run_outcome=run_outcome.value,
                 workflow_id=self.__workflow_id,
                 type=FathomEvent.SCRIPT_GENERATED,
+                review_reason=script_review.reason,
                 step=self.__graph_context.agent_state.step_count,
+                discarded_steps=list(script_review.discarded),
             )
         except Exception as exception:
             self.__log_emit_failed(

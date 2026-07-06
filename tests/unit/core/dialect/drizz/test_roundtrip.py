@@ -118,6 +118,43 @@ class RoundTripTest(unittest.TestCase):
         self.assertIn("Validate Apply CTA is enabled", text)
         self.assertEqual(self.__check(nodes=nodes), ())
 
+    def test_validation_subject_with_embedded_single_quotes_round_trips(self) -> None:
+        """
+        A validation subject containing single quotes renders in a parser-safe form.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            CheckNode(
+                checks=(
+                    Check(
+                        kind=CheckKind.VISIBLE,
+                        subject="'Continue with' phone number selection dialog",
+                    ),
+                ),
+                source_steps=(0,),
+            ),
+        )
+        text = self.__renderer.render(flow=Flow(intent="t", package="com.example", nodes=nodes))
+
+        self.assertIn(
+            "Validate \"'Continue with' phone number selection dialog\" is visible",
+            text,
+        )
+        self.assertEqual(self.__check(nodes=nodes), ())
+
+    def test_wait_subject_with_embedded_single_quotes_round_trips(self) -> None:
+        """
+        A wait subject containing single quotes renders in a parser-safe form.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            WaitNode(subject="'Continue with' dialog", source_steps=(0,)),
+        )
+        text = self.__renderer.render(flow=Flow(intent="t", package="com.example", nodes=nodes))
+
+        self.assertIn("Wait until \"'Continue with' dialog\"", text)
+        self.assertEqual(self.__check(nodes=nodes), ())
+
     def test_typed_value_with_embedded_quotes_round_trips(self) -> None:
         """
         A typed value containing double and single quotes renders and re-parses cleanly.
@@ -127,4 +164,43 @@ class RoundTripTest(unittest.TestCase):
             TypeNode(text='it\'s a "trap"', field=Selector(text="note field"), source_steps=(0,)),
             CheckNode(checks=(Check(kind=CheckKind.VISIBLE, subject="home"),), source_steps=(0,)),
         )
+        self.assertEqual(self.__check(nodes=nodes), ())
+
+    def test_typed_value_with_every_delimiter_round_trips(self) -> None:
+        """
+        A typed value containing every string delimiter renders with escapes and parses cleanly.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            TypeNode(text="\"'`", field=Selector(text="note field"), source_steps=(0,)),
+            CheckNode(checks=(Check(kind=CheckKind.VISIBLE, subject="home"),), source_steps=(0,)),
+        )
+        self.assertEqual(self.__check(nodes=nodes), ())
+
+    def test_wait_subject_with_line_break_round_trips(self) -> None:
+        """
+        A wait subject containing line breaks renders as one escaped Drizz line.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            WaitNode(subject="results\nare visible", source_steps=(0,)),
+            CheckNode(checks=(Check(kind=CheckKind.VISIBLE, subject="home"),), source_steps=(0,)),
+        )
+        self.assertEqual(self.__check(nodes=nodes), ())
+
+    def test_branch_condition_with_line_break_round_trips(self) -> None:
+        """
+        A branch guard containing line breaks renders as one parser-safe IF header.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            BranchNode(
+                guard=Guard(condition="overlay\nis visible", source_step=0),
+                body=(TapNode(selector=Selector(text="Close"), source_steps=(0,)),),
+                source_steps=(0,),
+            ),
+        )
+        text = self.__renderer.render(flow=Flow(intent="t", package="com.example", nodes=nodes))
+
+        self.assertIn("IF overlay is visible", text)
         self.assertEqual(self.__check(nodes=nodes), ())

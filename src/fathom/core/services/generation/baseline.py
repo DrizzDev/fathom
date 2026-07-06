@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import List, Tuple
 
 from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
@@ -8,10 +8,11 @@ from fathom.core.dialect.policy import Policy
 from fathom.core.exceptions import LanguageComplianceError
 from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.interfaces.dialect import Dialect
-from fathom.schemas.flow import Evidence, Issue
+from fathom.schemas.flow import BranchNode, Evidence, FlowNode, Issue
 from fathom.schemas.generation import (
     BaselineArtifact,
     ScriptFileMetadata,
+    ScriptLineage,
     ScriptReview,
     SkippedStep,
 )
@@ -48,8 +49,9 @@ class BaselineScriptService:
 
         review = ScriptReview(
             partial=report.flow.partial,
-            reason=evidence.reason or (self.__PARTIAL_REASON if report.flow.partial else None),
             discarded=evidence.discarded,
+            lineage=self.__lineage(nodes=report.flow.nodes),
+            reason=evidence.reason or (self.__PARTIAL_REASON if report.flow.partial else None),
         )
 
         policy_evidence = evidence.model_copy(update={"partial": report.flow.partial})
@@ -82,6 +84,38 @@ class BaselineScriptService:
             status=ScriptStatus.GENERATED,
         )
         return BaselineArtifact(text=text, metadata=metadata)
+
+    def __lineage(self, *, nodes: Tuple[FlowNode, ...]) -> Tuple[ScriptLineage, ...]:
+        """
+        Return evidence source steps for each flattened baseline node.
+        """
+
+        records: List[ScriptLineage] = []
+
+        for position, node in enumerate(self.__flatten(nodes=nodes)):
+            records.append(
+                ScriptLineage(
+                    node_index=position,
+                    verified_by=("execution",),
+                    source_steps=node.source_steps,
+                )
+            )
+
+        return tuple(records)
+
+    def __flatten(self, *, nodes: Tuple[FlowNode, ...]) -> Tuple[FlowNode, ...]:
+        """
+        Flatten top-level and branch-body nodes in rendered node order.
+        """
+
+        flattened: List[FlowNode] = []
+
+        for node in nodes:
+            flattened.append(node)
+            if isinstance(node, BranchNode):
+                flattened.extend(self.__flatten(nodes=node.body))
+
+        return tuple(flattened)
 
     @staticmethod
     def __failed(

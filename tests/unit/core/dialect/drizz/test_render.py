@@ -5,7 +5,6 @@ from typing import Tuple
 
 from fathom.constants.flow import CheckKind, ScrollDirection
 from fathom.core.dialect.drizz.render import Renderer
-from fathom.core.exceptions import LanguageComplianceError
 from fathom.schemas.flow import (
     BackNode,
     BranchNode,
@@ -241,13 +240,14 @@ class RendererTest(unittest.TestCase):
         text = self.__render(nodes=(self.__typed(value='it\'s a "trap"'),))
         self.assertIn('`it\'s a "trap"`', text)
 
-    def test_value_with_every_quote_type_fails(self) -> None:
+    def test_value_with_every_quote_type_escapes_double_quotes(self) -> None:
         """
-        A typed value that contains all three delimiters cannot be rendered and fails explicitly.
+        A typed value containing every delimiter still renders as one escaped string.
         """
 
-        with self.assertRaises(LanguageComplianceError):
-            self.__render(nodes=(self.__typed(value="\"'`"),))
+        text = self.__render(nodes=(self.__typed(value="\"'`"),))
+
+        self.assertIn('Type "\\"\'`" into search bar', text)
 
     def test_location_renders_set_gps(self) -> None:
         """

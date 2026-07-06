@@ -306,9 +306,26 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
     CommandDoc(
         name="wait",
         purpose="Wait for time or a state.",
-        example="Wait until search results are visible",
+        example='Wait until "search results are visible"',
         syntax="Wait for <seconds> seconds or Wait until <subject>",
-        rules=("Prefer state-based waits over fixed time when evidence records a state.",),
+        rules=(
+            "Prefer state-based waits over fixed time when evidence records a state.",
+            "When waiting for UI content, make the quoted subject a complete ready state, not a bare container or label fragment.",
+        ),
+        examples=(
+            CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
+                command='Wait until "results list is loaded"',
+                reason="The subject names the ready state that ends the wait.",
+                situation="A prior command loads a list whose content is needed by the next action.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.AVOID,
+                command='Wait until "results list"',
+                reason="The subject is only a container name and does not state the awaited condition.",
+                situation="A wait is bounded by UI content becoming available.",
+            ),
+        ),
     ),
     CommandDoc(
         name="store",

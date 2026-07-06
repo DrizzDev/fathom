@@ -90,7 +90,10 @@ class CanonicalPrinter:
         """
 
         prefix = str(Syntax.INDENT) * indent
-        out = [f"{prefix}{Keyword.IF} {command.condition}", f"{prefix}{Syntax.BRACE_OPEN}"]
+        out = [
+            f"{prefix}{Keyword.IF} {self.__line_text(value=command.condition)}",
+            f"{prefix}{Syntax.BRACE_OPEN}",
+        ]
 
         for child in command.body:
             out.extend(self.__command(command=child, indent=indent + 1))
@@ -98,6 +101,14 @@ class CanonicalPrinter:
         out.append(f"{prefix}{Syntax.BRACE_CLOSE}")
 
         return out
+
+    @staticmethod
+    def __line_text(*, value: str) -> str:
+        """
+        Collapse line-breaking whitespace so header text stays inside one Drizz statement.
+        """
+
+        return " ".join(value.split())
 
     def __line(self, *, command: LeafCommand) -> str:
         """

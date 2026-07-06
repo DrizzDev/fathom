@@ -18,7 +18,7 @@ from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.dialect import DialectName
 from fathom.constants.events import FathomEvent
-from fathom.constants.flow import IssueCode
+from fathom.constants.flow import AssertionSource, CheckKind, IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.state import RunOutcome
 from fathom.core.services.decomposer import IntentDecomposer
@@ -31,7 +31,14 @@ from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, Autho
 from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 from fathom.schemas.configuration import FathomConfiguration
-from fathom.schemas.flow import Evidence, EvidenceStep, Issue, Report, RunObjective
+from fathom.schemas.flow import (
+    CompletionAssertion,
+    Evidence,
+    EvidenceStep,
+    Issue,
+    Report,
+    RunObjective,
+)
 from fathom.schemas.generation import (
     BaselineArtifact,
     GenerationResult,
@@ -413,6 +420,80 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result.text,
             "\n".join(("OPEN_APP: com.example", 'Type "soap" into search field')),
+        )
+
+    async def test_author_script_appends_terminal_assertion_to_step_drafts(self) -> None:
+        """
+        Completed STEP_DRAFTS fallback ends with the verifier-backed terminal validation.
+        """
+
+        strategy = object.__new__(IntentStrategy)
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=False,
+            assertions=(
+                CompletionAssertion(
+                    id="terminal.login",
+                    kind=CheckKind.VISIBLE,
+                    source=AssertionSource.VERIFICATION,
+                    subject="'Continue with' phone number selection dialog",
+                    step_index=2,
+                ),
+            ),
+            steps=(
+                EvidenceStep(index=1, event="action", action="tap"),
+                EvidenceStep(index=2, event="action", action="tap"),
+            ),
+        )
+        drafts = (
+            self.__draft(step=1, text="OPEN_APP: com.example"),
+            self.__draft(step=2, text="Tap on Buy Now button"),
+        )
+
+        graph_context = MagicMock()
+        graph_context.package_name = "com.example"
+        graph_context.evidence.read = AsyncMock(return_value=evidence)
+        graph_context.history.peek_baseline_outcome = AsyncMock(
+            return_value=self.__failed_baseline()
+        )
+        graph_context.authoring_drafts.list = AsyncMock(return_value=drafts)
+        graph_context.authoring_runner.author = AsyncMock(
+            return_value=AuthoringResponse(
+                status=AuthoringStatus.FAILED,
+                reason="quality unavailable",
+            )
+        )
+        graph_context.authoring_evidence_builder = AuthoringEvidenceBuilder()
+        graph_context.dialect.renderer.render.return_value = (
+            "Validate \"'Continue with' phone number selection dialog\" is visible\n"
+        )
+        graph_context.dialect.checker.check.return_value = Report()
+        graph_context.agent_state.step_count = 2
+
+        strategy.__setattr__("_IntentStrategy__intent", "search")
+        strategy.__setattr__("_IntentStrategy__execution_id", "execution-1")
+        strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+        strategy.__setattr__("_IntentStrategy__draft_composer", StepDraftComposer())
+
+        author = cast(
+            "Callable[..., Any]", strategy.__getattribute__("_IntentStrategy__author_script")
+        )
+        result = await author(run_outcome=RunOutcome.COMPLETED)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.review.partial)
+        self.assertEqual(
+            result.text,
+            "\n".join(
+                (
+                    "OPEN_APP: com.example",
+                    "Tap on Buy Now button",
+                    "Validate \"'Continue with' phone number selection dialog\" is visible",
+                )
+            ),
         )
 
     async def test_author_script_rejects_malformed_step_drafts(self) -> None:

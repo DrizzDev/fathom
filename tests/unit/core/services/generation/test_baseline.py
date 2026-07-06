@@ -137,9 +137,9 @@ class BaselineScriptServiceTest(unittest.TestCase):
         self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
         self.assertEqual(reasons, {1: SkipReason.FAILED})
 
-    def test_unrenderable_target_yields_failed_artifact(self) -> None:
+    def test_target_with_every_quote_delimiter_still_generates(self) -> None:
         """
-        A target colliding with every quote delimiter fails loudly with no script text, never empty success.
+        A target containing every string delimiter still renders as a generated baseline.
         """
 
         artifact = self.__service().build(
@@ -152,11 +152,12 @@ class BaselineScriptServiceTest(unittest.TestCase):
             )
         )
 
-        self.assertIs(artifact.metadata.status, ScriptStatus.FAILED)
+        self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
         self.assertIs(artifact.metadata.source, ScriptSource.BASELINE)
 
-        self.assertIsNone(artifact.text)
-        self.assertEqual(artifact.metadata.issues[0].code, IssueCode.UNRENDERABLE_VALUE)
+        self.assertIsNotNone(artifact.text)
+        assert artifact.text is not None
+        self.assertIn("Tap on", artifact.text)
 
     def test_run_with_no_scriptable_steps_fails_not_empty_generated(self) -> None:
         """

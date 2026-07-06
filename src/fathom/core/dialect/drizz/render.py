@@ -107,7 +107,10 @@ class Renderer(RenderPort):
         """
 
         prefix = str(Syntax.INDENT) * indent
-        out = [f"{prefix}{Keyword.IF} {node.guard.condition}", f"{prefix}{Syntax.BRACE_OPEN}"]
+        out = [
+            f"{prefix}{Keyword.IF} {self.__line_text(value=node.guard.condition)}",
+            f"{prefix}{Syntax.BRACE_OPEN}",
+        ]
 
         for child in node.body:
             out.extend(self.__render(node=child, indent=indent + 1))
@@ -115,6 +118,14 @@ class Renderer(RenderPort):
         out.append(f"{prefix}{Syntax.BRACE_CLOSE}")
 
         return out
+
+    @staticmethod
+    def __line_text(*, value: str) -> str:
+        """
+        Collapse line-breaking whitespace so header text stays inside one Drizz statement.
+        """
+
+        return " ".join(value.split())
 
     def __line(self, *, node: LeafNode) -> str:
         """

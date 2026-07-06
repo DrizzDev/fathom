@@ -6,10 +6,11 @@ from typing import Tuple
 from fathom.authoring.application.composer import StepDraftComposer
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.dialect import DialectName
+from fathom.constants.flow import AssertionSource, CheckKind
 from fathom.constants.generation import ScriptSource
-from fathom.schemas.authoring import AuthoringArtifact, AuthoringBaseline
+from fathom.schemas.authoring import AuthoringArtifact, AuthoringBaseline, AuthoringBaselineCommand
 from fathom.schemas.authoring.draft import AuthoringDraft
-from fathom.schemas.flow import Evidence, EvidenceStep
+from fathom.schemas.flow import CompletionAssertion, Evidence, EvidenceStep
 
 
 class StepDraftComposerTest(unittest.TestCase):
@@ -87,6 +88,11 @@ class StepDraftComposerTest(unittest.TestCase):
                 )
             ),
             partial=True,
+            commands=(
+                AuthoringBaselineCommand(text="OPEN_APP: com.example", source_steps=(1,)),
+                AuthoringBaselineCommand(text='Type "soap" into Search', source_steps=(2,)),
+                AuthoringBaselineCommand(text="Tap on product", source_steps=(3,)),
+            ),
         )
         drafts = (
             self.__draft(step=1, text="OPEN_APP: com.example"),
@@ -106,6 +112,129 @@ class StepDraftComposerTest(unittest.TestCase):
                     "Tap on first product card",
                 )
             ),
+        )
+
+    def test_compose_fills_missing_draft_by_source_step_not_position(self) -> None:
+        """
+        Missing drafts use baseline command source steps after baseline line positions drift.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=False,
+            steps=(
+                EvidenceStep(index=1, event="action", action="tap"),
+                EvidenceStep(index=2, event="action", action="swipe_up"),
+                EvidenceStep(index=3, event="action", action="swipe_up"),
+                EvidenceStep(index=4, event="action", action="store"),
+            ),
+        )
+        baseline = AuthoringBaseline(
+            content="\n".join(
+                (
+                    "OPEN_APP: com.example",
+                    'Scroll down until "product is visible"',
+                    "Store 89 as product.amount",
+                )
+            ),
+            partial=False,
+            commands=(
+                AuthoringBaselineCommand(text="OPEN_APP: com.example", source_steps=(1,)),
+                AuthoringBaselineCommand(
+                    text='Scroll down until "product is visible"',
+                    source_steps=(2, 3),
+                ),
+                AuthoringBaselineCommand(text="Store 89 as product.amount", source_steps=(4,)),
+            ),
+        )
+        drafts = (
+            self.__draft(step=1, text="OPEN_APP: com.example"),
+            self.__draft(step=2, text="Scroll down"),
+        )
+
+        result = composer.compose(drafts=drafts, evidence=evidence, baseline=baseline)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.text,
+            "\n".join(
+                (
+                    "OPEN_APP: com.example",
+                    'Scroll down until "product is visible"',
+                    "Store 89 as product.amount",
+                )
+            ),
+        )
+
+    def test_compose_appends_rendered_terminal_validation(self) -> None:
+        """
+        Completed composed drafts append the caller-rendered terminal assertion lines.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=False,
+            assertions=(
+                CompletionAssertion(
+                    id="terminal.login",
+                    kind=CheckKind.VISIBLE,
+                    source=AssertionSource.VERIFICATION,
+                    subject="login screen",
+                ),
+            ),
+            steps=(EvidenceStep(index=1, event="action", action="tap"),),
+        )
+        drafts = (self.__draft(step=1, text="OPEN_APP: com.example"),)
+
+        result = composer.compose(
+            drafts=drafts,
+            evidence=evidence,
+            completion_validation=("Validate login screen is visible",),
+            require_completion_validation=True,
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.review.partial)
+        self.assertEqual(
+            result.text,
+            "\n".join(("OPEN_APP: com.example", "Validate login screen is visible")),
+        )
+
+    def test_compose_marks_completed_draft_partial_when_terminal_validation_is_missing(
+        self,
+    ) -> None:
+        """
+        Completed composed drafts cannot claim completion when terminal validation is unavailable.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=False,
+            steps=(EvidenceStep(index=1, event="action", action="tap"),),
+        )
+        drafts = (self.__draft(step=1, text="OPEN_APP: com.example"),)
+
+        result = composer.compose(
+            drafts=drafts, evidence=evidence, require_completion_validation=True
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.review.partial)
+        self.assertEqual(
+            result.review.reason,
+            "Completion assertions could not be rendered into a terminal validation.",
         )
 
     @staticmethod

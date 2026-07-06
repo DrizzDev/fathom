@@ -110,8 +110,8 @@ DIRECTION: "up" | "down" | "left" | "right"
 MINIMISE: "MINIMISE_APP" | "MINIMIZE_APP"    // British spelling canonical; both parse
 PACKAGE: /[A-Za-z0-9_.]+/                    // e.g. com.android.chrome
 NAME: /[A-Za-z0-9_.]+/                       // stored-variable identifier
-// A selector or value in any Drizz delimiter; priority .5 wins over FREEWORD at a quote.
-STRING.5: /"[^"]*"/ | /'[^']*'/ | /`[^`]*`/  // "double" | 'single' | `backtick`
+// A selector or value in any Drizz delimiter; backslash escapes keep UI text one token.
+STRING.5: /"(?:\\.|[^"\\])*"/ | /'(?:\\.|[^'\\])*'/ | /`(?:\\.|[^`\\])*`/
 FREEWORD: /[^\s{}";]+/                       // one word of an unquoted free-text tail (allows ':')
 INT: /[0-9]+/
 
