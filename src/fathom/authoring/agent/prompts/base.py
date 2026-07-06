@@ -23,6 +23,10 @@ class AuthoringPrompt(ABC):
     __METHOD: Tuple[str, ...] = (
         "Read task.intent and the task-specific evidence view before selecting commands.",
         "Use dialect.commands as the supported command reference; do not emit unsupported nodes.",
+        "Use dialect.guide.scenarios as the few-shot examples for authoring judgment.",
+        "Use dialect.guide.lexicon as advisory UI terminology when it helps make a command complete and replayable.",
+        "Use task.evidence.run.baseline as the deterministic scaffold when present; improve wording and structure only when the surrounding evidence, drafts, assertions, and artifacts support it.",
+        "Use target.anchors and target.structure as target truth; use target.claim only when target.claim.verified is true.",
         "Use action, target, guard, capture, launch, observation, rationale, artifacts, and review as evidence, not as text to copy mechanically.",
         "When screenshots are attached, inspect visible UI state, target identity, and validation evidence; when manifests or UI trees are attached, use them to disambiguate element role and structure.",
         "Artifacts are optional; if they are absent, author from the recorded execution data without pretending visual or manifest evidence was available.",
@@ -45,6 +49,7 @@ class AuthoringPrompt(ABC):
                 "# Identity\n" + self.role(),
                 "# Contract\n" + contract,
                 "# Method\n" + method,
+                "# Examples\nUse the dialect guide scenarios and command examples as reusable patterns, not as literal text to copy.",
                 "# Output\nReturn only the structured Flow requested by the configured schema.",
                 "# Objective\n" + self.objective(),
             )
@@ -58,7 +63,7 @@ class AuthoringPrompt(ABC):
         return "\n\n".join(
             (
                 "# Dialect Reference",
-                "Use this language reference for every output node. The same reference applies to step, run, and repair authoring.",
+                "Use this language reference for every output node. The commands are mandatory; the examples and lexicon are authoring guidance.",
                 "```json",
                 packet.dialect.model_dump_json(exclude_none=True),
                 "```",

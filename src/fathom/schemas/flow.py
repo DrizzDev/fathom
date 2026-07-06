@@ -12,6 +12,7 @@ from fathom.constants.flow import (
     NodeKind,
     ScrollDirection,
 )
+from fathom.constants.state import RunOutcome
 from fathom.schemas.artifacts import StepArtifacts
 from fathom.schemas.base import SealedModel
 from fathom.schemas.steps import StepGoal
@@ -319,6 +320,43 @@ class Report(SealedModel):
         return not self.issues
 
 
+class TargetAnchors(SealedModel):
+    """
+    Text anchors separated by the evidence channel that produced them.
+    """
+
+    visual: Tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Screen-visible text anchors produced by visual evidence channels.",
+    )
+    accessibility: Tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Accessibility or structured hierarchy anchors recorded for the target.",
+    )
+
+
+class TargetStructure(SealedModel):
+    """
+    Structural UI facts that can qualify a replay target.
+    """
+
+    role: Optional[str] = Field(default=None, description="UI role or element type.")
+    container: Optional[str] = Field(default=None, description="Visible UI container when known.")
+    ordinal: Optional[int] = Field(default=None, ge=1, description="Ordinal position when known.")
+    siblings: Optional[int] = Field(default=None, ge=1, description="Sibling count when known.")
+
+
+class TargetClaim(SealedModel):
+    """
+    Planner-authored target phrase and whether an evidence anchor confirmed it.
+    """
+
+    text: Optional[str] = Field(default=None, description="Planner-authored target phrase.")
+    verified: bool = Field(
+        default=False, description="Whether the claim exactly matched an available evidence anchor."
+    )
+
+
 class StepTarget(SealedModel):
     """
     The UI target an action addressed.
@@ -333,6 +371,19 @@ class StepTarget(SealedModel):
     generalized: Optional[str] = Field(default=None, description="Generalized phrase when dynamic.")
     positional: bool = Field(
         default=False, description="Whether the target is an ordinal reference."
+    )
+
+    anchors: TargetAnchors = Field(
+        default_factory=TargetAnchors,
+        description="Evidence-owned anchors available for replay target authoring.",
+    )
+    structure: TargetStructure = Field(
+        default_factory=TargetStructure,
+        description="Structured UI facts available for replay target authoring.",
+    )
+    claim: TargetClaim = Field(
+        default_factory=TargetClaim,
+        description="Planner-authored target claim and whether evidence verified it.",
     )
 
 
@@ -470,6 +521,9 @@ class Evidence(SealedModel):
 
     intent: str = Field(description="User intent for the run.")
     goal: str = Field(description="Goal-state description for the run.")
+    outcome: RunOutcome = Field(
+        default=RunOutcome.COMPLETED, description="Terminal execution outcome for the run."
+    )
 
     package: str = Field(description="Target application package.")
 

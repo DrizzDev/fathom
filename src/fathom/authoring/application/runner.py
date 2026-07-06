@@ -29,7 +29,7 @@ class AuthoringRunner:
         Author a script task when enabled; otherwise return an explicit skip.
         """
 
-        if not self.__enabled(task=task):
+        if not self.enabled(kind=task.kind):
             logger.info(
                 "authoring skipped by configuration",
                 extra={
@@ -66,18 +66,18 @@ class AuthoringRunner:
         )
         return response
 
-    def __enabled(self, *, task: AuthoringTask) -> bool:
+    def enabled(self, *, kind: AuthoringKind) -> bool:
         """
         Return whether the task kind is enabled by the current configuration.
         """
 
-        if task.kind is AuthoringKind.RUN:
+        if kind is AuthoringKind.RUN:
             return self.__configuration.run.enabled
 
-        if task.kind is AuthoringKind.STEP:
+        if kind is AuthoringKind.STEP:
             return self.__configuration.step.mode is not AuthoringMode.DISABLED
 
-        if task.kind is AuthoringKind.REPAIR:
+        if kind is AuthoringKind.REPAIR:
             return True
 
-        raise InvariantViolation(f"Unsupported authoring task kind '{task.kind.value}'.")
+        raise InvariantViolation(f"Unsupported authoring task kind '{kind.value}'.")

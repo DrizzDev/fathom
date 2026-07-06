@@ -181,6 +181,90 @@ class EvidenceAssemblerTest(unittest.TestCase):
 
         self.assertEqual(evidence.steps[0].target.export, "Phone Number input field")
 
+    def test_planner_target_claim_is_not_verified_without_anchor_match(self) -> None:
+        """
+        Planner-authored target text remains a claim when it does not match a structured anchor.
+        """
+
+        evidence = self.__assembler.assemble(
+            intent="i",
+            goal="g",
+            package="com.example",
+            trace=self.__trace(
+                NormalizedEntry(
+                    record=self.__record(
+                        target="Product wrapper text",
+                        step_number=4,
+                        action_type="tap",
+                        export_target="product card",
+                        natural_language_target="Product wrapper text",
+                        target_element_type="product card",
+                    )
+                )
+            ),
+        )
+        target = evidence.steps[0].target
+
+        self.assertEqual(target.anchors.accessibility, ("product card",))
+        self.assertEqual(target.claim.text, "Product wrapper text")
+        self.assertFalse(target.claim.verified)
+
+    def test_planner_target_claim_is_verified_by_structured_anchor_match(self) -> None:
+        """
+        Planner-authored target text is verified only when it matches a structured anchor.
+        """
+
+        evidence = self.__assembler.assemble(
+            intent="i",
+            goal="g",
+            package="com.example",
+            trace=self.__trace(
+                NormalizedEntry(
+                    record=self.__record(
+                        target="Search box",
+                        step_number=2,
+                        action_type="tap",
+                        export_target="Search box",
+                        natural_language_target="Search box",
+                        target_element_type="search field",
+                    )
+                )
+            ),
+        )
+        target = evidence.steps[0].target
+
+        self.assertEqual(target.anchors.accessibility, ("Search box",))
+        self.assertEqual(target.claim.text, "Search box")
+        self.assertTrue(target.claim.verified)
+
+    def test_successful_capture_value_is_a_visual_anchor(self) -> None:
+        """
+        Successful STORE values are visual anchors for value-bearing authoring.
+        """
+
+        evidence = self.__assembler.assemble(
+            intent="i",
+            goal="g",
+            package="com.example",
+            trace=self.__trace(
+                NormalizedEntry(
+                    record=self.__record(
+                        target="price",
+                        step_number=7,
+                        action_type="store",
+                        capture=Capture.succeeded(name="item_price", value="₹87", step=7),
+                        capture_request=CaptureRequest(
+                            name="item_price",
+                            value="₹87",
+                            subject="selected product price",
+                        ),
+                    )
+                )
+            ),
+        )
+
+        self.assertEqual(evidence.steps[0].target.anchors.visual, ("₹87",))
+
     def test_structured_step_artifacts_are_carried(self) -> None:
         """
         Persisted step artifacts propagate to evidence for authoring.

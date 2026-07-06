@@ -46,6 +46,17 @@ class StepAuthoringScheduler(AuthoringScheduler):
         Schedule optional authoring for one persisted execution step.
         """
 
+        if not self.__runner.enabled(kind=AuthoringKind.STEP):
+            logger.info(
+                "step authoring skipped by configuration",
+                extra={
+                    "event": "authoring.step.schedule_skipped",
+                    "execution.id": execution_id,
+                    "authoring.step": step_index,
+                },
+            )
+            return
+
         try:
             task = asyncio.create_task(
                 self.__author_step(

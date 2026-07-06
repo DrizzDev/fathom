@@ -11,6 +11,7 @@ from fathom.constants.flow import (
     LaunchProvenance,
     ScrollDirection,
 )
+from fathom.constants.state import RunOutcome
 from fathom.core.dialect.policy import Policy
 from fathom.schemas.flow import (
     BranchNode,
@@ -33,6 +34,9 @@ from fathom.schemas.flow import (
     StepWait,
     StoreNode,
     TapNode,
+    TargetAnchors,
+    TargetClaim,
+    TargetStructure,
     TypeNode,
     WaitNode,
 )
@@ -301,9 +305,9 @@ class PolicyTest(unittest.TestCase):
             IssueCode.UNGROUNDED_CONDITION, self.__codes(nodes=nodes, evidence=evidence)
         )
 
-    def test_condition_grounded_in_target_visibility_passes(self) -> None:
+    def test_condition_grounded_in_recorded_guard_passes(self) -> None:
         """
-        A branch guard may use the cited step target as a visible condition.
+        A branch guard may use the cited step's recorded guard condition.
         """
 
         evidence = self.__evidence.model_copy(
@@ -325,7 +329,7 @@ class PolicyTest(unittest.TestCase):
             }
         )
         branch = BranchNode(
-            guard=Guard(condition="NONE OF THE ABOVE is visible", source_step=2),
+            guard=Guard(condition="Overlay is visible", source_step=2),
             body=(TapNode(selector=Selector(text="NONE OF THE ABOVE"), source_steps=(2,)),),
             source_steps=(2,),
         )
@@ -335,9 +339,9 @@ class PolicyTest(unittest.TestCase):
             IssueCode.UNGROUNDED_CONDITION, self.__codes(nodes=nodes, evidence=evidence)
         )
 
-    def test_raw_condition_is_rejected_when_narrative_condition_exists(self) -> None:
+    def test_unrecorded_condition_is_rejected_when_guard_and_narrative_exist(self) -> None:
         """
-        A generic recorded guard cannot override a more specific recorded rationale.
+        A branch guard must be grounded in recorded guard, target, or narrative evidence.
         """
 
         evidence = self.__evidence.model_copy(
@@ -358,7 +362,7 @@ class PolicyTest(unittest.TestCase):
             }
         )
         branch = BranchNode(
-            guard=Guard(condition="Overlay is visible", source_step=2),
+            guard=Guard(condition="Popup is dismissed", source_step=2),
             body=(self.__tap(step=2),),
             source_steps=(2,),
         )
@@ -502,7 +506,6 @@ class PolicyTest(unittest.TestCase):
         codes = self.__codes(nodes=nodes, evidence=evidence)
 
         self.assertIn(IssueCode.INVENTED_VALIDATION, codes)
-        self.assertIn(IssueCode.VALIDATION_SUBJECT_MISMATCH, codes)
 
     def test_partial_evidence_requires_partial_flow(self) -> None:
         """
@@ -527,6 +530,33 @@ class PolicyTest(unittest.TestCase):
         self.assertNotIn(IssueCode.MISSING_PARTIAL, codes)
         self.assertNotIn(IssueCode.MISSING_GOAL_VALIDATION, codes)
         self.assertNotIn(IssueCode.INVENTED_VALIDATION, codes)
+
+    def test_failed_outcome_requires_partial_not_goal_validation(self) -> None:
+        """
+        Failed terminal evidence requires honest partial flow, not a goal validation.
+        """
+
+        evidence = self.__evidence.model_copy(update={"outcome": RunOutcome.FAILED})
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1))
+
+        codes = self.__codes(nodes=nodes, partial=True, evidence=evidence)
+
+        self.assertNotIn(IssueCode.MISSING_GOAL_VALIDATION, codes)
+        self.assertNotIn(IssueCode.INVENTED_VALIDATION, codes)
+        self.assertNotIn(IssueCode.MISSING_PARTIAL, codes)
+
+    def test_failed_outcome_rejects_non_partial_flow(self) -> None:
+        """
+        Failed terminal evidence must be marked partial by the authored flow.
+        """
+
+        evidence = self.__evidence.model_copy(update={"outcome": RunOutcome.FAILED})
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1))
+
+        codes = self.__codes(nodes=nodes, partial=False, evidence=evidence)
+
+        self.assertIn(IssueCode.MISSING_PARTIAL, codes)
+        self.assertNotIn(IssueCode.MISSING_GOAL_VALIDATION, codes)
 
     def test_missing_terminal_validation_is_rejected(self) -> None:
         """
@@ -783,9 +813,9 @@ class PolicyTest(unittest.TestCase):
 
         self.assertIn(IssueCode.REDUNDANT_SCROLL, self.__codes(nodes=nodes, evidence=evidence))
 
-    def test_invented_scroll_until_target_is_rejected(self) -> None:
+    def test_scroll_until_target_text_is_not_a_hard_policy_gate(self) -> None:
         """
-        A scroll-until target must match the recorded scroll target on the cited gesture step.
+        Scroll target wording is authoring quality, while gesture provenance is the hard gate.
         """
 
         evidence = self.__scroll_evidence(scroll_target="More products")
@@ -794,7 +824,7 @@ class PolicyTest(unittest.TestCase):
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), scroll, self.__terminal())
 
-        self.assertIn(IssueCode.UNGROUNDED_SCROLL, self.__codes(nodes=nodes, evidence=evidence))
+        self.assertNotIn(IssueCode.UNGROUNDED_SCROLL, self.__codes(nodes=nodes, evidence=evidence))
 
     def test_scroll_direction_mismatch_is_rejected(self) -> None:
         """
@@ -892,15 +922,15 @@ class PolicyTest(unittest.TestCase):
 
         self.assertIn(IssueCode.UNGROUNDED_STORE, self.__codes(nodes=nodes, evidence=evidence))
 
-    def test_tap_target_mismatch_is_rejected(self) -> None:
+    def test_tap_target_wording_is_not_a_hard_policy_gate(self) -> None:
         """
-        A tap citing the right source step is rejected when its target text is invented.
+        Tap wording quality is handled by authoring review, not blocking policy.
         """
 
         tap = TapNode(selector=Selector(text="Create account"), source_steps=(1,))
         nodes: Tuple[FlowNode, ...] = (self.__launch(), tap, self.__terminal())
 
-        self.assertIn(IssueCode.TAP_TARGET_MISMATCH, self.__codes(nodes=nodes))
+        self.assertNotIn(IssueCode.TAP_TARGET_MISMATCH, self.__codes(nodes=nodes))
 
     def test_tap_may_use_rationale_grounded_target(self) -> None:
         """
@@ -946,6 +976,97 @@ class PolicyTest(unittest.TestCase):
             IssueCode.TAP_TARGET_MISMATCH, self.__codes(nodes=nodes, evidence=evidence)
         )
 
+    def test_tap_allows_unverified_claim_when_source_step_exists(self) -> None:
+        """
+        A planner target claim is weak provenance, not a policy failure by itself.
+        """
+
+        evidence = Evidence(
+            goal="home visible",
+            package="com.example",
+            intent="open and verify",
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    action="launch",
+                    event="launch",
+                    launch=StepLaunch(
+                        package="com.example",
+                        provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                    ),
+                ),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    rationale="Tap the product card.",
+                    target=StepTarget(
+                        claim=TargetClaim(text="Magic Soap 3 Pack", verified=False),
+                        anchors=TargetAnchors(accessibility=("product card",)),
+                        structure=TargetStructure(role="product card"),
+                    ),
+                ),
+                EvidenceStep(
+                    index=4,
+                    event="validation",
+                    action="complete",
+                    target=StepTarget(export="home"),
+                ),
+            ),
+        )
+        tap = TapNode(selector=Selector(text="Magic Soap 3 Pack"), source_steps=(1,))
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), tap, self.__terminal())
+
+        self.assertNotIn(
+            IssueCode.TAP_TARGET_MISMATCH, self.__codes(nodes=nodes, evidence=evidence)
+        )
+
+    def test_tap_accepts_structural_anchor_inside_rich_target(self) -> None:
+        """
+        A rich replay target passes when it contains a verified structural anchor.
+        """
+
+        evidence = Evidence(
+            goal="home visible",
+            package="com.example",
+            intent="open and verify",
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    action="launch",
+                    event="launch",
+                    launch=StepLaunch(
+                        package="com.example",
+                        provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                    ),
+                ),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    target=StepTarget(
+                        anchors=TargetAnchors(accessibility=("product card",)),
+                        structure=TargetStructure(role="product card"),
+                    ),
+                ),
+                EvidenceStep(
+                    index=4,
+                    event="validation",
+                    action="complete",
+                    target=StepTarget(export="home"),
+                ),
+            ),
+        )
+        tap = TapNode(
+            selector=Selector(text="first matching product card with rating at least 4.2"),
+            source_steps=(1,),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), tap, self.__terminal())
+
+        self.assertNotIn(
+            IssueCode.TAP_TARGET_MISMATCH, self.__codes(nodes=nodes, evidence=evidence)
+        )
+
     def test_type_content_mismatch_is_rejected(self) -> None:
         """
         A type node citing the right source step is rejected when field or typed text differ.
@@ -985,9 +1106,57 @@ class PolicyTest(unittest.TestCase):
 
         self.assertIn(IssueCode.TYPE_CONTENT_MISMATCH, self.__codes(nodes=nodes, evidence=evidence))
 
-    def test_wait_subject_mismatch_is_rejected(self) -> None:
+    def test_type_content_accepts_recorded_target_alias(self) -> None:
         """
-        A wait node citing the right source step is rejected when its subject differs.
+        A type node may use any recorded alias for the cited field target.
+        """
+
+        evidence = Evidence(
+            goal="home visible",
+            package="com.example",
+            intent="open and verify",
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    action="launch",
+                    event="launch",
+                    launch=StepLaunch(
+                        package="com.example",
+                        provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                    ),
+                ),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="type",
+                    text="Ghar soaps",
+                    target=StepTarget(
+                        name="Search by Keyword or Product ID",
+                        export="Search box",
+                    ),
+                ),
+                EvidenceStep(
+                    index=4,
+                    event="validation",
+                    action="complete",
+                    target=StepTarget(export="home"),
+                ),
+            ),
+        )
+        typed = TypeNode(
+            text="Ghar soaps",
+            field=Selector(text="Search by Keyword or Product ID"),
+            source_steps=(1,),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), typed, self.__terminal())
+
+        self.assertNotIn(
+            IssueCode.TYPE_CONTENT_MISMATCH, self.__codes(nodes=nodes, evidence=evidence)
+        )
+
+    def test_wait_subject_wording_is_not_a_hard_policy_gate(self) -> None:
+        """
+        Wait subject wording quality is handled by authoring review, not blocking policy.
         """
 
         evidence = Evidence(
@@ -1021,11 +1190,13 @@ class PolicyTest(unittest.TestCase):
         wait = WaitNode(subject="Profile", source_steps=(1,))
         nodes: Tuple[FlowNode, ...] = (self.__launch(), wait, self.__terminal())
 
-        self.assertIn(IssueCode.WAIT_SUBJECT_MISMATCH, self.__codes(nodes=nodes, evidence=evidence))
+        self.assertNotIn(
+            IssueCode.WAIT_SUBJECT_MISMATCH, self.__codes(nodes=nodes, evidence=evidence)
+        )
 
-    def test_validation_subject_mismatch_is_rejected(self) -> None:
+    def test_validation_subject_wording_is_not_a_hard_policy_gate(self) -> None:
         """
-        A validation node citing a recorded validation cannot assert a different subject.
+        Non-terminal validation wording is handled by authoring review, not blocking policy.
         """
 
         evidence = Evidence(
@@ -1055,14 +1226,14 @@ class PolicyTest(unittest.TestCase):
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
 
-        self.assertIn(
+        self.assertNotIn(
             IssueCode.VALIDATION_SUBJECT_MISMATCH,
             self.__codes(nodes=nodes, evidence=evidence),
         )
 
-    def test_validation_rejects_incidental_target_when_assertion_state_is_recorded(self) -> None:
+    def test_validation_allows_incidental_subject_without_assertion_ids(self) -> None:
         """
-        A validation cannot use incidental anchor text when the assertion state was recorded.
+        Validation wording is not blocked unless it claims verifier assertion ids incorrectly.
         """
 
         evidence = Evidence(
@@ -1093,14 +1264,14 @@ class PolicyTest(unittest.TestCase):
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
 
-        self.assertIn(
+        self.assertNotIn(
             IssueCode.VALIDATION_SUBJECT_MISMATCH,
             self.__codes(nodes=nodes, evidence=evidence),
         )
 
-    def test_validation_rejects_state_grounded_only_in_rationale(self) -> None:
+    def test_validation_allows_screen_authored_subject_without_assertion_ids(self) -> None:
         """
-        A validation cannot assert a state that appears only in narrative rationale.
+        Screen-authored validation phrasing is quality metadata, not a hard policy issue.
         """
 
         evidence = Evidence(
@@ -1131,7 +1302,7 @@ class PolicyTest(unittest.TestCase):
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
 
-        self.assertIn(
+        self.assertNotIn(
             IssueCode.VALIDATION_SUBJECT_MISMATCH,
             self.__codes(nodes=nodes, evidence=evidence),
         )
@@ -1177,9 +1348,9 @@ class PolicyTest(unittest.TestCase):
             self.__codes(nodes=nodes, evidence=evidence),
         )
 
-    def test_validation_without_recorded_target_is_rejected(self) -> None:
+    def test_validation_without_recorded_target_passes_when_step_is_recorded(self) -> None:
         """
-        A validation step with no recorded target cannot ground an authored check subject.
+        A recorded validation step is enough for policy; review handles weak phrasing.
         """
 
         evidence = Evidence(
@@ -1204,7 +1375,7 @@ class PolicyTest(unittest.TestCase):
         )
         nodes: Tuple[FlowNode, ...] = (self.__launch(), terminal)
 
-        self.assertIn(
+        self.assertNotIn(
             IssueCode.VALIDATION_SUBJECT_MISMATCH,
             self.__codes(nodes=nodes, evidence=evidence),
         )

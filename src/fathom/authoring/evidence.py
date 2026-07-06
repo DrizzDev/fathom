@@ -6,6 +6,7 @@ from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactR
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.authoring import (
     AuthoringArtifactReference,
+    AuthoringBaseline,
     AuthoringCapture,
     AuthoringCommand,
     AuthoringEpisode,
@@ -35,7 +36,11 @@ class AuthoringEvidenceBuilder:
     __IMAGE_SUFFIXES: Tuple[str, ...] = (".gif", ".jpg", ".jpeg", ".png", ".webp")
 
     def build_run(
-        self, *, evidence: Evidence, drafts: Tuple[AuthoringDraft, ...] = ()
+        self,
+        *,
+        evidence: Evidence,
+        drafts: Tuple[AuthoringDraft, ...] = (),
+        baseline: Optional[AuthoringBaseline] = None,
     ) -> AuthoringEvidence:
         """
         Build whole-run authoring evidence from existing normalized evidence.
@@ -45,11 +50,12 @@ class AuthoringEvidenceBuilder:
             run=RunAuthoringEvidence(
                 drafts=drafts,
                 source=evidence,
+                baseline=baseline,
+                assertions=evidence.assertions,
                 run=self.__run(evidence=evidence),
                 steps=self.__steps(evidence=evidence),
                 episodes=self.__episodes(evidence=evidence),
                 artifacts=self.__artifacts(evidence=evidence),
-                assertions=evidence.assertions,
             )
         )
 
@@ -103,6 +109,7 @@ class AuthoringEvidenceBuilder:
             reason=evidence.reason,
             intent=evidence.intent,
             package=evidence.package,
+            outcome=evidence.outcome,
             partial=evidence.partial,
             discarded=evidence.discarded,
         )
@@ -145,10 +152,13 @@ class AuthoringEvidenceBuilder:
             ),
             target=AuthoringTarget(
                 name=step.target.name,
+                claim=step.target.claim,
                 export=step.target.export,
                 scroll=step.target.scroll,
                 element=step.target.element,
+                anchors=step.target.anchors,
                 positional=step.target.positional,
+                structure=step.target.structure,
                 generalized=step.target.generalized,
             ),
             narrative=AuthoringNarrative(

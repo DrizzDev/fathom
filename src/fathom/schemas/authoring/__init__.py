@@ -9,6 +9,7 @@ from fathom.schemas.authoring.configuration import (
 )
 from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.authoring.evidence import (
+    AuthoringBaseline,
     AuthoringCapture,
     AuthoringCommand,
     AuthoringEpisode,
@@ -26,6 +27,7 @@ from fathom.schemas.authoring.evidence import (
 from fathom.schemas.authoring.packet import AuthoringPacket
 from fathom.schemas.authoring.reference import (
     AuthoringDialectReference,
+    AuthoringLexiconTerm,
     CommandDoc,
     CommandExample,
     DialectGuide,
@@ -39,7 +41,9 @@ __all__ = [
     "AuthoringStep",
     "AuthoringTask",
     "CommandExample",
+    "AuthoringLexiconTerm",
     "AuthoringDraft",
+    "AuthoringBaseline",
     "AuthoringPacket",
     "AuthoringScreen",
     "AuthoringTarget",

@@ -75,6 +75,7 @@ class HistoryService:
         self.__background_tasks: Set[asyncio.Task[Any]] = set()
         self.__persistence_tasks: Set[asyncio.Task[Any]] = set()
         self.__persistence_chain: Optional[asyncio.Task[None]] = None
+        self.__last_refresh_objective: Optional[RunObjective] = None
 
     def __log_failure(
         self,
@@ -339,10 +340,13 @@ class HistoryService:
             self.__log_schedule_skipped(reason="unresolved_package", package_name=None)
             return
 
-        self.__refresher.schedule(
-            execution_id=self.__execution_id,
-            objective=RunObjective(intent=intent, goal=intent, package=package_name),
+        objective = RunObjective(
+            intent=intent,
+            goal=intent,
+            package=package_name,
         )
+        self.__last_refresh_objective = objective
+        self.__refresher.schedule(execution_id=self.__execution_id, objective=objective)
         logger.info(
             "baseline refresh scheduled",
             extra={
@@ -574,10 +578,7 @@ class HistoryService:
         if not assertions:
             return
 
-        path = self.__get_history_file_path(
-            package_name=self.__EXECUTION,
-            filename=COMPLETION_ASSERTIONS_FILENAME,
-        )
+        path = self.__get_execution_file_path(filename=COMPLETION_ASSERTIONS_FILENAME)
         payload = [assertion.model_dump(mode="json") for assertion in assertions]
 
         with path.open(mode="w") as handle:
@@ -590,6 +591,51 @@ class HistoryService:
                 "execution.id": self.__execution_id,
                 "assertion.count": len(assertions),
             },
+        )
+        self.__schedule_assertion_refresh()
+
+    def __schedule_assertion_refresh(self) -> None:
+        """
+        Refresh the baseline after terminal assertions mutate script evidence.
+        """
+
+        if self.__refresher is None:
+            self.__log_schedule_skipped(reason="no_refresher", package_name=None)
+            return
+
+        if self.__last_refresh_objective is None:
+            self.__log_schedule_skipped(reason="no_prior_objective", package_name=None)
+            return
+
+        self.__refresher.schedule(
+            execution_id=self.__execution_id,
+            objective=self.__last_refresh_objective,
+        )
+        logger.info(
+            "baseline refresh scheduled after completion assertions",
+            extra={
+                "event": "script.baseline.refresh.scheduled_after_assertions",
+                "script.package": self.__last_refresh_objective.package,
+                "execution.id": self.__execution_id,
+            },
+        )
+
+    async def save_script(
+        self,
+        *,
+        step_number: int,
+        source: ScriptSource,
+        result: GenerationResult,
+    ) -> str:
+        """
+        Persist an execution-scoped script and metadata sidecar.
+        """
+
+        return await self.__persist_script(
+            result=result,
+            source=source,
+            step_number=step_number,
+            package_name=self.__EXECUTION,
         )
 
     @time_it(operation="history.read_baseline_outcome")
@@ -636,6 +682,33 @@ class HistoryService:
 
         return artifact
 
+    @time_it(operation="history.peek_baseline_outcome")
+    async def peek_baseline_outcome(self) -> BaselineArtifact:
+        """
+        Read the latest persisted baseline without promoting or cleaning handoff artifacts.
+        """
+
+        artifact_scope = self.__EXECUTION
+        artifact = self.__read_baseline(artifact_scope=artifact_scope)
+
+        if artifact is None:
+            return self.__baseline_unavailable(
+                message="No baseline script artifact was available for authoring."
+            )
+
+        logger.info(
+            "baseline peek completed",
+            extra={
+                "event": "script.baseline.peek.completed",
+                "script.scope": artifact_scope,
+                "execution.id": self.__execution_id,
+                "script.status": artifact.metadata.status.value,
+                "script.issue_codes": [issue.code.value for issue in artifact.metadata.issues],
+                "script.line_count": len((artifact.text or "").splitlines()),
+            },
+        )
+        return artifact
+
     async def __promote_baseline(
         self, *, artifact: BaselineArtifact, artifact_scope: str, step_number: int
     ) -> bool:
@@ -649,7 +722,10 @@ class HistoryService:
                 package_name=artifact_scope,
                 source=ScriptSource.BASELINE,
                 result=GenerationResult(
-                    text=artifact.text or "", attempts=1, review=artifact.metadata.review
+                    text=artifact.text or "",
+                    attempts=1,
+                    source=ScriptSource.BASELINE,
+                    review=artifact.metadata.review,
                 ),
             )
         except Exception as exception:  # noqa: BLE001 — promotion is best-effort; the event still ships
@@ -992,6 +1068,13 @@ class HistoryService:
         scoped = f"{stem}__{package_name}.{ext}" if stem and ext else f"{filename}__{package_name}"
 
         return directory / scoped
+
+    def __get_execution_file_path(self, *, filename: str) -> Path:
+        """
+        Resolve an execution-scoped sidecar path without package suffixing.
+        """
+
+        return self.__path_manager.get_history_directory(session_id=self.__execution_id) / filename
 
     def __build_yaml_item(self, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
         """

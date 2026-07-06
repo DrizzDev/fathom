@@ -69,3 +69,15 @@ class AuthoringExampleKind(StrEnum):
 
     AVOID = "AVOID"
     PREFERRED = "PREFERRED"
+
+
+class AuthoringLexiconCategory(StrEnum):
+    """
+    UI terminology category supplied to authoring prompts.
+    """
+
+    FIELD = "FIELD"
+    CONTROL = "CONTROL"
+    CONTENT = "CONTENT"
+    FEEDBACK = "FEEDBACK"
+    CONTAINER = "CONTAINER"

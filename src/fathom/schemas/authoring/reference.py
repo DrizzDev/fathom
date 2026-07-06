@@ -4,7 +4,7 @@ from typing import Tuple
 
 from pydantic import Field
 
-from fathom.constants.authoring import AuthoringExampleKind
+from fathom.constants.authoring import AuthoringExampleKind, AuthoringLexiconCategory
 from fathom.constants.dialect import DialectName
 from fathom.schemas.base import SealedModel
 
@@ -18,6 +18,32 @@ class CommandExample(SealedModel):
     command: str = Field(min_length=1, description="Rendered command pattern for the situation.")
     situation: str = Field(min_length=1, description="Evidence situation the example represents.")
     kind: AuthoringExampleKind = Field(description="Whether the example is preferred or avoided.")
+
+
+class AuthoringLexiconTerm(SealedModel):
+    """
+    UI terminology hint exposed to authoring prompts.
+    """
+
+    term: str = Field(min_length=1, description="UI term the authoring agent may use.")
+    category: AuthoringLexiconCategory = Field(description="Category of the UI term.")
+    guidance: str = Field(min_length=1, description="When this term describes a visible UI object.")
+
+
+class AuthoringScenario(SealedModel):
+    """
+    Task-level example that teaches authoring judgment across commands.
+    """
+
+    title: str = Field(min_length=1, description="Short name for the authoring scenario.")
+    situation: str = Field(
+        min_length=1, description="Evidence pattern represented by the scenario."
+    )
+    preferred: str = Field(
+        min_length=1, description="Preferred authoring decision or Flow pattern."
+    )
+    avoided: str = Field(min_length=1, description="Less reliable authoring decision to avoid.")
+    reason: str = Field(min_length=1, description="Why the preferred decision is more replayable.")
 
 
 class CommandDoc(SealedModel):
@@ -48,6 +74,14 @@ class DialectGuide(SealedModel):
 
     composition: Tuple[str, ...] = Field(description="How to merge or separate commands.")
     completion: Tuple[str, ...] = Field(description="How to decide complete versus partial Flow.")
+    scenarios: Tuple[AuthoringScenario, ...] = Field(
+        default_factory=tuple,
+        description="Few-shot task patterns for authoring judgment.",
+    )
+    lexicon: Tuple[AuthoringLexiconTerm, ...] = Field(
+        default_factory=tuple,
+        description="Prompt-only UI terminology for complete replayable command phrasing.",
+    )
 
 
 class AuthoringDialectReference(SealedModel):

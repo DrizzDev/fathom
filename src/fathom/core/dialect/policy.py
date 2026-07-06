@@ -5,6 +5,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 from fathom.constants import GESTURE_ACTION_TYPES, GESTURE_SCROLL_DIRECTION, ActionType
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.flow import EvidenceMarker, IssueCode, LaunchProvenance, NodeKind
+from fathom.constants.state import RunOutcome
 from fathom.schemas.flow import (
     BranchNode,
     CheckNode,
@@ -14,12 +15,10 @@ from fathom.schemas.flow import (
     FlowNode,
     Issue,
     LaunchNode,
-    MapNode,
     Report,
     ScrollNode,
     ScrollUntilNode,
     StoreNode,
-    TapNode,
     TypeNode,
     WaitNode,
 )
@@ -53,10 +52,7 @@ class Policy:
         issues.extend(self.__provenance(indexed=indexed, index=index))
         issues.extend(self.__grounded_conditions(indexed=indexed, index=index))
         issues.extend(self.__unguarded_conditional(nodes=flow.nodes, index=index))
-        issues.extend(self.__target_content(indexed=indexed, index=index))
         issues.extend(self.__type_content(indexed=indexed, index=index))
-        issues.extend(self.__wait_content(indexed=indexed, index=index))
-        issues.extend(self.__validation_content(indexed=indexed, index=index, evidence=evidence))
         issues.extend(self.__ungrounded_scrolls(indexed=indexed, index=index))
         issues.extend(self.__redundant_scrolls(indexed=indexed, index=index))
         issues.extend(self.__ungrounded_stores(indexed=indexed, index=index))
@@ -199,38 +195,11 @@ class Policy:
 
         return issues
 
-    def __target_content(
-        self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
-    ) -> List[Issue]:
-        """
-        Reject tap targets that do not match content recorded on the cited source step.
-        """
-
-        issues: List[Issue] = []
-
-        for position, node in indexed:
-            if not isinstance(node, (TapNode, MapNode)):
-                continue
-
-            if not self.__matches_action_grounding(text=node.selector.text, node=node, index=index):
-                issues.append(
-                    Issue(
-                        node_index=position,
-                        code=IssueCode.TAP_TARGET_MISMATCH,
-                        message=(
-                            f"{node.kind} at node {position} targets '{node.selector.text}', "
-                            "which is not grounded in the cited action evidence."
-                        ),
-                    )
-                )
-
-        return issues
-
     def __type_content(
         self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
     ) -> List[Issue]:
         """
-        Reject type nodes whose field or typed text differs from the cited source step.
+        Reject type nodes whose typed text differs from the cited source step.
         """
 
         issues: List[Issue] = []
@@ -245,96 +214,18 @@ class Policy:
                 and recorded.text == node.text
                 for step in node.source_steps
             )
-            field_matches = self.__matches_any_target(text=node.field.text, node=node, index=index)
 
-            if not text_matches or not field_matches:
+            if not text_matches:
                 issues.append(
                     Issue(
                         node_index=position,
                         code=IssueCode.TYPE_CONTENT_MISMATCH,
                         message=(
-                            f"Type at node {position} does not match the recorded field and text "
-                            "on its cited source steps."
+                            f"Type at node {position} enters text that was not recorded on its "
+                            "cited source steps."
                         ),
                     )
                 )
-
-        return issues
-
-    def __wait_content(
-        self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
-    ) -> List[Issue]:
-        """
-        Reject wait subjects that differ from the cited source step's recorded wait subject.
-        """
-
-        issues: List[Issue] = []
-
-        for position, node in indexed:
-            if not isinstance(node, WaitNode) or node.subject is None:
-                continue
-
-            recorded_subjects = [
-                recorded.wait.subject
-                for step in node.source_steps
-                if (recorded := index.get(step)) is not None and recorded.wait.subject
-            ]
-            if recorded_subjects and node.subject not in recorded_subjects:
-                issues.append(
-                    Issue(
-                        node_index=position,
-                        code=IssueCode.WAIT_SUBJECT_MISMATCH,
-                        message=(
-                            f"Wait at node {position} uses subject '{node.subject}', which was "
-                            "not recorded on its cited source steps."
-                        ),
-                    )
-                )
-
-        return issues
-
-    def __validation_content(
-        self,
-        *,
-        indexed: List[Tuple[int, FlowNode]],
-        index: Dict[int, EvidenceStep],
-        evidence: Evidence,
-    ) -> List[Issue]:
-        """
-        Reject validation subjects that differ from recorded validation target content.
-        """
-
-        issues: List[Issue] = []
-
-        for position, node in indexed:
-            if not isinstance(node, CheckNode):
-                continue
-
-            if self.__matches_completion_assertions(node=node, evidence=evidence):
-                continue
-
-            recorded_targets = tuple(
-                target
-                for step in node.source_steps
-                if (recorded := index.get(step)) is not None and recorded.event == self.__VALIDATION
-                for target in self.__validation_grounding(recorded=recorded)
-            )
-
-            for check in node.checks:
-                if not self.__matches_validation(text=check.subject, candidates=recorded_targets):
-                    issues.append(
-                        Issue(
-                            node_index=position,
-                            code=IssueCode.VALIDATION_SUBJECT_MISMATCH,
-                            message=(
-                                f"Validation at node {position} checks '{check.subject}', which "
-                                "is not grounded in the cited validation evidence. Use one of "
-                                "these evidence phrases: "
-                                f"{self.__grounding_summary(candidates=recorded_targets)}."
-                            ),
-                        )
-                    )
-                    break
 
         return issues
 
@@ -402,29 +293,6 @@ class Policy:
                         message=(
                             f"Scroll at node {position} uses direction '{node.direction}', which "
                             "does not match the recorded gesture."
-                        ),
-                    )
-                )
-
-            scroll_candidates = tuple(
-                phrase
-                for _, recorded in gestures
-                for phrase in self.__scroll_grounding(recorded=recorded)
-            )
-            if isinstance(node, ScrollUntilNode) and not any(
-                self.__matches_grounding(
-                    text=node.target, candidates=self.__scroll_grounding(recorded=recorded)
-                )
-                for _, recorded in gestures
-            ):
-                issues.append(
-                    Issue(
-                        node_index=position,
-                        code=IssueCode.UNGROUNDED_SCROLL,
-                        message=(
-                            f"Scroll-until at node {position} targets '{node.target}', which was "
-                            "not grounded in its cited gesture steps. Use one of these evidence "
-                            f"phrases: {self.__grounding_summary(candidates=scroll_candidates)}."
                         ),
                     )
                 )
@@ -529,64 +397,6 @@ class Policy:
 
         return issues
 
-    @staticmethod
-    def __preferred_targets(*, recorded: EvidenceStep) -> Tuple[str, ...]:
-        """
-        Return recorded target text in export-name-generalized precedence order.
-        """
-
-        if recorded.target.export:
-            return (recorded.target.export,)
-
-        if recorded.target.name:
-            return (recorded.target.name,)
-
-        if recorded.target.generalized:
-            return (recorded.target.generalized,)
-
-        return ()
-
-    def __matches_any_target(
-        self, *, text: str, node: FlowNode, index: Dict[int, EvidenceStep]
-    ) -> bool:
-        """
-        Return whether text matches recorded target content on at least one cited source step.
-        """
-
-        targets = tuple(
-            target
-            for step in node.source_steps
-            if (recorded := index.get(step)) is not None
-            for target in self.__preferred_targets(recorded=recorded)
-        )
-        return bool(targets) and text in targets
-
-    def __matches_action_grounding(
-        self, *, text: str, node: FlowNode, index: Dict[int, EvidenceStep]
-    ) -> bool:
-        """
-        Return whether text is grounded in any cited action evidence.
-        """
-
-        return any(
-            self.__matches_grounding(
-                text=text, candidates=self.__grounding_texts(recorded=recorded)
-            )
-            for step in node.source_steps
-            if (recorded := index.get(step)) is not None
-        )
-
-    @classmethod
-    def __validation_grounding(cls, *, recorded: EvidenceStep) -> Tuple[str, ...]:
-        """
-        Return evidence strings that can ground a validation assertion subject.
-        """
-
-        if recorded.target.export:
-            return (recorded.target.export,)
-
-        return cls.__target_grounding(recorded=recorded)
-
     @classmethod
     def __matches_validation(cls, *, text: str, candidates: Tuple[str, ...]) -> bool:
         """
@@ -604,9 +414,8 @@ class Policy:
         Return evidence strings that can ground an authored branch condition.
         """
 
-        target_conditions = tuple(
-            f"{target} is visible" for target in cls.__target_grounding(recorded=recorded)
-        )
+        guard = (recorded.guard.condition,) if recorded.guard.condition else ()
+        targets = cls.__target_grounding(recorded=recorded)
         narrative = tuple(
             text
             for text in (
@@ -616,8 +425,8 @@ class Policy:
             )
             if text
         )
-        if target_conditions or narrative:
-            return (*target_conditions, *narrative)
+        if guard or targets or narrative:
+            return (*guard, *targets, *narrative)
 
         return cls.__grounding_texts(recorded=recorded)
 
@@ -695,13 +504,26 @@ class Policy:
         Return target-specific recorded strings for action grounding.
         """
 
+        target = recorded.target
+        anchors = (*target.anchors.visual, *target.anchors.accessibility)
+        if anchors:
+            return tuple(
+                text
+                for text in (
+                    *anchors,
+                    target.structure.role,
+                    target.structure.container,
+                )
+                if text
+            )
+
         return tuple(
             text
             for text in (
-                recorded.target.export,
-                recorded.target.name,
-                recorded.target.generalized,
-                recorded.target.element,
+                target.export,
+                target.name,
+                target.generalized,
+                target.element,
             )
             if text
         )
@@ -876,6 +698,9 @@ class Policy:
             terminal, CheckNode
         ) and self.__matches_completion_assertions(node=terminal, evidence=evidence)
         grounded = validation_grounded or assertion_grounded
+
+        if evidence.outcome in (RunOutcome.FAILED, RunOutcome.CANCELLED):
+            return self.__partial_completion(flow=flow, terminal=terminal, grounded=grounded)
 
         if evidence.partial:
             return self.__partial_completion(flow=flow, terminal=terminal, grounded=grounded)

@@ -66,6 +66,7 @@ from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
 from fathom.interfaces.authoring import AuthoringDraftStore, AuthoringPort
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.dialect import Dialect
 from fathom.interfaces.embedding import EmbeddingPort
 from fathom.interfaces.evidence import EvidenceSource
 from fathom.interfaces.icon import IconDetectorPort
@@ -287,6 +288,7 @@ class GraphContext:
         )
 
         dialect = DrizzDialectFactory().create()
+        self.__dialect = dialect
         execution_evidence = HistoryEvidenceSource(
             distiller=Distiller(),
             path_manager=path_manager,
@@ -850,6 +852,14 @@ class GraphContext:
         """
 
         return self.__authoring
+
+    @property
+    def dialect(self) -> Dialect:
+        """
+        Returns the script dialect configured for generation and authoring.
+        """
+
+        return self.__dialect
 
     @property
     def authoring_drafts(self) -> AuthoringDraftStore:

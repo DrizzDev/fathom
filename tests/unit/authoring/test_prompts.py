@@ -13,7 +13,7 @@ from fathom.schemas.authoring import (
     AuthoringTask,
     RepairAuthoringEvidence,
 )
-from fathom.schemas.flow import Evidence, EvidenceStep
+from fathom.schemas.flow import Evidence, EvidenceStep, StepTarget, TargetAnchors, TargetClaim
 
 
 class AuthoringPromptFactoryTest(unittest.TestCase):
@@ -41,13 +41,23 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
             intent="open app",
             goal="home visible",
             package="com.example",
-            steps=(EvidenceStep(action="tap", event="action", index=1),),
+            steps=(
+                EvidenceStep(
+                    action="tap",
+                    event="action",
+                    index=1,
+                    target=StepTarget(
+                        claim=TargetClaim(text="wrapper text", verified=False),
+                        anchors=TargetAnchors(accessibility=("product card",)),
+                    ),
+                ),
+            ),
         )
         task = AuthoringTask(
             kind=AuthoringKind.RUN,
             intent="open app",
             step_number=2,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
         )
         reference = AuthoringReferenceProvider().reference(dialect=DialectName.DRIZZ)
@@ -60,13 +70,23 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
         self.assertIn("# Identity", system)
         self.assertIn("# Contract", system)
         self.assertIn("# Method", system)
+        self.assertIn("# Examples", system)
         self.assertIn("# Output", system)
         self.assertIn("dialect reference", system)
         self.assertIn("evidence", system)
+        self.assertIn("few-shot examples", system)
+        self.assertIn("target.anchors", system)
+        self.assertIn("target.structure", system)
         self.assertIn("partial Flow", system)
-        self.assertIn("# Context", user)
-        self.assertIn("dialect guide", user)
-        self.assertIn("few-shot examples", user)
+        self.assertIn("# Dialect Reference", user)
+        self.assertIn("# Evidence", user)
+        self.assertIn('"guide"', user)
+        self.assertIn('"examples"', user)
+        self.assertIn('"scenarios"', user)
+        self.assertIn('"lexicon"', user)
+        self.assertIn('"anchors"', user)
+        self.assertIn('"claim"', user)
+        self.assertIn('"verified":false', user)
         self.assertIn("# Task", user)
 
     def test_reference_exposes_plain_scroll_and_scroll_until_separately(self) -> None:
@@ -95,12 +115,33 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
 
         self.assertIn("replayable script", " ".join(reference.guide.principles))
         self.assertIn("dynamic target", " ".join(reference.guide.selection))
+        self.assertIn("candidate aliases", " ".join(reference.guide.selection))
+        self.assertIn("target.anchors", " ".join(reference.guide.selection))
+        self.assertIn("target.claim.verified", " ".join(reference.guide.selection))
+        self.assertIn("placeholder", " ".join(reference.guide.selection))
+        self.assertTrue(any(term.term == "product grid" for term in reference.guide.lexicon))
+        self.assertTrue(any(term.term == "search field" for term in reference.guide.lexicon))
         self.assertIn("Merge repeated attempts", " ".join(reference.guide.composition))
         self.assertIn("partial Flow", " ".join(reference.guide.completion))
+        self.assertGreaterEqual(len(reference.guide.scenarios), 4)
+        self.assertTrue(
+            any("assertion_ids" in scenario.preferred for scenario in reference.guide.scenarios)
+        )
+        self.assertTrue(
+            any("Flow.partial" in scenario.preferred for scenario in reference.guide.scenarios)
+        )
+        self.assertTrue(any("UI role" in scenario.reason for scenario in reference.guide.scenarios))
+        self.assertTrue(
+            any("visible state" in scenario.reason for scenario in reference.guide.scenarios)
+        )
+        self.assertTrue(
+            any("Conditional guards" in scenario.reason for scenario in reference.guide.scenarios)
+        )
 
         store_examples = commands["store"].examples
         validate_examples = commands["validate"].examples
         tap_examples = commands["tap"].examples
+        scroll_until_examples = commands["scroll_until"].examples
 
         self.assertTrue(
             any(example.kind is AuthoringExampleKind.PREFERRED for example in store_examples)
@@ -112,6 +153,17 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
             any(example.kind is AuthoringExampleKind.AVOID for example in validate_examples)
         )
         self.assertTrue(any("selection context" in example.reason for example in tap_examples))
+        self.assertTrue(any("UI role" in example.reason for example in tap_examples))
+        self.assertTrue(any("visible state" in example.reason for example in scroll_until_examples))
+        self.assertTrue(
+            any("concatenates aliases" in example.reason for example in commands["type"].examples)
+        )
+        self.assertTrue(
+            any(
+                "visible object and the condition" in example.reason
+                for example in scroll_until_examples
+            )
+        )
 
     def test_strategy_accepts_all_evidence_views(self) -> None:
         """
@@ -130,21 +182,21 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
                 kind=AuthoringKind.RUN,
                 intent="open app",
                 step_number=2,
-                workflow_id="workflow-1",
+                execution_id="execution-1",
                 evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
             ),
             AuthoringTask(
                 kind=AuthoringKind.STEP,
                 intent="open app",
                 step_number=2,
-                workflow_id="workflow-1",
+                execution_id="execution-1",
                 evidence=AuthoringEvidenceBuilder().build_step(evidence=evidence, step_index=1),
             ),
             AuthoringTask(
                 kind=AuthoringKind.REPAIR,
                 intent="repair",
                 step_number=2,
-                workflow_id="workflow-1",
+                execution_id="execution-1",
                 evidence=AuthoringEvidence(repair=RepairAuthoringEvidence(script="Tap on Search")),
             ),
         )
@@ -152,4 +204,4 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
         for task in tasks:
             packet = AuthoringPacketBuilder().build(task=task, dialect=reference)
             prompt = AuthoringPromptFactory().prompt(kind=task.kind)
-            self.assertIn("# Context", prompt.user_prompt(packet=packet))
+            self.assertIn("# Evidence", prompt.user_prompt(packet=packet))

@@ -23,6 +23,7 @@ class ScriptSource(StrEnum):
 
     QUALITY = "QUALITY"
     BASELINE = "BASELINE"
+    STEP_DRAFTS = "STEP_DRAFTS"
 
 
 class ScriptStatus(StrEnum):
@@ -39,8 +40,8 @@ class ScriptArtifactMode(StrEnum):
     Controls whether script generation writes only production artifacts or also debug artifacts.
     """
 
-    NORMAL = "NORMAL"
     DEBUG = "DEBUG"
+    NORMAL = "NORMAL"
 
 
 class SkipReason(StrEnum):

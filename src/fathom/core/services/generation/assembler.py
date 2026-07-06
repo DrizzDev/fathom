@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from fathom.constants import ActionType
+from fathom.constants.state import RunOutcome
 from fathom.core.exceptions import InvariantViolation
+from fathom.core.services.generation.target import TargetEvidenceBuilder
 from fathom.schemas.flow import (
     CompletionAssertion,
     Evidence,
@@ -12,7 +14,6 @@ from fathom.schemas.flow import (
     StepGuard,
     StepLaunch,
     StepOutcome,
-    StepTarget,
     StepWait,
 )
 from fathom.schemas.generation import LaunchMarker, NormalizedEntry, NormalizedTrace
@@ -26,6 +27,13 @@ class EvidenceAssembler:
 
     __LAUNCH = "launch"
 
+    def __init__(self, *, target_builder: Optional[TargetEvidenceBuilder] = None) -> None:
+        """
+        Bind collaborators used to assemble evidence.
+        """
+
+        self.__target = target_builder or TargetEvidenceBuilder()
+
     def assemble(
         self,
         *,
@@ -37,6 +45,7 @@ class EvidenceAssembler:
         discarded: Tuple[int, ...] = (),
         reason: Optional[str] = None,
         assertions: Tuple[CompletionAssertion, ...] = (),
+        outcome: RunOutcome = RunOutcome.COMPLETED,
     ) -> Evidence:
         """
         Build the evidence aggregate from a normalized trace of launches and step records.
@@ -46,6 +55,7 @@ class EvidenceAssembler:
         return Evidence(
             goal=goal,
             intent=intent,
+            outcome=outcome,
             assertions=assertions,
             reason=None if completed else reason,
             partial=False if completed else partial,
@@ -109,14 +119,7 @@ class EvidenceAssembler:
             rationale=record.rationale,
             artifacts=record.artifacts,
             observation=record.observation,
-            target=StepTarget(
-                scroll=record.scroll_target,
-                positional=record.is_positional,
-                element=record.target_element_type,
-                name=record.natural_language_target,
-                generalized=record.generalized_target,
-                export=self.__target_export(record=record),
-            ),
+            target=self.__target.build(record=record, export=self.__target_export(record=record)),
             wait=StepWait(subject=record.wait_subject, pattern=record.wait_pattern),
             guard=StepGuard(
                 condition=record.condition,

@@ -74,15 +74,15 @@ class AuthoringConfigurationTest(unittest.TestCase):
     Authoring configuration keeps step and run switches nested and typed.
     """
 
-    def test_defaults_enable_run_authoring_and_disable_step_authoring(self) -> None:
+    def test_defaults_enable_run_and_async_step_authoring(self) -> None:
         """
-        Fathom should attempt final run authoring while keeping rich per-step authoring opt-in.
+        Fathom should attempt final run authoring and background per-step authoring by default.
         """
 
         configuration = AuthoringConfiguration()
 
         self.assertTrue(configuration.run.enabled)
-        self.assertIs(configuration.step.mode, AuthoringMode.DISABLED)
+        self.assertIs(configuration.step.mode, AuthoringMode.ASYNC)
 
     def test_nested_overrides_are_preserved(self) -> None:
         """

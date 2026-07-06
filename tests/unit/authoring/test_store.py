@@ -17,7 +17,7 @@ class StubHistoryPaths(HistoryPaths):
 
     def __init__(self, *, directory: Path) -> None:
         """
-        Store the directory returned for every workflow.
+        Store the directory returned for every execution.
         """
 
         self.__directory = directory
@@ -49,12 +49,12 @@ class FileAuthoringDraftStoreTest(unittest.IsolatedAsyncioTestCase):
                 step_index=2,
                 reason="disabled",
                 kind=AuthoringKind.STEP,
-                workflow_id="workflow-1",
+                execution_id="execution-1",
                 status=AuthoringStatus.SKIPPED,
             )
 
             await store.save(draft=draft)
 
-            loaded = await store.list(workflow_id="workflow-1")
+            loaded = await store.list(execution_id="execution-1")
 
             self.assertEqual(loaded, (draft,))

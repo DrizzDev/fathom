@@ -68,15 +68,41 @@ class Distillation(SealedModel):
     reason: Optional[str] = Field(default=None, description="Why the run was marked partial.")
 
 
+class ScriptLineage(SealedModel):
+    """
+    Evidence provenance for one rendered script node.
+    """
+
+    node_index: int = Field(ge=0, description="Rendered node index in flattened script order.")
+    source_steps: Tuple[int, ...] = Field(
+        default_factory=tuple, description="Evidence step numbers cited by the node."
+    )
+    verified_by: Tuple[str, ...] = Field(
+        default_factory=tuple, description="Evidence channels that supported the node."
+    )
+    screen_authored: bool = Field(
+        default=False,
+        description="Whether the node used an unconfirmed screen-authored planner claim.",
+    )
+
+
 class ScriptReview(SealedModel):
     """
-    Shared review state of a script-generation outcome: whether it is partial, why, and dropped steps.
+    Shared review state of a script-generation outcome.
     """
 
     partial: bool = Field(default=False, description="Whether the script needs review.")
     reason: Optional[str] = Field(default=None, description="Why the run is partial, when it is.")
     discarded: Tuple[int, ...] = Field(
         default_factory=tuple, description="Step numbers dropped during distillation."
+    )
+    advisories: Tuple[Issue, ...] = Field(
+        default_factory=tuple,
+        description="Non-blocking authoring quality notes for review and retry guidance.",
+    )
+    lineage: Tuple[ScriptLineage, ...] = Field(
+        default_factory=tuple,
+        description="Per-node evidence provenance labels for authored script review.",
     )
 
 
@@ -159,6 +185,9 @@ class GenerationResult(SealedModel):
 
     text: str = Field(min_length=1, description="Rendered, validated script text.")
     attempts: int = Field(ge=1, description="Generation attempts made, including repairs.")
+    source: ScriptSource = Field(
+        default=ScriptSource.QUALITY, description="Generation path that produced the script."
+    )
     review: ScriptReview = Field(
         default_factory=ScriptReview, description="Partiality, reason, and dropped steps."
     )

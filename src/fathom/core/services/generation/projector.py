@@ -87,15 +87,108 @@ class DeterministicFlowGenerator(FlowGenerator):
 
         nodes.extend(self.__flush(condition=condition, step=guard_step, body=body))
         nodes = self.__merge_scroll_attempts(nodes=nodes, evidence=evidence)
+        nodes = self.__apply_completion_assertions(nodes=nodes, evidence=evidence)
 
         flow = Flow(
             intent=evidence.intent,
             partial=evidence.partial
+            or self.__has_blocking_skip(skipped=tuple(skipped))
+            or self.__has_unconfirmed_target(nodes=tuple(nodes), evidence=evidence)
             or not self.__has_terminal_validation(nodes=tuple(nodes), evidence=evidence),
             package=evidence.package,
             nodes=tuple(nodes),
         )
         return ProjectionReport(flow=flow, skipped=tuple(skipped))
+
+    @staticmethod
+    def __has_blocking_skip(*, skipped: Tuple[SkippedStep, ...]) -> bool:
+        """
+        Return whether projection skipped evidence that makes the script partial.
+        """
+
+        return any(step.reason is SkipReason.MISSING_TARGET for step in skipped)
+
+    @classmethod
+    def __has_unconfirmed_target(cls, *, nodes: Tuple[FlowNode, ...], evidence: Evidence) -> bool:
+        """
+        Return whether a baseline node had to use an unconfirmed planner target claim.
+        """
+
+        index = {step.index: step for step in evidence.steps if step.launch is None}
+
+        for node in nodes:
+            for source in node.source_steps:
+                step = index.get(source)
+                if step is not None and cls.__uses_unconfirmed_claim(node=node, step=step):
+                    return True
+
+        return False
+
+    @staticmethod
+    def __uses_unconfirmed_claim(*, node: FlowNode, step: EvidenceStep) -> bool:
+        """
+        Return whether a node target equals an unconfirmed planner claim.
+        """
+
+        claim = step.target.claim.text
+        if claim is None or step.target.claim.verified:
+            return False
+
+        if isinstance(node, (TapNode,)):
+            return node.selector.text == claim
+
+        if isinstance(node, TypeNode):
+            return node.field.text == claim
+
+        if isinstance(node, ScrollUntilNode):
+            return node.target == claim
+
+        if isinstance(node, CheckNode):
+            return any(check.subject == claim for check in node.checks)
+
+        return False
+
+    @classmethod
+    def __apply_completion_assertions(
+        cls, *, nodes: List[FlowNode], evidence: Evidence
+    ) -> List[FlowNode]:
+        """
+        End completed evidence with the verifier assertions when they are available.
+        """
+
+        if not evidence.assertions or not evidence.steps:
+            return nodes
+
+        terminal = CheckNode(
+            source_steps=cls.__assertion_source_steps(evidence=evidence),
+            assertion_ids=tuple(assertion.id for assertion in evidence.assertions),
+            checks=tuple(
+                Check(kind=assertion.kind, subject=assertion.subject)
+                for assertion in evidence.assertions
+            ),
+        )
+
+        if nodes and isinstance(nodes[-1], CheckNode):
+            return [*nodes[:-1], terminal]
+
+        return [*nodes, terminal]
+
+    @staticmethod
+    def __assertion_source_steps(*, evidence: Evidence) -> Tuple[int, ...]:
+        """
+        Return valid provenance steps for verifier assertions.
+        """
+
+        steps: List[int] = []
+        valid = {step.index for step in evidence.steps if step.launch is None}
+        fallback = evidence.steps[-1].index
+
+        for assertion in evidence.assertions:
+            step = assertion.step_index if assertion.step_index in valid else fallback
+            if step not in steps:
+                steps.append(step)
+
+        return tuple(steps)
 
     @classmethod
     def __merge_scroll_attempts(
@@ -186,7 +279,13 @@ class DeterministicFlowGenerator(FlowGenerator):
             for step in evidence.steps
             if step.event == cls.__VALIDATION and step.outcome.success
         }
-        return bool(set(nodes[-1].source_steps) & validations)
+        if bool(set(nodes[-1].source_steps) & validations):
+            return True
+
+        assertion_ids = getattr(nodes[-1], "assertion_ids", ())
+        known = {assertion.id for assertion in evidence.assertions}
+
+        return bool(assertion_ids) and set(assertion_ids).issubset(known)
 
     @staticmethod
     def __flush(*, condition: Optional[str], step: int, body: List[LeafNode]) -> List[FlowNode]:
@@ -297,7 +396,9 @@ class DeterministicFlowGenerator(FlowGenerator):
 
         if step.target.scroll:
             return ScrollUntilNode(
-                direction=direction, target=step.target.scroll, source_steps=sources
+                direction=direction,
+                source_steps=sources,
+                target=step.target.scroll,
             )
 
         return ScrollNode(direction=direction, source_steps=sources)
@@ -308,7 +409,7 @@ class DeterministicFlowGenerator(FlowGenerator):
         Build a target selector from the recorded export phrase or raw name, or None when neither exists.
         """
 
-        text = step.target.export or step.target.name
+        text = DeterministicFlowGenerator.__target_text(step=step)
 
         if not text:
             return None
@@ -316,6 +417,21 @@ class DeterministicFlowGenerator(FlowGenerator):
         return Selector(
             text=text, position=step.target.generalized if step.target.positional else None
         )
+
+    @staticmethod
+    def __target_text(*, step: EvidenceStep) -> Optional[str]:
+        """
+        Return the safest deterministic target phrase for a recorded step.
+        """
+
+        anchors = (*step.target.anchors.accessibility, *step.target.anchors.visual)
+        if anchors:
+            return anchors[0]
+
+        if step.target.structure.role:
+            return step.target.structure.role
+
+        return step.target.export or step.target.name or step.target.claim.text
 
     @staticmethod
     def __subject(*, step: EvidenceStep) -> Optional[str]:
@@ -334,11 +450,10 @@ class DeterministicFlowGenerator(FlowGenerator):
         if step.launch is not None or not step.guard.conditional:
             return None
 
-        target = step.target.export or step.target.name or step.target.generalized
-        if target:
-            return f"{target} is visible"
+        if step.guard.condition:
+            return step.guard.condition
 
-        return step.guard.condition
+        return step.target.export or step.target.name or step.target.generalized
 
     @staticmethod
     def __action(*, value: str) -> Optional[ActionType]:

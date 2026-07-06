@@ -26,7 +26,7 @@ class AuthoringPacketBuilderTest(unittest.TestCase):
             kind=AuthoringKind.RUN,
             intent="open app",
             step_number=2,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
         )
         reference = AuthoringReferenceProvider().reference(dialect=DialectName.DRIZZ)

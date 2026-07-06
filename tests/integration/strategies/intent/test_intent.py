@@ -196,7 +196,7 @@ class TestIntentStrategyCancelledScriptDelivery:
         async def read(
             source: HistoryEvidenceSource,
             *,
-            run: str,
+            execution_id: str,
             objective: RunObjective,
         ) -> Evidence:
             """
@@ -208,7 +208,7 @@ class TestIntentStrategyCancelledScriptDelivery:
                 intent=objective.intent,
                 goal=objective.intent,
                 package=objective.package,
-                artifacts=(run,),
+                artifacts=(execution_id,),
             )
 
         return read

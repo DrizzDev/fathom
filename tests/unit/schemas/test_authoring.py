@@ -66,7 +66,7 @@ class AuthoringEvidenceTest(unittest.TestCase):
 
         evidence = Evidence(intent="open app", goal="open app", package="com.example")
 
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValueError):
             AuthoringEvidenceBuilder().build_step(evidence=evidence, step_index=3)
 
     def test_authoring_task_carries_dialect_and_evidence(self) -> None:
@@ -84,7 +84,7 @@ class AuthoringEvidenceTest(unittest.TestCase):
             evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
             intent="open app",
             kind=AuthoringKind.RUN,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=1,
         )
 
@@ -109,7 +109,7 @@ class AuthoringEvidenceTest(unittest.TestCase):
                 evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
                 intent="open app",
                 kind=AuthoringKind.STEP,
-                workflow_id="workflow-1",
+                execution_id="execution-1",
                 step_number=1,
             )
 
@@ -153,6 +153,22 @@ class AuthoringEvidenceTest(unittest.TestCase):
 
         self.assertTrue(response.has_script)
         self.assertEqual(response.script, "Tap on Search field")
+
+    def test_authoring_response_rejects_whitespace_as_script(self) -> None:
+        """
+        AuthoringResponse must not treat whitespace content as a usable script.
+        """
+
+        response = AuthoringResponse(
+            status=AuthoringStatus.GENERATED,
+            artifact=AuthoringArtifact(
+                dialect=DialectName.DRIZZ,
+                kind=AuthoringArtifactKind.TEXT,
+                content="   ",
+            ),
+        )
+
+        self.assertFalse(response.has_script)
 
     def test_authoring_configuration_owns_attempt_budget(self) -> None:
         """

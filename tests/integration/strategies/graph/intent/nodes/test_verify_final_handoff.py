@@ -175,6 +175,7 @@ class _Provider:
             intent=intent,
             memory=SimpleNamespace(store_experience=AsyncMock()),
             telemetry=SimpleNamespace(info=AsyncMock(), warning=AsyncMock(), error=AsyncMock()),
+            history=SimpleNamespace(save_completion_assertions=MagicMock()),
         )
         self.persistence.should_skip_launcher = MagicMock(return_value=False)  # type: ignore[attr-defined]
         self.persistence.enqueue_history = MagicMock()  # type: ignore[attr-defined]
@@ -341,7 +342,10 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         llm = _SequenceLlm(
             contents=[
                 '{"is_complete": false, "reason": "Tap Yes, continue first"}',
-                '{"is_complete": true, "reason": "SalarySe office is selected"}',
+                (
+                    '{"is_complete": true, "reason": "SalarySe office is selected", '
+                    '"assertions": [{"kind": "VISIBLE", "subject": "SalarySe office address header"}]}'
+                ),
             ]
         )
         provider = _Provider(agent_state=agent_state, llm=llm)
@@ -400,7 +404,10 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     '{"is_complete": false, "reason": "Although HSR Layout is visible, '
                     'the confirmation modal is still present. Tap Yes, continue with this location."}'
                 ),
-                '{"is_complete": true, "reason": "HSR Layout is selected in the address header."}',
+                (
+                    '{"is_complete": true, "reason": "HSR Layout is selected in the address header.", '
+                    '"assertions": [{"kind": "VISIBLE", "subject": "HSR Layout address header"}]}'
+                ),
             ]
         )
         provider = _Provider(

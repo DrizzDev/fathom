@@ -5,6 +5,7 @@ import unittest
 from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactRole
 from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
+from fathom.schemas.authoring import AuthoringBaseline
 from fathom.schemas.flow import Evidence, EvidenceStep, Flow
 from fathom.schemas.steps import StepGoal
 
@@ -82,13 +83,30 @@ class AuthoringEvidenceBuilderTest(unittest.TestCase):
 
         self.assertEqual(len(result.run.artifacts), 5)
         self.assertEqual(result.run.artifacts[0].kind, AuthoringArtifactKind.TEXT)
-        self.assertEqual(result.run.artifacts[0].role, AuthoringArtifactRole.OTHER)
+        self.assertEqual(result.run.artifacts[0].role, AuthoringArtifactRole.LOG)
         self.assertEqual(result.run.artifacts[1].kind, AuthoringArtifactKind.IMAGE)
         self.assertEqual(result.run.artifacts[1].role, AuthoringArtifactRole.BEFORE)
         self.assertEqual(result.run.artifacts[1].step_index, 1)
         self.assertEqual(result.run.artifacts[2].role, AuthoringArtifactRole.AFTER)
         self.assertEqual(result.run.artifacts[3].role, AuthoringArtifactRole.ANNOTATED)
         self.assertEqual(result.run.artifacts[4].kind, AuthoringArtifactKind.TRACE)
+
+    def test_run_evidence_carries_baseline_scaffold_when_available(self) -> None:
+        """
+        Run evidence must expose the deterministic baseline scaffold to final authoring.
+        """
+
+        evidence = Evidence(intent="find soap", goal="find soap", package="com.example")
+        baseline = AuthoringBaseline(
+            content="OPEN_APP: com.example\nTap on Search input field",
+            partial=True,
+            reason="No completion assertion was recorded.",
+        )
+
+        result = self.builder.build_run(evidence=evidence, baseline=baseline)
+        assert result.run is not None
+
+        self.assertEqual(result.run.baseline, baseline)
 
     def test_step_evidence_reuses_existing_evidence_and_filters_artifacts(self) -> None:
         """

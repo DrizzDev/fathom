@@ -115,7 +115,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
             evidence=self.__run_evidence(),
             intent="open app",
             kind=AuthoringKind.RUN,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=3,
         )
 
@@ -144,7 +144,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
             evidence=self.__run_evidence(),
             intent="open app",
             kind=AuthoringKind.RUN,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=3,
         )
 
@@ -164,13 +164,15 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
         authoring = StubAuthoringPort(text="Tap on Search")
         runner = AuthoringRunner(
             agent=AuthoringAgent(),
-            configuration=AuthoringConfiguration(),
+            configuration=AuthoringConfiguration(
+                step=StepAuthoringConfiguration(mode=AuthoringMode.DISABLED)
+            ),
         )
         task = AuthoringTask(
             evidence=self.__step_evidence(),
             intent="open app",
             kind=AuthoringKind.STEP,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=3,
         )
 
@@ -195,7 +197,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
             evidence=self.__step_evidence(),
             intent="open app",
             kind=AuthoringKind.STEP,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=3,
         )
 
@@ -222,7 +224,7 @@ class AuthoringRunnerTest(unittest.IsolatedAsyncioTestCase):
             evidence=self.__repair_evidence(),
             intent="repair script",
             kind=AuthoringKind.REPAIR,
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_number=3,
         )
 

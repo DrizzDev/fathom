@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Tuple
 
 from fathom.constants.authoring import AuthoringExampleKind
-from fathom.schemas.authoring.reference import CommandDoc, CommandExample, DialectGuide
+from fathom.constants.authoring.lexicon import UI_LEXICON
+from fathom.schemas.authoring.reference import (
+    AuthoringScenario,
+    CommandDoc,
+    CommandExample,
+    DialectGuide,
+)
 
 DRIZZ_GUIDE = DialectGuide(
     principles=(
@@ -17,6 +23,11 @@ DRIZZ_GUIDE = DialectGuide(
         "Use a relative or dynamic target when evidence shows selection by order, query, filter, condition, or runtime context.",
         "Combine stable and dynamic context when both are needed to make the target replayable.",
         "Avoid raw trace labels when they are generic, incomplete, or only meaningful to the recorder.",
+        "Author target text from target.anchors and target.structure before using target.claim.",
+        "Use target.claim only when target.claim.verified is true; otherwise treat it as recorder narrative.",
+        "Treat target.name, target.export, target.generalized, and target.scroll as candidate aliases; choose the clearest replay phrase instead of concatenating aliases.",
+        "Treat placeholder or hint text as evidence for locating a field, not necessarily as the field name users should replay.",
+        "Use container wording only when it names a real visible UI region, such as suggestions list, product grid, dialog, bottom sheet, or form.",
     ),
     composition=(
         "Merge repeated attempts that serve one user-level purpose into one replayable command when the evidence supports it.",
@@ -29,6 +40,136 @@ DRIZZ_GUIDE = DialectGuide(
         "Return a partial Flow when the run stopped, evidence is insufficient, or completion cannot be asserted faithfully.",
         "A validation command must assert a meaningful visible or data state, not merely repeat a generic control label.",
     ),
+    scenarios=(
+        AuthoringScenario(
+            title="stable target selection",
+            situation=(
+                "A step taps a stable screen element whose role and label are both recorded."
+            ),
+            preferred="Use the semantic target and role, such as Tap on Login button.",
+            avoided="Use a recorder-only phrase such as Tap on target or Tap on button.",
+            reason="Stable targets replay better when the command names the actual UI object.",
+        ),
+        AuthoringScenario(
+            title="runtime result selection",
+            situation=(
+                "A step chooses a result because of a prior query, ordering, filter, or runtime condition."
+            ),
+            preferred=(
+                "Combine the relative choice with the selection context, such as "
+                "Tap on first matching result in the recorded results list."
+            ),
+            avoided="Use a context-free target such as Tap on item.",
+            reason="Dynamic selections need the reason they were selected, not only the tapped widget.",
+        ),
+        AuthoringScenario(
+            title="repeated attempts",
+            situation=(
+                "Several consecutive steps in one episode scroll or tap while searching for the same state."
+            ),
+            preferred=(
+                "Represent the episode as one replayable movement or target-seeking command when the "
+                "stop state is proven; otherwise keep only faithful progress and mark the Flow partial."
+            ),
+            avoided="Emit every repeated attempt as independent user-level commands.",
+            reason="Retries are execution mechanics; scripts should capture the user-level purpose.",
+        ),
+        AuthoringScenario(
+            title="terminal completion",
+            situation="The verifier supplied completion assertions after execution ended.",
+            preferred=(
+                "End a complete Flow with a CheckNode whose subject and kind match those assertions "
+                "and whose assertion_ids cite the assertion identifiers."
+            ),
+            avoided="Invent a terminal validation from the last tapped control or a broad observation.",
+            reason="Completion assertions are the trustworthy terminal proof for final Validate commands.",
+        ),
+        AuthoringScenario(
+            title="captured value",
+            situation="A command records a successful value capture for a named variable.",
+            preferred="Use Store with the captured runtime value and recorded variable name.",
+            avoided="Store the capture description or a value inferred from surrounding text.",
+            reason="Value-bearing commands must preserve recorded values exactly.",
+        ),
+        AuthoringScenario(
+            title="role-qualified control",
+            situation=(
+                "A control label is recorded, and evidence also identifies the role or purpose of "
+                "the control."
+            ),
+            preferred="Include the role, such as Tap on Buy Now button or Tap on search input field.",
+            avoided="Use only the raw label, such as Tap on Buy Now or Tap on search hint text.",
+            reason="A replayable command should identify the UI role of the object being used.",
+        ),
+        AuthoringScenario(
+            title="scroll stop state",
+            situation="A scroll episode is meant to reveal a section, result, or condition.",
+            preferred=(
+                "Use a stop target that names the visible state, such as "
+                'Scroll down until "Reviews section is visible".'
+            ),
+            avoided='Use a fragment-only target, such as Scroll down until "Reviews".',
+            reason="The stop condition must tell replay what visible state ends the scroll.",
+        ),
+        AuthoringScenario(
+            title="conditional guard wording",
+            situation="A branch runs because a visible UI condition appeared.",
+            preferred="Name the concrete condition, such as IF account picker dialog is visible.",
+            avoided="Use a recorder-only condition, such as IF overlay is visible.",
+            reason="Conditional guards should explain the UI state that makes the branch replayable.",
+        ),
+        AuthoringScenario(
+            title="alias selection",
+            situation=(
+                "A step records both a placeholder-like raw name and a cleaner exported role for "
+                "the same target."
+            ),
+            preferred='Use one clear replay target, such as Type "search query" into search input field.',
+            avoided=(
+                'Combine aliases, such as Type "search query" into Search by Keyword under Search box.'
+            ),
+            reason=(
+                "Multiple recorded aliases describe the same object; concatenating them makes the "
+                "command harder to replay."
+            ),
+        ),
+        AuthoringScenario(
+            title="dynamic result selection",
+            situation=(
+                "A step selects a result because of query, order, filter, or another runtime "
+                "condition."
+            ),
+            preferred=(
+                "Name the visible item plus the replay context, such as Tap on the first matching "
+                "result card in the results grid."
+            ),
+            avoided="Use only the title or only a broad area, such as Tap on result card.",
+            reason=(
+                "Dynamic choices need both what was tapped and why that instance was the right one."
+            ),
+        ),
+        AuthoringScenario(
+            title="unverified target claim",
+            situation=(
+                "The planner target phrase does not match any evidence-owned visual or "
+                "accessibility anchor."
+            ),
+            preferred=(
+                "Use verified anchors and structural context, or return a partial Flow when the "
+                "target cannot be identified replayably."
+            ),
+            avoided="Use target.claim.text as the command target just because it was recorded.",
+            reason="Planner claims are useful context, but only verified anchors are target truth.",
+        ),
+        AuthoringScenario(
+            title="incomplete evidence",
+            situation="Execution stopped before the user-level goal was proven.",
+            preferred="Set Flow.partial to true and return only commands supported by executed evidence.",
+            avoided="Publish a complete Flow by guessing missing follow-up commands or assertions.",
+            reason="A partial script is useful and honest; invented completion is not.",
+        ),
+    ),
+    lexicon=UI_LEXICON,
 )
 
 
@@ -48,19 +189,40 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
         rules=(
             "Target must identify what replay should tap.",
             "Prefer semantic labels over recorder-only labels when evidence supports the semantic label.",
+            "Include the UI role when evidence identifies it, such as button, input field, tab, or product card.",
+            "Do not concatenate multiple aliases for the same target; choose the clearest one.",
+            "For dynamic results, include the visible item, relative choice, and selection context when evidence supports them.",
         ),
         examples=(
             CommandExample(
                 kind=AuthoringExampleKind.PREFERRED,
-                situation="A search result was chosen by query and position.",
-                command="Tap on first search result for the recorded search query",
-                reason="The target combines relative selection with the query that made it meaningful.",
+                situation="A search suggestion was chosen after typing a query.",
+                command='Tap on the first "search query" suggestion in the suggestions list',
+                reason="The target combines visible text, relative position, and the visible list role.",
             ),
             CommandExample(
                 command="Tap on product card",
                 kind=AuthoringExampleKind.AVOID,
                 reason="The command omits the available selection context needed for reliable replay.",
                 situation="A recorded target only names a generic card while the evidence has query, order, or product context.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
+                command="Tap on Buy Now button",
+                reason="The command names both the visible label and the UI role.",
+                situation="A button label is recorded with enough evidence to identify it as a button.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
+                situation="A result was selected because it matched a runtime condition.",
+                command="Tap on the first matching result card in the results grid",
+                reason="The command carries the dynamic condition that made the selected card replayable.",
+            ),
+            CommandExample(
+                command="Tap on Buy Now",
+                kind=AuthoringExampleKind.AVOID,
+                reason="The command leaves the UI role implicit even though evidence can name it.",
+                situation="A button label is recorded with enough evidence to identify it as a button.",
             ),
         ),
     ),
@@ -70,6 +232,20 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
         example='Type "John" into name input field',
         purpose="Enter a value into a focused field.",
         rules=("Use the recorded typed value and the field it was entered into.",),
+        examples=(
+            CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
+                situation="A field has raw placeholder text plus a cleaner semantic role.",
+                command='Type "search query" into search input field',
+                reason="The replay target uses the field role instead of copying placeholder text.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.AVOID,
+                situation="A field has multiple aliases for the same object.",
+                command='Type "search query" into Search by Keyword under Search box',
+                reason="The command concatenates aliases and reads like recorder metadata.",
+            ),
+        ),
     ),
     CommandDoc(
         name="scroll",
@@ -97,19 +273,33 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
         rules=(
             "Use only when evidence records a concrete target that replay should stop at.",
             "The target must be complete enough to tell replay what should become visible.",
+            "Prefer section, row, result, field, dialog, or condition wording over standalone fragments.",
+            "If the stop target is a condition, state the visible object and condition, not only the condition text.",
         ),
         examples=(
             CommandExample(
                 kind=AuthoringExampleKind.PREFERRED,
-                command='Scroll down until "Reviews section"',
-                reason="The stop target is concrete and visible.",
+                command='Scroll down until "Reviews section is visible"',
+                reason="The stop target is a complete visible state.",
                 situation="Scrolling stopped when a concrete section became visible.",
             ),
             CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
+                command='Scroll down until "a matching result card is visible"',
+                reason="The stop target names the visible object and the condition that ends the scroll.",
+                situation="Scrolling searched for an item satisfying a runtime condition.",
+            ),
+            CommandExample(
                 kind=AuthoringExampleKind.AVOID,
-                command='Scroll down until "result list"',
+                command='Scroll down until "Reviews"',
                 situation="Several scroll attempts mention broad list context.",
-                reason="The stop target is too broad to be a replayable stopping condition.",
+                reason="The stop target is a fragment rather than a visible stopping state.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.AVOID,
+                command='Scroll down until "matches condition"',
+                reason="The condition omits the visible object that replay should find.",
+                situation="Scrolling searched for an item satisfying a runtime condition.",
             ),
         ),
     ),
@@ -152,6 +342,7 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
         rules=(
             "Subject must be a meaningful state or object proven by evidence.",
             "Do not validate generic controls unless the control itself is the user-level state.",
+            "Include the role or state being asserted so the command reads as a complete assertion.",
         ),
         examples=(
             CommandExample(

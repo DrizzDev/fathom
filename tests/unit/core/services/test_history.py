@@ -8,10 +8,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.execution import LAUNCHER_PACKAGES
-from fathom.constants.flow import IssueCode
+from fathom.constants.flow import AssertionSource, CheckKind, IssueCode
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
     BASELINE_SCRIPT_FILENAME,
+    COMPLETION_ASSERTIONS_FILENAME,
     ScriptArtifactMode,
     ScriptArtifactScope,
     ScriptSource,
@@ -20,7 +21,7 @@ from fathom.constants.generation import (
 from fathom.core.services.history import HistoryService
 from fathom.interfaces.script import ScriptRefresher
 from fathom.schemas.actions import Action
-from fathom.schemas.flow import Issue, RunObjective
+from fathom.schemas.flow import CompletionAssertion, Issue, RunObjective
 from fathom.schemas.generation import ScriptFileMetadata
 from fathom.schemas.steps import Step, StepGoal, StepResult
 
@@ -263,6 +264,35 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(refresher.drains, 1)
 
+    async def test_completion_assertions_schedule_fresh_baseline_refresh(self) -> None:
+        """
+        Terminal assertions mutate script evidence, so they refresh the baseline before finalization.
+        """
+
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            refresher = RecordingRefresher()
+            service = self.__service(directory=directory, refresher=refresher)
+            assertion = CompletionAssertion(
+                id="terminal.login",
+                kind=CheckKind.VISIBLE,
+                subject="Phone Number input field",
+                source=AssertionSource.VERIFICATION,
+            )
+
+            await service.save_step(
+                self.__result(number=0),
+                intent="open and verify login screen",
+                package_name="com.meesho.supply",
+                execution_activity="com.meesho.supply",
+            )
+            service.save_completion_assertions(assertions=(assertion,))
+
+            self.assertEqual(len(refresher.scheduled), 2)
+            self.assertEqual(refresher.scheduled[1][0], "wf-1")
+            self.assertEqual(refresher.scheduled[1][1].intent, "open and verify login screen")
+            self.assertEqual(refresher.scheduled[1][1].package, "com.meesho.supply")
+
     async def test_normal_mode_writes_only_workflow_trace_for_step_history(self) -> None:
         """
         Normal artifact mode suppresses per-package JSON/YAML debug histories.
@@ -344,6 +374,26 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
         if text is not None:
             __scoped(BASELINE_SCRIPT_FILENAME).write_text(text)
 
+    def test_completion_assertions_are_execution_sidecar_not_scoped_artifact(self) -> None:
+        """
+        Completion assertions are written at the path read by HistoryEvidenceSource.
+        """
+
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            service = self.__service(directory=directory)
+            assertion = CompletionAssertion(
+                id="terminal.login",
+                kind=CheckKind.VISIBLE,
+                subject="Phone Number input field",
+                source=AssertionSource.VERIFICATION,
+            )
+
+            service.save_completion_assertions(assertions=(assertion,))
+
+            self.assertTrue((directory / COMPLETION_ASSERTIONS_FILENAME).exists())
+            self.assertFalse((directory / "completion.assertions__execution.json").exists())
+
     async def test_baseline_outcome_promotes_generated_to_canonical_script(self) -> None:
         """
         A generated baseline is returned, promoted, and cleaned up in normal mode.
@@ -378,8 +428,37 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(
                 (
-                    directory
-                    / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+                    directory / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+                ).exists()
+            )
+
+    async def test_baseline_peek_reads_without_promoting_or_cleaning(self) -> None:
+        """
+        Authoring may read the baseline scaffold without consuming the finalization handoff.
+        """
+
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            service = self.__service(directory=directory)
+            self.__write_baseline(
+                directory=directory,
+                metadata=ScriptFileMetadata(
+                    source=ScriptSource.BASELINE, status=ScriptStatus.GENERATED
+                ),
+                text="OPEN_APP: com.app.one\nTap on Search box",
+            )
+
+            artifact = await service.peek_baseline_outcome()
+
+            self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
+            self.assertEqual(artifact.text, "OPEN_APP: com.app.one\nTap on Search box")
+            self.assertFalse((directory / "script__execution.txt").exists())
+            self.assertTrue(
+                (directory / f"script.baseline__{ScriptArtifactScope.EXECUTION.value}.txt").exists()
+            )
+            self.assertTrue(
+                (
+                    directory / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
                 ).exists()
             )
 
@@ -459,8 +538,7 @@ class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(
                 (
-                    directory
-                    / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
+                    directory / f"script.baseline.meta__{ScriptArtifactScope.EXECUTION.value}.json"
                 ).exists()
             )
 

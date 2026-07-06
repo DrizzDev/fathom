@@ -36,13 +36,15 @@ class StubEvidenceSource(EvidenceSource):
         """
 
         self.__evidence = evidence
+        self.reads = 0
 
-    async def read(self, *, run: str, objective: RunObjective) -> Evidence:
+    async def read(self, *, execution_id: str, objective: RunObjective) -> Evidence:
         """
         Return the configured evidence aggregate.
         """
 
-        _ = (run, objective)
+        _ = (execution_id, objective)
+        self.reads += 1
         return self.__evidence
 
 
@@ -85,12 +87,12 @@ class RecordingDraftStore(AuthoringDraftStore):
 
         self.drafts = self.drafts + (draft,)
 
-    async def list(self, *, workflow_id: str) -> Tuple[AuthoringDraft, ...]:
+    async def list(self, *, execution_id: str) -> Tuple[AuthoringDraft, ...]:
         """
-        Return recorded drafts for the requested workflow.
+        Return recorded drafts for the requested execution.
         """
 
-        return tuple(draft for draft in self.drafts if draft.workflow_id == workflow_id)
+        return tuple(draft for draft in self.drafts if draft.execution_id == execution_id)
 
 
 class StepAuthoringSchedulerTest(unittest.IsolatedAsyncioTestCase):
@@ -124,7 +126,7 @@ class StepAuthoringSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         scheduler.schedule_step(
-            workflow_id="workflow-1",
+            execution_id="execution-1",
             step_index=2,
             objective=RunObjective(
                 intent="tap search",
@@ -138,3 +140,43 @@ class StepAuthoringSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(drafts.drafts[0].generated)
         self.assertEqual(drafts.drafts[0].step_index, 2)
         self.assertIs(drafts.drafts[0].kind, AuthoringKind.STEP)
+
+    async def test_disabled_step_authoring_does_not_read_evidence(self) -> None:
+        """
+        Disabled step authoring exits before reading execution evidence.
+        """
+
+        evidence = Evidence(
+            intent="tap search",
+            goal="search focused",
+            package="com.example",
+            steps=(EvidenceStep(action="tap", event="action", index=2),),
+        )
+        drafts = RecordingDraftStore()
+        source = StubEvidenceSource(evidence=evidence)
+        scheduler = StepAuthoringScheduler(
+            builder=AuthoringEvidenceBuilder(),
+            source=source,
+            runner=AuthoringRunner(
+                agent=AuthoringAgent(),
+                configuration=AuthoringConfiguration(
+                    step=StepAuthoringConfiguration(mode=AuthoringMode.DISABLED)
+                ),
+            ),
+            drafts=drafts,
+            author=StubAuthoring(),
+        )
+
+        scheduler.schedule_step(
+            execution_id="execution-1",
+            step_index=2,
+            objective=RunObjective(
+                intent="tap search",
+                goal="search focused",
+                package="com.example",
+            ),
+        )
+        await scheduler.drain()
+
+        self.assertEqual(source.reads, 0)
+        self.assertEqual(drafts.drafts, ())

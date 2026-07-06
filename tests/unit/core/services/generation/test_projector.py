@@ -3,21 +3,35 @@ from __future__ import annotations
 import unittest
 from typing import Tuple
 
-from fathom.constants.flow import EvidenceMarker, LaunchProvenance, NodeKind, ScrollDirection
+from fathom.constants.flow import (
+    AssertionSource,
+    CheckKind,
+    EvidenceMarker,
+    LaunchProvenance,
+    NodeKind,
+    ScrollDirection,
+)
 from fathom.constants.generation import SkipReason
 from fathom.core.dialect.policy import Policy
 from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.schemas.flow import (
     BranchNode,
+    CheckNode,
+    CompletionAssertion,
     Evidence,
     EvidenceStep,
     ScrollNode,
+    ScrollUntilNode,
     StepCapture,
     StepGuard,
     StepLaunch,
     StepOutcome,
     StepTarget,
     StoreNode,
+    TapNode,
+    TargetAnchors,
+    TargetClaim,
+    TargetStructure,
 )
 from fathom.schemas.steps import StepGoal
 
@@ -275,6 +289,90 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scrolls[0].source_steps, (1, 2))
         self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
 
+    async def test_scroll_until_target_preserves_recorded_target(self) -> None:
+        """
+        A recorded scroll target is preserved without deterministic wording glue.
+        """
+
+        evidence = self.__evidence(
+            steps=(
+                self.__launch(index=0),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="swipe_up",
+                    target=StepTarget(scroll="Ratings & Reviews section"),
+                ),
+                self.__validation(index=2),
+            ),
+        )
+
+        flow = await self.__generator().generate(evidence=evidence)
+        scroll = next(node for node in flow.nodes if isinstance(node, ScrollUntilNode))
+
+        self.assertEqual(scroll.target, "Ratings & Reviews section")
+        self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
+
+    async def test_tap_uses_verified_anchor_before_unverified_claim(self) -> None:
+        """
+        An unverified planner claim is not projected as the baseline tap target.
+        """
+
+        evidence = self.__evidence(
+            steps=(
+                self.__launch(index=0),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    target=StepTarget(
+                        claim=TargetClaim(text="Magic Soap 3 Pack", verified=False),
+                        anchors=TargetAnchors(accessibility=("product card",)),
+                        structure=TargetStructure(role="product card"),
+                    ),
+                ),
+                self.__validation(index=2),
+            ),
+        )
+
+        flow = await self.__generator().generate(evidence=evidence)
+        tap = next(node for node in flow.nodes if isinstance(node, TapNode))
+
+        self.assertEqual(tap.selector.text, "product card")
+        self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
+
+    async def test_unverified_claim_without_anchor_renders_and_marks_partial(self) -> None:
+        """
+        A baseline preserves executed steps but marks partial when target provenance is weak.
+        """
+
+        evidence = self.__evidence(
+            steps=(
+                self.__launch(index=0),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    target=StepTarget(
+                        claim=TargetClaim(text="Magic Soap 3 Pack", verified=False),
+                        name="Magic Soap 3 Pack",
+                    ),
+                ),
+                self.__validation(index=2),
+            ),
+        )
+
+        report = self.__generator().project(evidence=evidence)
+
+        self.assertTrue(report.flow.partial)
+        self.assertEqual(report.skipped, ())
+        self.assertTrue(
+            any(
+                isinstance(node, TapNode) and node.selector.text == "Magic Soap 3 Pack"
+                for node in report.flow.nodes
+            )
+        )
+
     async def test_validation_without_target_yields_partial_flow(self) -> None:
         """
         A validation record without a concrete target is skipped instead of using prose fallback.
@@ -305,9 +403,70 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(NodeKind.CHECK, [node.kind for node in report.flow.nodes])
         self.assertEqual(policy_report.issues, ())
 
-    async def test_conditional_target_projects_to_specific_visible_guard(self) -> None:
+    async def test_completion_assertions_project_to_terminal_validation(self) -> None:
         """
-        A guarded target action uses the concrete target visibility as the branch condition.
+        Verifier assertions produce the baseline terminal Validate required for completed scripts.
+        """
+
+        evidence = self.__evidence(
+            steps=(self.__launch(index=0), self.__tap(index=1, export="Buy Now button")),
+        ).model_copy(
+            update={
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.login",
+                        kind=CheckKind.VISIBLE,
+                        subject="Phone number input field",
+                        source=AssertionSource.VERIFICATION,
+                        step_index=1,
+                    ),
+                )
+            }
+        )
+
+        flow = await self.__generator().generate(evidence=evidence)
+        terminal = flow.nodes[-1]
+
+        self.assertIsInstance(terminal, CheckNode)
+        assert isinstance(terminal, CheckNode)
+        self.assertFalse(flow.partial)
+        self.assertEqual(terminal.source_steps, (1,))
+        self.assertEqual(terminal.assertion_ids, ("terminal.login",))
+        self.assertEqual(terminal.checks[0].subject, "Phone number input field")
+        self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
+
+    async def test_completion_assertion_with_missing_step_uses_last_kept_step(self) -> None:
+        """
+        Verifier assertions citing a non-kept step still produce valid provenance.
+        """
+
+        evidence = self.__evidence(
+            steps=(self.__launch(index=0), self.__tap(index=1, export="Buy Now button")),
+        ).model_copy(
+            update={
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.login",
+                        kind=CheckKind.VISIBLE,
+                        source=AssertionSource.VERIFICATION,
+                        subject="Phone number input field",
+                        step_index=8,
+                    ),
+                )
+            }
+        )
+
+        flow = await self.__generator().generate(evidence=evidence)
+        terminal = flow.nodes[-1]
+
+        self.assertIsInstance(terminal, CheckNode)
+        assert isinstance(terminal, CheckNode)
+        self.assertEqual(terminal.source_steps, (1,))
+        self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
+
+    async def test_conditional_target_preserves_recorded_guard_condition(self) -> None:
+        """
+        A guarded target action uses the recorded condition without inventing predicate text.
         """
 
         evidence = self.__evidence(
@@ -330,5 +489,5 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         branches = [node for node in flow.nodes if isinstance(node, BranchNode)]
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(branches[0].guard.condition, "NONE OF THE ABOVE is visible")
+        self.assertEqual(branches[0].guard.condition, "Overlay is visible")
         self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())

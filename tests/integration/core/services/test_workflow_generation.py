@@ -55,6 +55,11 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         Build the workflow-scoped evidence source, the policy, and the Drizz dialect.
         """
 
+        self.__temporary = TemporaryDirectory()
+        self.addCleanup(self.__temporary.cleanup)
+        self.__fixture_directory = Path(self.__temporary.name)
+        self.__execution_trace().write_text(self.__workflow_trace().read_text())
+
         self.__source = HistoryEvidenceSource(
             path_manager=StubPathManager(directory=self.__fixture()),
             distiller=Distiller(),
@@ -66,10 +71,25 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
     def __fixture(self) -> Path:
         """
-        Return the committed 78a8dcbf workflow-trace fixture directory.
+        Return the execution-scoped fixture directory.
         """
 
-        return Path("assets/history/2026-06-23/78a8dcbf")
+        return self.__fixture_directory
+
+    @staticmethod
+    def __workflow_trace() -> Path:
+        """
+        Return the committed 78a8dcbf workflow-trace fixture.
+        """
+
+        return Path("assets/history/2026-06-23/78a8dcbf/history__workflow.json")
+
+    def __execution_trace(self) -> Path:
+        """
+        Return the execution-scoped trace path consumed by HistoryEvidenceSource.
+        """
+
+        return self.__fixture_directory / "history__execution.json"
 
     def __objective(self) -> RunObjective:
         """
@@ -85,7 +105,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         Read the run's workflow trace into evidence.
         """
 
-        return await self.__source.read(run="78a8dcbf", objective=self.__objective())
+        return await self.__source.read(execution_id="78a8dcbf", objective=self.__objective())
 
     def __flow(self, *, evidence: Evidence) -> Flow:
         """
@@ -195,7 +215,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            (directory / "history__workflow.json").write_text(
+            (directory / "history__execution.json").write_text(
                 json.dumps({"workflow_id": "warm", "history": list(records)})
             )
             source = HistoryEvidenceSource(
@@ -206,7 +226,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
             )
 
             evidence = await source.read(
-                run="warm",
+                execution_id="warm",
                 objective=RunObjective(intent="i", goal="g", package="workflow"),
             )
 

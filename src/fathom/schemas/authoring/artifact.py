@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from pydantic import Field
 
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactRole
 from fathom.constants.dialect import DialectName
 from fathom.schemas.base import SealedModel
+from fathom.schemas.flow import Issue
+from fathom.schemas.generation import ScriptLineage
 
 
 class AuthoringArtifact(SealedModel):
@@ -17,6 +19,12 @@ class AuthoringArtifact(SealedModel):
     dialect: DialectName = Field(description="Dialect of the authored output.")
     kind: AuthoringArtifactKind = Field(description="Artifact category.")
     content: str = Field(min_length=1, description="Rendered artifact content.")
+    advisories: Tuple[Issue, ...] = Field(
+        default_factory=tuple, description="Non-blocking authoring review notes."
+    )
+    lineage: Tuple[ScriptLineage, ...] = Field(
+        default_factory=tuple, description="Evidence provenance for authored script nodes."
+    )
 
 
 class AuthoringArtifactReference(SealedModel):

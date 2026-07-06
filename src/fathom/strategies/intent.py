@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, cast
 
 from langchain_core.runnables import RunnableConfig
 
+from fathom.authoring.application import StepDraftComposer
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase, BoundedPhase
 from fathom.constants.authoring import AuthoringKind, AuthoringStatus
@@ -15,7 +16,13 @@ from fathom.constants.events import FathomEvent
 from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.graph import NodeName
-from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, RunOutcome
+from fathom.constants.state import (
+    TERMINAL_COMPLETION_REASONS,
+    CommonStateKey,
+    CompletionReason,
+    IntentStateKey,
+    RunOutcome,
+)
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import FinalizationTimeoutError, WorkflowCancelledError
@@ -34,11 +41,11 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
-from fathom.schemas.authoring import AuthoringTask
+from fathom.schemas.authoring import AuthoringBaseline, AuthoringTask
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.finalization import FinalizationBudgetPolicy
-from fathom.schemas.flow import Issue, RunObjective
-from fathom.schemas.generation import ScriptFileMetadata
+from fathom.schemas.flow import Evidence, Issue, RunObjective
+from fathom.schemas.generation import GenerationResult, ScriptFileMetadata, ScriptReview
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
@@ -105,6 +112,7 @@ class IntentStrategy:
 
         self.__final_script: Optional[str] = None
         self.__completion_reason: Optional[str] = None
+        self.__draft_composer = StepDraftComposer()
 
         self.__phase = PhaseAnnouncer(
             telemetry=telemetry,
@@ -267,13 +275,11 @@ class IntentStrategy:
                 has_interrupts=self.__graph_context.signal.supports_interruption(),
             )
             run_outcome = await self.__run_executor(executor=executor)
-
-            if run_outcome is not RunOutcome.FAILED:
-                final_state = await self.__finalize_run(
-                    budgets=budgets,
-                    assembler=assembler,
-                    run_outcome=run_outcome,
-                )
+            final_state = await self.__finalize_run(
+                budgets=budgets,
+                assembler=assembler,
+                run_outcome=run_outcome,
+            )
         except asyncio.CancelledError:
             self.__graph_context.cancel()
             final_state = await self.__finalize_cancelled_run(
@@ -293,7 +299,10 @@ class IntentStrategy:
                 },
             )
             run_outcome = RunOutcome.FAILED
-            self.__try_recover_step_results()
+            final_state = await self.__finalize_failed_run(
+                budgets=budgets,
+                assembler=assembler,
+            )
 
         finally:
             await AbandonablePhase(
@@ -370,6 +379,15 @@ class IntentStrategy:
             awaitable=self.__graph_context.history.flush_pending_operations(),
         )
 
+        final_state = await self.__read_final_graph_state(
+            assembler=assembler,
+            timeout=budgets.graph.state_read,
+        )
+        script_outcome = self.__resolve_script_outcome(
+            run_outcome=run_outcome,
+            final_state=final_state,
+        )
+
         if run_outcome is RunOutcome.CANCELLED:
             await self.__publish_cancelled_run_script(
                 budgets=budgets,
@@ -379,26 +397,45 @@ class IntentStrategy:
             script_data = await self.__run_finalization_phase(
                 assembler=assembler,
                 timeout=budgets.history.script,
-                awaitable=self.__author_script(),
+                awaitable=self.__author_script(run_outcome=script_outcome),
                 phase="fathom.finalization.history.script",
             )
 
             await self.__deliver_final_script(
                 quality=script_data,
-                run_outcome=run_outcome,
+                run_outcome=script_outcome,
             )
 
-        if self.__graph is None:
-            raise RuntimeError("Intent graph is not initialized")
+        return final_state
 
-        config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
+    async def __finalize_failed_run(
+        self,
+        *,
+        budgets: FinalizationBudgetPolicy,
+        assembler: "IntentStrategy.__ResultAssembler",
+    ) -> Optional[Any]:
+        """
+        Best-effort script finalization for failures raised outside the graph terminal path.
+        """
 
-        return await self.__run_finalization_phase(
-            assembler=assembler,
-            timeout=budgets.graph.state_read,
-            phase="fathom.finalization.graph.state",
-            awaitable=self.__graph.aget_state(config),
-        )
+        try:
+            return await self.__finalize_run(
+                budgets=budgets,
+                assembler=assembler,
+                run_outcome=RunOutcome.FAILED,
+            )
+        except Exception as exception:
+            logger.exception(
+                "failed-run script finalization failed",
+                extra={
+                    "event": "fathom.intent.failed_finalization.failed",
+                    "workflow.id": self.__workflow_id,
+                    "exception.message": str(exception),
+                    "exception.type": type(exception).__name__,
+                },
+            )
+            self.__try_recover_step_results()
+            return None
 
     async def __finalize_cancelled_run(
         self,
@@ -440,6 +477,71 @@ class IntentStrategy:
                 },
             )
             return None
+
+    async def __read_final_graph_state(
+        self,
+        *,
+        timeout: float,
+        assembler: "IntentStrategy.__ResultAssembler",
+    ) -> Optional[Any]:
+        """
+        Read the terminal graph state when available without blocking script finalization.
+        """
+
+        if self.__graph is None:
+            logger.warning(
+                "final graph state unavailable because graph was not initialized",
+                extra={
+                    "event": "fathom.finalization.graph.state.unavailable",
+                    "workflow.id": self.__workflow_id,
+                    "reason": "graph_not_initialized",
+                },
+            )
+            return None
+
+        phase = "fathom.finalization.graph.state"
+        config: RunnableConfig = {"configurable": {"thread_id": self.__workflow_id}}
+
+        try:
+            return await self.__run_finalization_phase(
+                assembler=assembler,
+                timeout=timeout,
+                phase=phase,
+                awaitable=self.__graph.aget_state(config),
+            )
+        except Exception as exception:
+            assembler.record_finalization_failure(phase=phase)
+            logger.warning(
+                "final graph state read failed; continuing script finalization",
+                extra={
+                    "event": "fathom.finalization.graph.state.unavailable",
+                    "workflow.id": self.__workflow_id,
+                    "exception.type": type(exception).__name__,
+                    "exception.message": str(exception),
+                },
+            )
+            return None
+
+    @staticmethod
+    def __resolve_script_outcome(
+        *, run_outcome: RunOutcome, final_state: Optional[Any]
+    ) -> RunOutcome:
+        """
+        Derive the script event outcome from the terminal graph state when it is available.
+        """
+
+        if run_outcome is not RunOutcome.COMPLETED or final_state is None:
+            return run_outcome
+
+        completion_reason = (
+            final_state.values.get(CommonStateKey.COMPLETION_REASON)
+            or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
+            or final_state.values.get("completion_reason")
+        )
+        if completion_reason in TERMINAL_COMPLETION_REASONS:
+            return RunOutcome.FAILED
+
+        return run_outcome
 
     async def __run_executor(self, *, executor: Any) -> RunOutcome:
         """
@@ -591,7 +693,7 @@ class IntentStrategy:
         script_task = asyncio.create_task(
             self.__await_finalization_phase(
                 timeout=budgets.history.script,
-                awaitable=self.__author_script(),
+                awaitable=self.__author_script(run_outcome=RunOutcome.CANCELLED),
                 phase="fathom.finalization.history.script",
             ),
             name="fathom.finalization.history.script",
@@ -618,20 +720,29 @@ class IntentStrategy:
             started_at=started_at,
         )
 
-    async def __author_script(self) -> Optional[str]:
+    async def __author_script(self, *, run_outcome: RunOutcome) -> Optional[GenerationResult]:
         """
-        Ask the authoring runner for a script, returning None when fallback should run.
+        Ask the authoring runner for a reviewed script, returning None when fallback should run.
         """
 
-        evidence = await self.__graph_context.evidence.read(
-            execution_id=self.__execution_id,
-            objective=RunObjective(
-                goal=self.__intent,
-                intent=self.__intent,
-                package=self.__graph_context.package_name,
+        evidence = self.__evidence_for_outcome(
+            run_outcome=run_outcome,
+            evidence=await self.__graph_context.evidence.read(
+                execution_id=self.__execution_id,
+                objective=RunObjective(
+                    goal=self.__intent,
+                    intent=self.__intent,
+                    package=self.__graph_context.package_name,
+                ),
             ),
         )
+        review = ScriptReview(
+            partial=evidence.partial,
+            reason=evidence.reason,
+            discarded=evidence.discarded,
+        )
         drafts = await self.__graph_context.authoring_drafts.list(execution_id=self.__execution_id)
+        baseline = await self.__baseline_for_authoring()
         response = await self.__graph_context.authoring_runner.author(
             author=self.__graph_context.authoring,
             task=AuthoringTask(
@@ -642,11 +753,26 @@ class IntentStrategy:
                 evidence=self.__graph_context.authoring_evidence_builder.build_run(
                     drafts=drafts,
                     evidence=evidence,
+                    baseline=baseline,
                 ),
             ),
         )
         if response.status is AuthoringStatus.GENERATED and response.has_script:
-            return response.script
+            artifact = response.artifact
+            if artifact is not None:
+                review = review.model_copy(
+                    update={
+                        "advisories": artifact.advisories,
+                        "lineage": artifact.lineage,
+                    }
+                )
+
+            return GenerationResult(
+                text=response.script or "",
+                attempts=1,
+                source=ScriptSource.QUALITY,
+                review=review,
+            )
 
         logger.info(
             "final authoring did not produce a script",
@@ -657,16 +783,97 @@ class IntentStrategy:
                 "authoring.status": response.status.value,
             },
         )
+        draft_result = self.__draft_composer.compose(
+            drafts=drafts,
+            evidence=evidence,
+            baseline=baseline,
+        )
+        if draft_result is not None and self.__valid_script(result=draft_result):
+            logger.info(
+                "finalization selected composed step drafts after run authoring failed",
+                extra={
+                    "event": "authoring.step_drafts.selected",
+                    "execution.id": self.__execution_id,
+                    "script.line_count": len(draft_result.text.splitlines()),
+                    "script.partial": draft_result.review.partial,
+                },
+            )
+            return draft_result
+
         return None
+
+    def __valid_script(self, *, result: GenerationResult) -> bool:
+        """
+        Return whether a fallback script satisfies the configured dialect checker.
+        """
+
+        report = self.__graph_context.dialect.checker.check(text=result.text)
+        if not report.issues:
+            return True
+
+        logger.info(
+            "composed step drafts failed dialect review; falling back to baseline",
+            extra={
+                "event": "authoring.step_drafts.rejected",
+                "execution.id": self.__execution_id,
+                "script.issue_codes": [issue.code.value for issue in report.issues],
+            },
+        )
+        return False
+
+    @staticmethod
+    def __evidence_for_outcome(*, evidence: Evidence, run_outcome: RunOutcome) -> Evidence:
+        """
+        Return evidence annotated with the terminal outcome used for authoring and policy.
+        """
+
+        if run_outcome is RunOutcome.COMPLETED:
+            return evidence.model_copy(update={"outcome": run_outcome})
+
+        reason = evidence.reason or f"Run ended with outcome '{run_outcome.value}'."
+        return evidence.model_copy(
+            update={
+                "outcome": run_outcome,
+                "partial": True,
+                "reason": reason,
+            }
+        )
+
+    async def __baseline_for_authoring(self) -> Optional[AuthoringBaseline]:
+        """
+        Return the deterministic baseline scaffold for final authoring when available.
+        """
+
+        artifact = await self.__graph_context.history.peek_baseline_outcome()
+
+        if artifact.metadata.status is not ScriptStatus.GENERATED:
+            logger.info(
+                "baseline unavailable for final authoring",
+                extra={
+                    "event": "authoring.run.baseline_unavailable",
+                    "execution.id": self.__execution_id,
+                    "script.issue_codes": [issue.code.value for issue in artifact.metadata.issues],
+                },
+            )
+            return None
+
+        if not artifact.text or not artifact.text.strip():
+            return None
+
+        return AuthoringBaseline(
+            content=artifact.text,
+            partial=artifact.metadata.review.partial,
+            reason=artifact.metadata.review.reason,
+        )
 
     async def __cancelled_quality_script(
         self,
         *,
         timeout: float,
         started_at: float,
-        script_task: "asyncio.Task[Optional[str]]",
+        script_task: "asyncio.Task[Optional[GenerationResult]]",
         assembler: "IntentStrategy.__ResultAssembler",
-    ) -> Optional[str]:
+    ) -> Optional[GenerationResult]:
         """
         Await cancelled-run quality generation and return None when baseline fallback should run.
         """
@@ -728,7 +935,7 @@ class IntentStrategy:
     async def __deliver_cancelled_script(
         self,
         *,
-        quality: Optional[str],
+        quality: Optional[GenerationResult],
         assembler: "IntentStrategy.__ResultAssembler",
         started_at: float,
     ) -> None:
@@ -870,7 +1077,7 @@ class IntentStrategy:
         self,
         *,
         run_outcome: RunOutcome,
-        quality: Optional[str],
+        quality: Optional[GenerationResult],
     ) -> None:
         """
         Deliver the completed run's script: quality first, then the deterministic baseline, else a typed failure.
@@ -878,22 +1085,34 @@ class IntentStrategy:
 
         step = self.__graph_context.agent_state.step_count
 
-        if quality and quality.strip():
+        if quality is not None and quality.text.strip():
+            selected_event = (
+                "script.finalization.quality_selected"
+                if quality.source is ScriptSource.QUALITY
+                else "script.finalization.step_drafts_selected"
+            )
+            await self.__graph_context.history.save_script(
+                step_number=step,
+                source=quality.source,
+                result=quality,
+            )
             logger.info(
-                "finalization selected the quality script",
+                "finalization selected the authored script",
                 extra={
-                    "event": "script.finalization.quality_selected",
+                    "event": selected_event,
                     "script.step": step,
                     "workflow.id": self.__workflow_id,
                     "script.outcome": run_outcome.value,
-                    "script.source": ScriptSource.QUALITY.value,
-                    "script.line_count": len(quality.splitlines()),
+                    "script.source": quality.source.value,
+                    "script.line_count": len(quality.text.splitlines()),
+                    "script.partial": quality.review.partial,
                 },
             )
             await self.__emit_script_generated_event(
-                script_data=quality,
+                review=quality.review,
+                script_data=quality.text,
                 run_outcome=run_outcome,
-                source=ScriptSource.QUALITY,
+                source=quality.source,
             )
             return
 
@@ -922,6 +1141,7 @@ class IntentStrategy:
                 },
             )
             await self.__emit_script_generated_event(
+                review=artifact.metadata.review,
                 script_data=artifact.text,
                 run_outcome=run_outcome,
                 source=ScriptSource.BASELINE,
@@ -951,6 +1171,7 @@ class IntentStrategy:
         run_outcome: RunOutcome,
         script_data: Optional[str],
         source: ScriptSource = ScriptSource.QUALITY,
+        review: Optional[ScriptReview] = None,
     ) -> None:
         """
         Emit the SCRIPT_GENERATED terminal event whenever the run reaches finalization.
@@ -959,6 +1180,7 @@ class IntentStrategy:
         ``run_outcome`` tags the event so downstream tooling can correlate empty scripts with operator-aborted runs versus successful completions.
         """
 
+        script_review = review or ScriptReview()
         is_empty_script = not bool(script_data and script_data.strip())
         self.__final_script = None if is_empty_script else script_data
 
@@ -979,6 +1201,9 @@ class IntentStrategy:
                 script_data or "",
                 source=source.value,
                 is_empty=is_empty_script,
+                partial=script_review.partial,
+                review_reason=script_review.reason,
+                discarded_steps=list(script_review.discarded),
                 run_outcome=run_outcome.value,
                 workflow_id=self.__workflow_id,
                 type=FathomEvent.SCRIPT_GENERATED,
@@ -998,6 +1223,7 @@ class IntentStrategy:
                 "script.source": source.value,
                 "script.is_empty": is_empty_script,
                 "script.outcome": run_outcome.value,
+                "script.partial": script_review.partial,
                 "script.step": self.__graph_context.agent_state.step_count,
             },
         )
@@ -1021,6 +1247,9 @@ class IntentStrategy:
                 "",
                 issues=diagnostics,
                 source=metadata.source.value,
+                partial=metadata.review.partial,
+                review_reason=metadata.review.reason,
+                discarded_steps=list(metadata.review.discarded),
                 run_outcome=run_outcome.value,
                 workflow_id=self.__workflow_id,
                 type=FathomEvent.SCRIPT_GENERATION_FAILED,
@@ -1041,6 +1270,7 @@ class IntentStrategy:
                 "workflow.id": self.__workflow_id,
                 "script.source": metadata.source.value,
                 "script.outcome": run_outcome.value,
+                "script.partial": metadata.review.partial,
                 "script.issue_count": len(metadata.issues),
                 "script.step": self.__graph_context.agent_state.step_count,
                 "script.issue_codes": [issue.code.value for issue in metadata.issues],
@@ -1335,7 +1565,11 @@ class IntentStrategy:
             """
 
             if final_state is not None:
-                reason = final_state.values.get("completion_reason")
+                reason = (
+                    final_state.values.get(CommonStateKey.COMPLETION_REASON)
+                    or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
+                    or final_state.values.get("completion_reason")
+                )
 
                 if reason is not None:
                     return cast("Optional[str]", reason)
@@ -1357,8 +1591,10 @@ class IntentStrategy:
                 return None
 
             if final_state is not None and (
-                failure_diagnostic := final_state.values.get(
-                    CommonStateKey.FAILURE_DIAGNOSTIC.value
+                failure_diagnostic := (
+                    final_state.values.get(CommonStateKey.FAILURE_DIAGNOSTIC)
+                    or final_state.values.get(CommonStateKey.FAILURE_DIAGNOSTIC.value)
+                    or final_state.values.get("failure_diagnostic")
                 )
             ):
                 return str(failure_diagnostic)

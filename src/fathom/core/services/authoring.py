@@ -113,6 +113,8 @@ class AuthoringService(AuthoringPort):
                         content=review.text,
                         dialect=task.dialect,
                         kind=AuthoringArtifactKind.TEXT,
+                        advisories=review.advisories,
+                        lineage=review.lineage,
                     ),
                 )
 

@@ -77,4 +77,4 @@ class AuthoringResponse(SealedModel):
         Whether the response carries generated artifact content.
         """
 
-        return self.artifact is not None
+        return bool(self.artifact is not None and self.artifact.content.strip())

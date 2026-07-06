@@ -4,10 +4,19 @@ from typing import Optional, Tuple
 
 from pydantic import Field, model_validator
 
+from fathom.constants.state import RunOutcome
 from fathom.schemas.authoring.artifact import AuthoringArtifactReference
 from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.base import SealedModel
-from fathom.schemas.flow import CompletionAssertion, Evidence, Flow, Report
+from fathom.schemas.flow import (
+    CompletionAssertion,
+    Evidence,
+    Flow,
+    Report,
+    TargetAnchors,
+    TargetClaim,
+    TargetStructure,
+)
 from fathom.schemas.steps import StepGoal
 
 
@@ -20,6 +29,7 @@ class AuthoringRun(SealedModel):
     goal: str = Field(description="Goal-state description recorded for the run.")
 
     package: str = Field(description="Target application package.")
+    outcome: RunOutcome = Field(description="Terminal execution outcome for the run.")
     partial: bool = Field(description="Whether execution evidence is incomplete.")
 
     reason: Optional[str] = Field(default=None, description="Why the run is partial.")
@@ -37,6 +47,16 @@ class AuthoringEpisode(SealedModel):
     steps: Tuple[int, ...] = Field(
         min_length=1, description="Evidence step numbers grouped under the goal."
     )
+
+
+class AuthoringBaseline(SealedModel):
+    """
+    Deterministic script scaffold available to whole-run authoring.
+    """
+
+    content: str = Field(min_length=1, description="Rendered baseline script text.")
+    partial: bool = Field(description="Whether the baseline is intentionally partial.")
+    reason: Optional[str] = Field(default=None, description="Why the baseline is partial.")
 
 
 class AuthoringCommand(SealedModel):
@@ -61,6 +81,16 @@ class AuthoringTarget(SealedModel):
     positional: bool = Field(default=False, description="Whether the target was ordinal.")
     scroll: Optional[str] = Field(default=None, description="Recorded scroll destination.")
     element: Optional[str] = Field(default=None, description="Recorded target element role.")
+
+    anchors: TargetAnchors = Field(
+        default_factory=TargetAnchors, description="Evidence anchors grouped by available channel."
+    )
+    structure: TargetStructure = Field(
+        default_factory=TargetStructure, description="Structured UI facts for replay targeting."
+    )
+    claim: TargetClaim = Field(
+        default_factory=TargetClaim, description="Planner target claim and verification status."
+    )
 
 
 class AuthoringNarrative(SealedModel):
@@ -152,6 +182,9 @@ class RunAuthoringEvidence(SealedModel):
     )
     drafts: Tuple[AuthoringDraft, ...] = Field(
         default_factory=tuple, description="Step drafts available to whole-run authoring."
+    )
+    baseline: Optional[AuthoringBaseline] = Field(
+        default=None, description="Deterministic baseline scaffold available to improve."
     )
     assertions: Tuple[CompletionAssertion, ...] = Field(
         default_factory=tuple, description="Terminal assertions available to completed scripts."

@@ -13,7 +13,9 @@ import pytest
 
 from fathom.adapters.checkpoint import SqliteCheckpointStore
 from fathom.adapters.evidence.history import HistoryEvidenceSource
-from fathom.constants.authoring import AuthoringArtifactKind, AuthoringStatus
+from fathom.authoring.application import StepDraftComposer
+from fathom.authoring.evidence import AuthoringEvidenceBuilder
+from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.dialect import DialectName
 from fathom.constants.events import FathomEvent
 from fathom.constants.flow import IssueCode
@@ -26,10 +28,16 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
 from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, AuthoringTask
+from fathom.schemas.authoring.draft import AuthoringDraft
 from fathom.schemas.checkpoint import SqliteCheckpointPolicy
 from fathom.schemas.configuration import FathomConfiguration
-from fathom.schemas.flow import Evidence, Issue, RunObjective
-from fathom.schemas.generation import BaselineArtifact, ScriptFileMetadata
+from fathom.schemas.flow import Evidence, EvidenceStep, Issue, Report, RunObjective
+from fathom.schemas.generation import (
+    BaselineArtifact,
+    GenerationResult,
+    ScriptFileMetadata,
+    ScriptReview,
+)
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 from fathom.strategies.intent import (
     CHECKPOINT_ALLOWED_JSON_MODULES,
@@ -228,6 +236,7 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
         telemetry.info = AsyncMock()
 
         history = MagicMock()
+        history.save_script = AsyncMock(return_value="")
         history.read_baseline_outcome = AsyncMock(return_value=baseline)
 
         graph_context = MagicMock()
@@ -241,7 +250,7 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
         return strategy, telemetry, history
 
     @staticmethod
-    async def __deliver(*, strategy: Any, quality: Optional[str]) -> None:
+    async def __deliver(*, strategy: Any, quality: Optional[GenerationResult]) -> None:
         """
         Invoke the private completed-run delivery entry point.
         """
@@ -251,6 +260,18 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
             strategy.__getattribute__("_IntentStrategy__deliver_final_script"),
         )
         await deliver(quality=quality, run_outcome=RunOutcome.COMPLETED)
+
+    @staticmethod
+    def __quality_script(*, text: str, partial: bool = False) -> GenerationResult:
+        """
+        Build a typed quality generation result for delivery tests.
+        """
+
+        return GenerationResult(
+            text=text,
+            attempts=1,
+            review=ScriptReview(partial=partial, reason="needs review" if partial else None),
+        )
 
     @staticmethod
     def __generated_baseline() -> BaselineArtifact:
@@ -271,6 +292,24 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    @staticmethod
+    def __draft(*, step: int, text: str) -> AuthoringDraft:
+        """
+        Build a generated step draft.
+        """
+
+        return AuthoringDraft(
+            step_index=step,
+            kind=AuthoringKind.STEP,
+            status=AuthoringStatus.GENERATED,
+            execution_id="execution-1",
+            artifact=AuthoringArtifact(
+                content=text,
+                dialect=DialectName.DRIZZ,
+                kind=AuthoringArtifactKind.TEXT,
+            ),
+        )
+
     async def test_quality_script_emits_generated_and_skips_baseline(self) -> None:
         """
         A non-empty quality script emits SCRIPT_GENERATED tagged quality, without reading the baseline.
@@ -278,13 +317,149 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         strategy, telemetry, history = self.__strategy(baseline=self.__failed_baseline())
 
-        await self.__deliver(strategy=strategy, quality="open app\ntap search")
+        quality = self.__quality_script(text="open app\ntap search", partial=True)
 
+        await self.__deliver(strategy=strategy, quality=quality)
+
+        history.save_script.assert_awaited_once_with(
+            step_number=4,
+            source=ScriptSource.QUALITY,
+            result=quality,
+        )
         history.read_baseline_outcome.assert_not_awaited()
         call = telemetry.info.call_args
         self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
         self.assertEqual(call.kwargs["source"], ScriptSource.QUALITY.value)
         self.assertFalse(call.kwargs["is_empty"])
+        self.assertTrue(call.kwargs["partial"])
+
+    async def test_step_draft_script_emits_generated_and_skips_baseline(self) -> None:
+        """
+        A composed step-draft script is persisted and emitted with its own source.
+        """
+
+        strategy, telemetry, history = self.__strategy(baseline=self.__failed_baseline())
+        result = GenerationResult(
+            text="tap search",
+            attempts=1,
+            source=ScriptSource.STEP_DRAFTS,
+            review=ScriptReview(partial=True, reason="failed run"),
+        )
+
+        await self.__deliver(strategy=strategy, quality=result)
+
+        history.save_script.assert_awaited_once_with(
+            step_number=4,
+            source=ScriptSource.STEP_DRAFTS,
+            result=result,
+        )
+        history.read_baseline_outcome.assert_not_awaited()
+        call = telemetry.info.call_args
+        self.assertEqual(call.kwargs["source"], ScriptSource.STEP_DRAFTS.value)
+        self.assertTrue(call.kwargs["partial"])
+
+    async def test_author_script_uses_step_drafts_when_run_authoring_fails(self) -> None:
+        """
+        Run authoring failure falls back to composed step drafts before baseline delivery.
+        """
+
+        strategy = object.__new__(IntentStrategy)
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=True,
+            steps=(
+                EvidenceStep(index=1, event="action", action="tap"),
+                EvidenceStep(index=2, event="action", action="type"),
+            ),
+        )
+        drafts = (
+            self.__draft(step=1, text="OPEN_APP: com.example"),
+            self.__draft(step=2, text='Type "soap" into search field'),
+        )
+
+        graph_context = MagicMock()
+        graph_context.package_name = "com.example"
+        graph_context.evidence.read = AsyncMock(return_value=evidence)
+        graph_context.history.peek_baseline_outcome = AsyncMock(
+            return_value=self.__failed_baseline()
+        )
+        graph_context.authoring_drafts.list = AsyncMock(return_value=drafts)
+        graph_context.authoring_runner.author = AsyncMock(
+            return_value=AuthoringResponse(
+                status=AuthoringStatus.FAILED,
+                reason="quality unavailable",
+            )
+        )
+        graph_context.authoring_evidence_builder = AuthoringEvidenceBuilder()
+        graph_context.dialect.checker.check.return_value = Report()
+        graph_context.agent_state.step_count = 2
+
+        strategy.__setattr__("_IntentStrategy__intent", "search")
+        strategy.__setattr__("_IntentStrategy__execution_id", "execution-1")
+        strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+        strategy.__setattr__("_IntentStrategy__draft_composer", StepDraftComposer())
+
+        author = cast(
+            "Callable[..., Any]", strategy.__getattribute__("_IntentStrategy__author_script")
+        )
+        result = await author(run_outcome=RunOutcome.FAILED)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.source, ScriptSource.STEP_DRAFTS)
+        self.assertTrue(result.review.partial)
+        self.assertEqual(
+            result.text,
+            "\n".join(("OPEN_APP: com.example", 'Type "soap" into search field')),
+        )
+
+    async def test_author_script_rejects_malformed_step_drafts(self) -> None:
+        """
+        Invalid composed step drafts fall through to deterministic baseline fallback.
+        """
+
+        strategy = object.__new__(IntentStrategy)
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=True,
+            steps=(EvidenceStep(index=1, event="action", action="tap"),),
+        )
+        drafts = (self.__draft(step=1, text="not drizz"),)
+
+        graph_context = MagicMock()
+        graph_context.package_name = "com.example"
+        graph_context.evidence.read = AsyncMock(return_value=evidence)
+        graph_context.history.peek_baseline_outcome = AsyncMock(
+            return_value=self.__failed_baseline()
+        )
+        graph_context.authoring_drafts.list = AsyncMock(return_value=drafts)
+        graph_context.authoring_runner.author = AsyncMock(
+            return_value=AuthoringResponse(
+                status=AuthoringStatus.FAILED,
+                reason="quality unavailable",
+            )
+        )
+        graph_context.authoring_evidence_builder = AuthoringEvidenceBuilder()
+        graph_context.dialect.checker.check.return_value = Report(
+            issues=(Issue(code=IssueCode.SYNTAX_ERROR, message="invalid"),)
+        )
+        graph_context.agent_state.step_count = 1
+
+        strategy.__setattr__("_IntentStrategy__intent", "search")
+        strategy.__setattr__("_IntentStrategy__execution_id", "execution-1")
+        strategy.__setattr__("_IntentStrategy__graph_context", graph_context)
+        strategy.__setattr__("_IntentStrategy__draft_composer", StepDraftComposer())
+
+        author = cast(
+            "Callable[..., Any]", strategy.__getattribute__("_IntentStrategy__author_script")
+        )
+        result = await author(run_outcome=RunOutcome.FAILED)
+
+        self.assertIsNone(result)
 
     async def test_empty_quality_falls_back_to_generated_baseline(self) -> None:
         """
@@ -293,8 +468,9 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         strategy, telemetry, history = self.__strategy(baseline=self.__generated_baseline())
 
-        await self.__deliver(strategy=strategy, quality="")
+        await self.__deliver(strategy=strategy, quality=None)
 
+        history.save_script.assert_not_awaited()
         history.read_baseline_outcome.assert_awaited_once()
         call = telemetry.info.call_args
         self.assertEqual(call.args[0], "OPEN_APP: com.app\nTap on Search")
@@ -322,7 +498,7 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         strategy, telemetry, _ = self.__strategy(baseline=self.__failed_baseline())
 
-        await self.__deliver(strategy=strategy, quality="   ")
+        await self.__deliver(strategy=strategy, quality=None)
 
         emitted = {call.kwargs["type"] for call in telemetry.info.call_args_list}
         self.assertNotIn(FathomEvent.SCRIPT_GENERATED, emitted)
@@ -344,7 +520,10 @@ class IntentStrategyFinalDeliveryTest(unittest.IsolatedAsyncioTestCase):
         strategy, _, history = self.__strategy(baseline=self.__failed_baseline())
 
         with self.assertLogs(IntentStrategy.__module__, level="INFO") as captured:
-            await self.__deliver(strategy=strategy, quality="open app\ntap search")
+            await self.__deliver(
+                strategy=strategy,
+                quality=self.__quality_script(text="open app\ntap search"),
+            )
 
         events = self.__events(captured.records)
         self.assertIn("script.finalization.quality_selected", events)
@@ -666,6 +845,12 @@ class TestIntentStrategyCancelledScriptDelivery:
                 intent=task.intent,
                 step_number=task.step_number,
             )
+            if not script.strip():
+                return AuthoringResponse(
+                    status=AuthoringStatus.FAILED,
+                    reason="quality unavailable",
+                )
+
             return AuthoringResponse(
                 status=AuthoringStatus.GENERATED,
                 artifact=AuthoringArtifact(
@@ -684,7 +869,7 @@ class TestIntentStrategyCancelledScriptDelivery:
         async def read(
             source: HistoryEvidenceSource,
             *,
-            run: str,
+            execution_id: str,
             objective: RunObjective,
         ) -> Evidence:
             """
@@ -696,7 +881,7 @@ class TestIntentStrategyCancelledScriptDelivery:
                 intent=objective.intent,
                 goal=objective.intent,
                 package=objective.package,
-                artifacts=(run,),
+                artifacts=(execution_id,),
             )
 
         return read

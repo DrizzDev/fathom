@@ -12,7 +12,7 @@ class StepAuthoringConfiguration(SealedModel):
     """
 
     mode: AuthoringMode = Field(
-        default=AuthoringMode.DISABLED,
+        default=AuthoringMode.ASYNC,
         description="Whether per-step rich authoring is disabled, asynchronous, or synchronous.",
     )
 
