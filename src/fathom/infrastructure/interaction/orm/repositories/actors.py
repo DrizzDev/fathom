@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pydantic import JsonValue
 from tortoise.exceptions import IntegrityError
@@ -10,11 +10,24 @@ from fathom.core.exceptions import InteractionError
 from fathom.infrastructure.interaction.orm.models import ActorRecord
 from fathom.schemas.interaction import Actor, CreateActor, Identity, Metadata, Runtime, Timing
 
+if TYPE_CHECKING:
+    from fathom.infrastructure.interaction.orm.repositories.lifecycle import (
+        DatabaseConnection,
+        TransactionScope,
+    )
+
 
 class ActorRepository:
     """
     persistent-store backed repository for actor identities.
     """
+
+    def __init__(self, *, transaction: "TransactionScope") -> None:
+        """
+        Initialize actor persistence collaborators.
+        """
+
+        self.__transaction = transaction
 
     async def create_actor(self, *, request: CreateActor) -> Actor:
         """
@@ -25,8 +38,25 @@ class ActorRepository:
             return self.__replay(actor=existing, request=request)
 
         try:
+            return await self.__create_actor(request=request)
+        except IntegrityError:
+            if existing := await self.__load_actor(request=request):
+                return self.__replay(actor=existing, request=request)
+
+            raise
+
+    async def __create_actor(self, *, request: CreateActor) -> Actor:
+        """
+        Persist one actor inside one savepoint-isolated transaction.
+        """
+
+        async with self.__transaction.transaction() as connection:
+            if existing := await self.__load_actor(request=request, connection=connection):
+                return self.__replay(actor=existing, request=request)
+
             await ActorRecord.create(
                 name=request.name,
+                using_db=connection,
                 id=request.identity.id,
                 kind=request.kind.value,
                 external=request.external,
@@ -41,23 +71,21 @@ class ActorRepository:
                 tenant_id=request.identity.tenant,
                 workspace_id=request.identity.workspace,
             )
-        except IntegrityError:
-            if existing := await self.__load_actor(request=request):
-                return self.__replay(actor=existing, request=request)
 
-            raise
+            if (created := await self.__load_actor(request=request, connection=connection)) is None:
+                raise InteractionError("Actor was not persisted.")
 
-        if created := await self.__load_actor(request=request):
             return created
 
-        raise InteractionError("Actor was not persisted.")
-
-    async def __load_actor(self, *, request: CreateActor) -> Optional[Actor]:
+    async def __load_actor(
+        self, *, request: CreateActor, connection: Optional["DatabaseConnection"] = None
+    ) -> Optional[Actor]:
         """
         Load one actor by tenant-scoped identity.
         """
 
         row = await ActorRecord.get_or_none(
+            using_db=connection,
             id=request.identity.id,
             tenant_id=request.identity.tenant,
         )

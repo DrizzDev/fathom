@@ -245,6 +245,13 @@ class FathomRunner:
         if isinstance(self.__telemetry, TelemetryIdentityUpdater):
             self.__telemetry.update_identity(identity=workflow)
 
+    def __reserve_execution(self, *, execution_id: Optional[str], workflow_id: str) -> str:
+        """
+        Return the run-owned execution identity, deriving a stable one when absent.
+        """
+
+        return execution_id or InteractionIdentity.stable(scope="execution", parts=(workflow_id,))
+
     @property
     def engine(self) -> ExecutionEngine:
         """
@@ -302,16 +309,16 @@ class FathomRunner:
         if not request_id:
             raise IdentityError(field="request_id", message="request_id is required")
 
-        if not execution_id and self.__recorder is None:
-            raise IdentityError(
-                field="execution_id",
-                message="No execution identity is available for this run.",
-            )
-
         start_time = time.time()
         started = datetime.now(tz=timezone.utc)
 
         workflow_id = request_id
+
+        # The runner owns the execution identity and derives it deterministically
+        # from the workflow id, so it is stable across Temporal retries and never
+        # depends on the conversation layer. A recording failure can degrade the
+        # ledger but can never starve execution of its identity.
+        execution_id = self.__reserve_execution(execution_id=execution_id, workflow_id=workflow_id)
 
         tenant = principal.tenant
         thread = principal.conversation
@@ -389,14 +396,6 @@ class FathomRunner:
                         "context_scope": context_scope.value,
                     },
                 )
-            )
-            if handle is not None:
-                execution_id = handle.execution
-
-        if not execution_id:
-            raise IdentityError(
-                field="execution_id",
-                message="Conversation recording did not reserve an execution identity.",
             )
 
         identity = InteractionIdentity(execution=execution_id)
@@ -631,16 +630,17 @@ class FathomRunner:
         if not request_id:
             raise IdentityError(field="request_id", message="request_id is required")
 
-        if not execution_id and self.__recorder is None:
-            raise IdentityError(
-                field="execution_id",
-                message="No execution identity is available for this run.",
-            )
-
         start_time = time.time()
         started = datetime.now(tz=timezone.utc)
 
         workflow_id = request_id
+
+        # The runner owns the execution identity and derives it deterministically
+        # from the workflow id, so it is stable across Temporal retries and never
+        # depends on the conversation layer. A recording failure can degrade the
+        # ledger but can never starve execution of its identity.
+        execution_id = self.__reserve_execution(execution_id=execution_id, workflow_id=workflow_id)
+
         tenant = principal.tenant
         thread = principal.conversation
 
@@ -697,14 +697,6 @@ class FathomRunner:
                     created=started,
                     metadata={"mode": "exploration"},
                 )
-            )
-            if handle is not None:
-                execution_id = handle.execution
-
-        if not execution_id:
-            raise IdentityError(
-                field="execution_id",
-                message="Conversation recording did not reserve an execution identity.",
             )
 
         identity = InteractionIdentity(execution=execution_id)

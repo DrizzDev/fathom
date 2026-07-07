@@ -138,7 +138,7 @@ class ConversationStoreMigrations:
         Return all schema migrations in application order.
         """
 
-        return (BaselineMigration.step(),)
+        return (BaselineMigration.step(), CompositeKeyMigration.step())
 
 
 class PostgresSchemaValidationError(RuntimeError):
@@ -1420,5 +1420,55 @@ class BaselineMigration:
         return "'" + value.replace("'", "''") + "'"
 
 
-SCHEMA_VERSION: Final[int] = BaselineMigration.VERSION
+class CompositeKeyMigration:
+    """
+    Promotes the actor and policy primary keys to tenant-scoped composite keys.
+    """
+
+    VERSION: Final[int] = 2
+    NAME: Final[str] = "composite_actor_policy_keys"
+
+    STATEMENTS: Final[Tuple[str, ...]] = (
+        """
+        DO $$ BEGIN
+            IF (
+                SELECT pg_get_constraintdef(constraint_record.oid)
+                FROM pg_constraint constraint_record
+                WHERE constraint_record.conrelid = 'actors'::regclass
+                  AND constraint_record.contype = 'p'
+            ) = 'PRIMARY KEY (id)' THEN
+                ALTER TABLE actors DROP CONSTRAINT actors_pkey;
+                ALTER TABLE actors ADD PRIMARY KEY (tenant_id, id);
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$ BEGIN
+            IF (
+                SELECT pg_get_constraintdef(constraint_record.oid)
+                FROM pg_constraint constraint_record
+                WHERE constraint_record.conrelid = 'policies'::regclass
+                  AND constraint_record.contype = 'p'
+            ) = 'PRIMARY KEY (id)' THEN
+                ALTER TABLE policies DROP CONSTRAINT policies_pkey;
+                ALTER TABLE policies ADD PRIMARY KEY (tenant_id, id);
+            END IF;
+        END $$;
+        """,
+    )
+
+    @classmethod
+    def step(cls) -> PostgresMigrationStep:
+        """
+        Return the tenant-scoped primary-key promotion migration step.
+        """
+
+        return PostgresMigrationStep(
+            name=cls.NAME,
+            version=cls.VERSION,
+            statements=cls.STATEMENTS,
+        )
+
+
+SCHEMA_VERSION: Final[int] = CompositeKeyMigration.VERSION
 MIGRATION_STEPS: Final[Tuple[PostgresMigrationStep, ...]] = ConversationStoreMigrations.steps()

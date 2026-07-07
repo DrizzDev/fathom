@@ -7,6 +7,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, Type
 from fathom.infrastructure.interaction.orm.migration import (
     SCHEMA_VERSION,
     BaselineMigration,
+    CompositeKeyMigration,
     ConversationStoreMigrations,
     PostgresMigrator,
     PostgresSchemaValidationError,
@@ -462,8 +463,11 @@ class TestPostgresMigrator:
 
         assert connection.executed[0].startswith("SELECT pg_advisory_xact_lock")
         assert connection.executed[1] == BaselineMigration.MIGRATION_TABLE
-        assert [inserted[0] for inserted in connection.inserted] == [1]
-        assert [inserted[1] for inserted in connection.inserted] == ["baseline"]
+        assert [inserted[0] for inserted in connection.inserted] == [1, 2]
+        assert [inserted[1] for inserted in connection.inserted] == [
+            "baseline",
+            "composite_actor_policy_keys",
+        ]
         assert all(isinstance(inserted[2], str) for inserted in connection.inserted)
 
     async def test_apply_checksum_excludes_generated_comments(self) -> None:
@@ -532,7 +536,8 @@ class TestPostgresMigrator:
             raise AssertionError("Expected checksum mismatch to fail.")
 
     async def test_apply_accepts_checksum_mismatch_when_schema_is_valid(self) -> None:
-        connection = _FakeConnection(applied_checksum="legacy", valid_schema=True)
+        legacy = {step.version: "legacy" for step in ConversationStoreMigrations.steps()}
+        connection = _FakeConnection(applied_checksums=legacy, valid_schema=True)
         migrator = PostgresMigrator()
 
         await migrator.apply(connection=connection)
@@ -542,8 +547,11 @@ class TestPostgresMigrator:
     def test_registry_exposes_current_schema_version(self) -> None:
         steps = ConversationStoreMigrations.steps()
 
-        assert [step.version for step in steps] == [BaselineMigration.VERSION]
-        assert SCHEMA_VERSION == BaselineMigration.VERSION
+        assert [step.version for step in steps] == [
+            BaselineMigration.VERSION,
+            CompositeKeyMigration.VERSION,
+        ]
+        assert SCHEMA_VERSION == CompositeKeyMigration.VERSION
 
     def test_baseline_checksum_is_deterministic(self) -> None:
         checksums = {
@@ -552,6 +560,36 @@ class TestPostgresMigrator:
         }
 
         assert len(checksums) == 1
+
+
+class TestCompositeKeyMigration:
+    """
+    Verify the tenant-scoped primary-key promotion migration.
+    """
+
+    def test_step_is_versioned_after_baseline(self) -> None:
+        step = CompositeKeyMigration.step()
+
+        assert step.version == 2
+        assert step.version > BaselineMigration.VERSION
+        assert step.name == "composite_actor_policy_keys"
+
+    def test_step_promotes_actor_and_policy_keys_only(self) -> None:
+        statements = CompositeKeyMigration.step().statements
+
+        assert len(statements) == 2
+        assert any("'actors'::regclass" in statement for statement in statements)
+        assert any("'policies'::regclass" in statement for statement in statements)
+
+    def test_step_swaps_id_only_key_for_tenant_scoped_key(self) -> None:
+        for statement in CompositeKeyMigration.step().statements:
+            assert "= 'PRIMARY KEY (id)'" in statement
+            assert "ADD PRIMARY KEY (tenant_id, id)" in statement
+
+    def test_step_guards_promotion_for_idempotent_replay(self) -> None:
+        for statement in CompositeKeyMigration.step().statements:
+            assert statement.lstrip().startswith("DO $$")
+            assert "= 'PRIMARY KEY (id)' THEN" in statement
 
 
 class TestPostgresSchemaValidator:
