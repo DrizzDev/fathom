@@ -1428,7 +1428,34 @@ class CompositeKeyMigration:
     VERSION: Final[int] = 2
     NAME: Final[str] = "composite_actor_policy_keys"
 
-    TENANT_SCOPED_TABLES: Final[Tuple[str, ...]] = ("actors", "policies")
+    STATEMENTS: Final[Tuple[str, ...]] = (
+        """
+        DO $$ BEGIN
+            IF (
+                SELECT pg_get_constraintdef(constraint_record.oid)
+                FROM pg_constraint constraint_record
+                WHERE constraint_record.conrelid = 'actors'::regclass
+                  AND constraint_record.contype = 'p'
+            ) = 'PRIMARY KEY (id)' THEN
+                ALTER TABLE actors DROP CONSTRAINT actors_pkey;
+                ALTER TABLE actors ADD PRIMARY KEY (tenant_id, id);
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$ BEGIN
+            IF (
+                SELECT pg_get_constraintdef(constraint_record.oid)
+                FROM pg_constraint constraint_record
+                WHERE constraint_record.conrelid = 'policies'::regclass
+                  AND constraint_record.contype = 'p'
+            ) = 'PRIMARY KEY (id)' THEN
+                ALTER TABLE policies DROP CONSTRAINT policies_pkey;
+                ALTER TABLE policies ADD PRIMARY KEY (tenant_id, id);
+            END IF;
+        END $$;
+        """,
+    )
 
     @classmethod
     def step(cls) -> PostgresMigrationStep:
@@ -1439,28 +1466,8 @@ class CompositeKeyMigration:
         return PostgresMigrationStep(
             name=cls.NAME,
             version=cls.VERSION,
-            statements=tuple(cls.__promote(table=table) for table in cls.TENANT_SCOPED_TABLES),
+            statements=cls.STATEMENTS,
         )
-
-    @staticmethod
-    def __promote(*, table: str) -> str:
-        """
-        Return an idempotent statement that swaps one id-only key for a composite key.
-        """
-
-        return f"""
-        DO $$ BEGIN
-            IF (
-                SELECT pg_get_constraintdef(constraint_record.oid)
-                FROM pg_constraint constraint_record
-                WHERE constraint_record.conrelid = '{table}'::regclass
-                  AND constraint_record.contype = 'p'
-            ) = 'PRIMARY KEY (id)' THEN
-                ALTER TABLE {table} DROP CONSTRAINT {table}_pkey;
-                ALTER TABLE {table} ADD PRIMARY KEY (tenant_id, id);
-            END IF;
-        END $$;
-        """
 
 
 SCHEMA_VERSION: Final[int] = CompositeKeyMigration.VERSION
