@@ -72,6 +72,7 @@ class FathomBuilder:
         self.__summarizer: Optional[SummarizationPort] = None
         self.__qualifier: Optional[IntentQualifierPort] = None
         self.__realignment: Optional[RealignmentPolicy] = None
+        self.__record: bool = True
 
         self.__path_manager = path_manager
         self.__config: FathomConfiguration = FathomConfiguration()
@@ -186,6 +187,18 @@ class FathomBuilder:
         """
 
         self.__interaction = port
+        return self
+
+    def without_recorder(self) -> "FathomBuilder":
+        """
+        Disable the conversation recorder.
+
+        Use when the caller does not need conversation history persisted
+        (e.g. healing flows) and wants to avoid recorder-side validation
+        errors from long intent strings.
+        """
+
+        self.__record = False
         return self
 
     def with_knowledge(self, port: KnowledgePort) -> FathomBuilder:
@@ -465,6 +478,7 @@ class FathomBuilder:
             path_manager=self.__path_manager,
             runtime_configuration=self.__runtime_configuration,
             owned_resources=owned_resources,
+            record=self.__record,
         )
 
     def __compose_qualifier(self) -> tuple[IntentQualifierPort, List[LLMPort]]:

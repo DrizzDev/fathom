@@ -152,6 +152,7 @@ class FathomRunner:
         realignment: Optional[RealignmentPolicy] = None,
         owned_resources: Optional[List[LLMPort]] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
+        record: bool = True,
     ) -> None:
         """
         Initialize runner with all configured ports.
@@ -174,8 +175,7 @@ class FathomRunner:
         self.__config = config or FathomConfiguration()
 
         self.__runtime_configuration = runtime_configuration
-
-        self.__recorder = self.__recorder_for(interaction=interaction)
+        self.__recorder = self.__recorder_for(interaction=interaction) if record else None
 
         self.__path_manager = path_manager
 
