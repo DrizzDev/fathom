@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.core.agent.action import ActionBuilder
 from fathom.schemas.actions import CoordinateSystem
 from fathom.schemas.gemini_tools import ExecuteAction, GeminiBBox
@@ -115,3 +115,23 @@ class ActionBuilderTest(unittest.TestCase):
         self.assertEqual(action.action_type, ActionType.TYPE)
         self.assertEqual(action.target, "Search box")
         self.assertEqual(action.text, "soap")
+
+    def test_validate_command_materializes_validation_event(self) -> None:
+        """
+        Accepted validate commands carry the typed validation event into completion.
+        """
+
+        action = ActionBuilder().build(
+            command=AcceptedCommand(
+                action_type=ActionType.VALIDATE,
+                payload=ExecuteAction(
+                    action_type="validate",
+                    validation_subject="Home screen is visible",
+                    confidence=0.95,
+                ),
+            )
+        )
+
+        self.assertEqual(action.action_type, ActionType.VALIDATE)
+        self.assertEqual(action.event_type, StepEvent.VALIDATION)
+        self.assertEqual(action.validation_subject, "Home screen is visible")

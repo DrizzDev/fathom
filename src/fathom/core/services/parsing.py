@@ -5,7 +5,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from pydantic import ValidationError
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.constants.tools import DiagnosticSeverity, StateNamespace
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.schemas.actions import Action
@@ -568,20 +568,17 @@ class ToolResponseParser:
         screen = args.current_screen
 
         action_type = ActionType.COMPLETE if completed else ActionType.VALIDATE
-        validation_subject = (
-            self.__first_text(
-                args.subgoal_completion_reason,
-                args.goal_completion_reason,
-                screen,
-            )
-            if action_type is ActionType.VALIDATE
-            else None
+        validation_subject = self.__first_text(
+            args.subgoal_completion_reason,
+            args.goal_completion_reason,
+            screen,
         )
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
                 target=screen,
+                event_type=StepEvent.VALIDATION,
                 action_type=action_type,
                 validation_subject=validation_subject,
             ),
@@ -593,7 +590,7 @@ class ToolResponseParser:
             subgoal_completion_reason=args.subgoal_completion_reason,
             completion_criteria_met=args.completion_criteria_met,
             content_exhausted=bool(args.content_exhausted),
-            metadata={"event_type": "validation"},
+            metadata={},
             screen_description="Goal verification step",
         )
 
@@ -637,7 +634,7 @@ class ToolResponseParser:
         completed = bool(raw_goal_completed)
         sub_completed = bool(raw_sub_goal_completed)
 
-        metadata: Dict[str, Any] = {"event_type": "validation"}
+        metadata: Dict[str, Any] = {}
         if args.condition_met is not None:
             metadata["condition_met"] = args.condition_met
 
@@ -645,6 +642,7 @@ class ToolResponseParser:
             action=Action(
                 confidence=1.0,
                 target=condition,
+                event_type=StepEvent.VALIDATION,
                 action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
                 validation_subject=condition.strip(),
@@ -736,17 +734,13 @@ class ToolResponseParser:
             },
         )
 
-        metadata_dict: Dict[str, Any] = {}
-        if action_type == ActionType.VALIDATE:
-            metadata_dict["event_type"] = "validation"
-
         parsed_delta = self.__parse_delta_telemetry(args=args)
 
         result = AnalysisResult(
             action=None,
             alternatives=[],
             reasoning=message,
-            metadata=metadata_dict,
+            metadata={},
             tool_response=ToolResponse(
                 command=ToolCommand(action_type=action_type, payload=data),
                 updates=self.__updates(memory_updates=args.memory_updates),

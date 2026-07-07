@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List, Tuple
 
 from pydantic import ValidationError
 
+from fathom.constants import StepEvent
 from fathom.constants.flow import LaunchProvenance
 from fathom.constants.generation import COMPLETION_ASSERTIONS_FILENAME
 from fathom.core.exceptions import ScriptExportError
@@ -163,7 +164,7 @@ class HistoryEvidenceSource(EvidenceSource):
                     1 for step in evidence.steps if step.capture is not None
                 ),
                 "script.validation_count": sum(
-                    1 for step in evidence.steps if step.event == "validation"
+                    1 for step in evidence.steps if step.event == StepEvent.VALIDATION
                 ),
                 "script.assertion_count": len(evidence.assertions),
             },

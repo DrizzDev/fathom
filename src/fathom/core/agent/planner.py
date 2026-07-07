@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from logging import getLogger
-from typing import Any, Dict, FrozenSet, List, Literal, Optional, Tuple, cast
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, cast
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.constants.retries import (
     RetryBranch,
     RetryKind,
@@ -955,7 +955,7 @@ class StepPlanner:
             metadata=step_metadata,
             is_recovery=is_recovery,
             step_number=step_number,
-            event_type=(metadata or {}).get("event_type"),
+            event_type=action.event_type,
         )
 
         return PlanResult(
@@ -1052,7 +1052,7 @@ class StepPlanner:
         step_number: int,
         capture: ScreenCapture,
         is_recovery: bool = False,
-        event_type: Optional[str] = None,
+        event_type: Optional[StepEvent] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Step:
         """
@@ -1061,21 +1061,13 @@ class StepPlanner:
 
         screen_hash: str = self.__compute_simple_hash(capture=capture)
 
-        validated_event_type: Optional[Literal["action", "validation"]] = None
-
-        if event_type == "action":
-            validated_event_type = "action"
-
-        elif event_type == "validation":
-            validated_event_type = "validation"
-
         return Step(
             action=action,
             metadata=metadata or {},
             screen_hash=screen_hash,
             step_number=step_number,
             is_conditional=is_recovery,
-            event_type=validated_event_type,
+            event_type=event_type,
             condition="recovery" if is_recovery else None,
         )
 

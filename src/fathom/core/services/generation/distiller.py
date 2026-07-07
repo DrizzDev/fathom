@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+from fathom.constants import StepEvent
 from fathom.constants.flow import EvidenceMarker
 from fathom.schemas.generation import Distillation, ScrollCollapseState
 from fathom.schemas.steps import StepRecord
@@ -14,7 +15,6 @@ class Distiller:
 
     __SCROLL = "scroll"
     __SWIPE_PREFIX = "swipe"
-    __VALIDATION = "validation"
     __DISMISSAL_ACTION = "tap"
     __PARTIAL_REASON = "No successful goal validation was recorded; the run did not complete."
     __LOOP_REASON = "Recovery thrash distilled and no successful goal validation was recorded."
@@ -153,7 +153,7 @@ class Distiller:
             record.success
             and record.capture is None
             and not record.screen_changed
-            and record.event_type != self.__VALIDATION
+            and record.event_type != StepEvent.VALIDATION
             and self.__is_recovery(record=record)
         )
 
@@ -162,7 +162,7 @@ class Distiller:
         Recognize a recorded goal validation that actually succeeded.
         """
 
-        return record.event_type == self.__VALIDATION and record.success
+        return record.event_type == StepEvent.VALIDATION and record.success
 
     def __is_scroll(self, *, record: StepRecord) -> bool:
         """

@@ -162,7 +162,9 @@ class ConversationService:
                         tenant=request.tenant,
                         workspace=request.workspace,
                     ),
-                    title=request.title,
+                    title=request.title or self.__title.initial(
+                        context=ConversationSchemas.TitleContext(intent="", package=None)
+                    ),
                     created_at=request.created,
                     creator=creator.id if creator is not None else None,
                     metadata=InteractionSchemas.Metadata(entries=request.metadata),

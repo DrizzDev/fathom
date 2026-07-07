@@ -14,6 +14,7 @@ from fathom.constants import (
     NEXT_PHASE_ACTION_TYPES,
     SPATIAL_ACTION_TYPES,
     ActionType,
+    StepEvent,
 )
 from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
 from fathom.core.agent.opener import OpenerSignalPolicy
@@ -496,15 +497,18 @@ class PersistenceEventTypeBaselineTest(unittest.TestCase):
         for action_type in ActionType:
             with self.subTest(action_type=action_type):
                 record = self.__result(action_type=action_type).to_record()
-                self.assertEqual(record.event_type, "action")
+                self.assertEqual(record.event_type, StepEvent.ACTION)
 
     def test_explicit_event_type_passes_through(self) -> None:
         """
         A recorded event type is preserved verbatim, independent of the action type.
         """
 
-        record = self.__result(action_type=ActionType.VALIDATE, event_type="validation").to_record()
-        self.assertEqual(record.event_type, "validation")
+        record = self.__result(
+            action_type=ActionType.VALIDATE,
+            event_type=StepEvent.VALIDATION,
+        ).to_record()
+        self.assertEqual(record.event_type, StepEvent.VALIDATION)
 
 
 class ReasonerDispatchedBaselineTest(unittest.TestCase):

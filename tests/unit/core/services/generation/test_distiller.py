@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from typing import Literal, Optional, Tuple
+from typing import Optional, Tuple
 
+from fathom.constants import StepEvent
 from fathom.core.services.generation.distiller import Distiller
 from fathom.schemas.steps import StepGoal, StepRecord
 
@@ -41,7 +42,7 @@ class DistillerTest(unittest.TestCase):
         number: int,
         action: str = "tap",
         target: str = "Element",
-        event: Literal["action", "validation"] = "action",
+        event: StepEvent = StepEvent.ACTION,
         condition: Optional[str] = None,
         rationale: Optional[str] = None,
         goal: Optional[StepGoal] = None,
@@ -307,7 +308,12 @@ class DistillerTest(unittest.TestCase):
 
         records = (
             self.__record(number=0, target="A"),
-            self.__record(number=1, event="validation", action="complete", success=False),
+            self.__record(
+                number=1,
+                event=StepEvent.VALIDATION,
+                action="complete",
+                success=False,
+            ),
         )
 
         result = self.__distiller.distill(records=records)
@@ -321,7 +327,12 @@ class DistillerTest(unittest.TestCase):
 
         records = (
             self.__record(number=0, target="A"),
-            self.__record(number=1, event="validation", action="complete", success=True),
+            self.__record(
+                number=1,
+                event=StepEvent.VALIDATION,
+                action="complete",
+                success=True,
+            ),
         )
 
         result = self.__distiller.distill(records=records)

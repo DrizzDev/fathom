@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Dict, FrozenSet
 
-from fathom.constants.events import FathomEvent
+from fathom.constants.events import FathomEvent, StepEvent
 
 # Re-export execution constants
 from fathom.constants.execution import (
@@ -207,6 +207,7 @@ __all__ = [
     "SignalType",
     "TargetKind",
     "FathomEvent",
+    "StepEvent",
     "ContextScope",
     "ExecutionMode",
     "DRAIN_TIMEOUT",

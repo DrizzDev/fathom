@@ -41,3 +41,12 @@ class FathomEvent(StrEnum):
     INTENT_DECOMPOSING = "INTENT_DECOMPOSING"
 
     SLOW_QUERY = "SLOW_QUERY"
+
+
+class StepEvent(StrEnum):
+    """
+    Persisted semantic category of a recorded execution step.
+    """
+
+    ACTION = "action"
+    VALIDATION = "validation"

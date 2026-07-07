@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Union, cast
 
-from fathom.constants import GESTURE_SCROLL_DIRECTION, ActionType
+from fathom.constants import GESTURE_SCROLL_DIRECTION, ActionType, StepEvent
 from fathom.constants.flow import CheckKind, EvidenceMarker
 from fathom.constants.generation import SkipReason
 from fathom.interfaces.generator import FlowGenerator
@@ -37,8 +37,6 @@ class DeterministicFlowGenerator(FlowGenerator):
     """
     Projects recorded evidence into a faithful Flow by fixed per-step rules, with no LLM or judgment.
     """
-
-    __VALIDATION: str = "validation"
 
     async def generate(self, *, evidence: Evidence, feedback: Tuple[Issue, ...] = ()) -> Flow:
         """
@@ -277,7 +275,7 @@ class DeterministicFlowGenerator(FlowGenerator):
         validations = {
             step.index
             for step in evidence.steps
-            if step.event == cls.__VALIDATION and step.outcome.success
+            if step.event == StepEvent.VALIDATION and step.outcome.success
         }
         if bool(set(nodes[-1].source_steps) & validations):
             return True
@@ -322,7 +320,7 @@ class DeterministicFlowGenerator(FlowGenerator):
         if not step.outcome.success:
             return SkipReason.FAILED
 
-        if step.event == self.__VALIDATION:
+        if step.event == StepEvent.VALIDATION:
             subject = self.__subject(step=step)
             if subject is None:
                 return SkipReason.MISSING_TARGET

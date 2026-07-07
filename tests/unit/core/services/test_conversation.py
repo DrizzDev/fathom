@@ -230,6 +230,21 @@ class TestConversationService(ConversationStoreTestCase):
         self.assertLessEqual(len(view.title), THREAD_TITLE_MAX_LENGTH)
         self.assertEqual(title[:THREAD_TITLE_MAX_LENGTH].rstrip(), view.title)
 
+    async def test_create_uses_fathom_initial_title_when_omitted(self) -> None:
+        """
+        Thread creation owns the initial UI title when callers omit one.
+        """
+
+        view = await self.__service.create(
+            request=ThreadCreate(
+                id="thread-default-title",
+                tenant="tenant-1",
+                created=self.__now,
+            )
+        )
+
+        self.assertEqual("Authoring session", view.title)
+
     async def test_get_thread_hides_thread_from_non_member(self) -> None:
         """
         Hide an existing conversation when the caller is not an active member.

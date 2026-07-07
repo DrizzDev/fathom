@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from fathom.constants import StepEvent
 from fathom.constants.flow import LaunchProvenance
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.generation.assembler import EvidenceAssembler
@@ -155,6 +156,32 @@ class EvidenceAssemblerTest(unittest.TestCase):
 
         self.assertEqual(evidence.steps[0].target.export, "Login screen")
         self.assertEqual(evidence.steps[0].target.name, "Phone Number")
+
+    def test_validation_event_subject_becomes_script_assertion_target(self) -> None:
+        """
+        A validation event keeps its assertion subject even when the action is COMPLETE.
+        """
+
+        evidence = self.__assembler.assemble(
+            intent="i",
+            goal="g",
+            package="com.example",
+            trace=self.__trace(
+                NormalizedEntry(
+                    record=self.__record(
+                        event_type=StepEvent.VALIDATION,
+                        step_number=3,
+                        action_type="complete",
+                        target="Home screen",
+                        validation_subject="Home screen is visible",
+                    )
+                )
+            ),
+        )
+
+        self.assertEqual(evidence.steps[0].event, StepEvent.VALIDATION)
+        self.assertEqual(evidence.steps[0].action, "complete")
+        self.assertEqual(evidence.steps[0].target.export, "Home screen is visible")
 
     def test_validation_description_does_not_backfill_assertion_target(self) -> None:
         """

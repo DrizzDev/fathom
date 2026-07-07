@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 import yaml
 
 from fathom.base.timing import time_it
+from fathom.constants import StepEvent
 from fathom.constants.flow import IssueCode
 from fathom.constants.generation import (
     BASELINE_METADATA_FILENAME,
@@ -1088,7 +1089,7 @@ class HistoryService:
             "target": target,
             "center": record.get("center"),
             "bounding_box": record.get("bounds"),
-            "event_type": record.get("event_type", "action"),
+            "event_type": record.get("event_type", StepEvent.ACTION.value),
             "action_type": record.get("action_type", "wait"),
             "metadata": {
                 "success": record.get("success"),

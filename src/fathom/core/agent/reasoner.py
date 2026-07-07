@@ -7,6 +7,7 @@ from typing import List, Optional, Set, Tuple
 from fathom.constants import (
     ACTION_EXECUTED_TYPES,
     ActionType,
+    StepEvent,
 )
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.reasoning import (
@@ -397,12 +398,12 @@ class Reasoner:
     @staticmethod
     def __validation_executed(*, action: Action, execution_success: bool) -> bool:
         """
-        Return whether this turn recorded a concrete validate action.
+        Return whether this turn recorded a validation-family examination.
         """
 
         return (
             execution_success
-            and action.action_type is ActionType.VALIDATE
+            and action.event_type == StepEvent.VALIDATION
             and bool((action.validation_subject or "").strip())
         )
 

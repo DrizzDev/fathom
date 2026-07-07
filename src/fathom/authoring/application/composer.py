@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Set, Tuple
 
+from fathom.constants import StepEvent
 from fathom.constants.authoring import AuthoringKind, AuthoringStatus
 from fathom.constants.generation import ScriptCommandRole, ScriptSource
 from fathom.schemas.authoring import AuthoringBaseline, AuthoringBaselineCommand
@@ -20,8 +21,6 @@ class StepDraftComposer:
     """
     Composes reviewed step authoring drafts into an execution-ordered script fallback.
     """
-
-    __VALIDATION = "validation"
 
     def compose(
         self,
@@ -257,7 +256,7 @@ class StepDraftComposer:
         terminal_validations = {
             step.index
             for step in evidence.steps
-            if step.index > changed[-1] and step.event == StepDraftComposer.__VALIDATION
+            if step.index > changed[-1] and step.event == StepEvent.VALIDATION
         }
         if not terminal_validations:
             return commands

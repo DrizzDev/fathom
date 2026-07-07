@@ -15,6 +15,7 @@ class CheckpointSerdeFactory:
 
     __ALLOWED_JSON_MODULES: ClassVar[Tuple[Tuple[str, str], ...]] = (
         ("fathom.constants", "ActionType"),
+        ("fathom.constants.events", "StepEvent"),
         ("fathom.constants.command", "CommandScopeKind"),
         ("fathom.constants.observation", "KeyboardVisibility"),
         ("fathom.constants.scroll", "ScrollEvidenceSource"),

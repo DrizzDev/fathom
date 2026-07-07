@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.constants.state import RunOutcome
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.generation.target import TargetEvidenceBuilder
@@ -26,7 +26,6 @@ class EvidenceAssembler:
     """
 
     __LAUNCH = "launch"
-
     def __init__(self, *, target_builder: Optional[TargetEvidenceBuilder] = None) -> None:
         """
         Bind collaborators used to assemble evidence.
@@ -135,16 +134,30 @@ class EvidenceAssembler:
             capture=self.__capture(record=record),
         )
 
-    @staticmethod
-    def __target_export(*, record: StepRecord) -> Optional[str]:
+    @classmethod
+    def __target_export(cls, *, record: StepRecord) -> Optional[str]:
         """
         Return the script assertion target, preferring structured validation subjects.
         """
 
-        if record.action_type == ActionType.VALIDATE.value and record.validation_subject:
+        if cls.__has_validation_subject(record=record):
             return record.validation_subject
 
         return record.export_target
+
+    @classmethod
+    def __has_validation_subject(cls, *, record: StepRecord) -> bool:
+        """
+        Return whether the record carries a structured validation assertion.
+        """
+
+        if not record.validation_subject:
+            return False
+
+        return (
+            record.event_type == StepEvent.VALIDATION
+            or record.action_type == ActionType.VALIDATE.value
+        )
 
     @staticmethod
     def __capture(*, record: StepRecord) -> Optional[StepCapture]:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.gemini_tools import ExecuteAction
@@ -30,6 +30,7 @@ class ActionBuilder:
             bounds=self.__bounds(data=data),
             target=target,
             condition=data.condition,
+            event_type=StepEvent.VALIDATION if command.action_type is ActionType.VALIDATE else None,
             is_conditional=data.is_conditional,
             conditional_type=data.conditional_type,
             overlay_detected=data.overlay_detected,

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants import StepEvent
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import StepArtifacts
 from fathom.schemas.capture import Capture, CaptureRequest
@@ -39,7 +40,7 @@ class Step(BaseModel):
     )
     condition: Optional[str] = Field(default=None, description="Optional condition for the step")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
-    event_type: Optional[Literal["action", "validation"]] = Field(
+    event_type: Optional[StepEvent] = Field(
         default=None,
         description="Semantic event type for logging/export (e.g. validation).",
     )
@@ -127,7 +128,7 @@ class StepResult(BaseModel):
             screen_changed=self.screen_changed,
             rationale=act.rationale,
             generalized_target=self.generalized_target,
-            event_type=self.step.event_type or "action",
+            event_type=self.step.event_type or StepEvent.ACTION,
             action_type=act.action_type.value,
             action_description=act.to_description(),
             natural_language_target=act.natural_language_target,
@@ -157,8 +158,8 @@ class StepRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     step_number: int = Field(ge=0, description="Step index")
-    event_type: Literal["action", "validation"] = Field(
-        default="action",
+    event_type: StepEvent = Field(
+        default=StepEvent.ACTION,
         description="High-level event category used by logs and exporters.",
     )
     action_type: str = Field(min_length=1, description="Action category")

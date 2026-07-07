@@ -5,7 +5,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType
+from fathom.constants import CONTROL_ACTION_TYPES, ActionExecutionKind, ActionType, StepEvent
 from fathom.schemas.capture import CaptureRequest
 
 
@@ -325,6 +325,10 @@ class Action(BaseModel):
     """
 
     action_type: ActionType = Field(description="The type of interaction to perform")
+    event_type: Optional[StepEvent] = Field(
+        default=None,
+        description="Semantic event category carried by validation-family planning tools.",
+    )
 
     rationale: str = Field(description="The reasoning behind choosing this action")
     target: str = Field(default="element", description="Grounding label ID or technical target")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Tuple
 
+from fathom.constants import StepEvent
 from fathom.constants.flow import (
     AssertionSource,
     CheckKind,
@@ -13,6 +14,7 @@ from fathom.constants.flow import (
 )
 from fathom.constants.generation import SkipReason
 from fathom.core.dialect.policy import Policy
+from fathom.core.services.generation.assembler import EvidenceAssembler
 from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.schemas.flow import (
     BranchNode,
@@ -33,7 +35,8 @@ from fathom.schemas.flow import (
     TargetClaim,
     TargetStructure,
 )
-from fathom.schemas.steps import StepGoal
+from fathom.schemas.generation import LaunchMarker, NormalizedEntry, NormalizedTrace
+from fathom.schemas.steps import StepGoal, StepRecord
 
 
 class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
@@ -436,6 +439,50 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(NodeKind.CHECK, [node.kind for node in report.flow.nodes])
         self.assertEqual(policy_report.issues, ())
+
+    async def test_complete_validation_record_projects_to_terminal_check(self) -> None:
+        """
+        A verify_goal COMPLETE record still renders its validation subject as a Check node.
+        """
+
+        evidence = EvidenceAssembler().assemble(
+            intent="Verify the Home screen is visible",
+            goal="Home screen is visible",
+            package="com.example",
+            trace=NormalizedTrace(
+                entries=(
+                    NormalizedEntry(
+                        launch=LaunchMarker(
+                            package="com.example",
+                            provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                            source_steps=(),
+                        )
+                    ),
+                    NormalizedEntry(
+                        record=StepRecord(
+                            event_type=StepEvent.VALIDATION,
+                            action_type="complete",
+                            target="Home screen",
+                            validation_subject="Home screen is visible",
+                            success=True,
+                            duration=0,
+                            step_number=1,
+                            screen_changed=False,
+                        )
+                    ),
+                )
+            ),
+        )
+
+        report = self.__generator().project(evidence=evidence)
+        checks = [node for node in report.flow.nodes if isinstance(node, CheckNode)]
+
+        self.assertFalse(report.flow.partial)
+        self.assertEqual(report.skipped, ())
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].source_steps, (1,))
+        self.assertEqual(checks[0].checks[0].subject, "Home screen is visible")
+        self.assertEqual(Policy().evaluate(flow=report.flow, evidence=evidence).issues, ())
 
     async def test_completion_assertions_project_to_terminal_validation(self) -> None:
         """

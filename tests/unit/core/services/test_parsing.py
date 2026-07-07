@@ -5,11 +5,17 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
+from fathom.constants.completion import GateOutcome
 from fathom.constants.tools import StateNamespace
+from fathom.core.agent.completion import CompletionGate
+from fathom.core.agent.opener import OpenerSignalPolicy
+from fathom.core.agent.reasoner import Reasoner
 from fathom.core.exceptions import ToolValidationError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.schemas.results import GenerateResult
+from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.vision import ActionKindResolver
 
 
 class _Call(BaseModel):
@@ -468,6 +474,7 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         )
 
         assert result.action is not None
+        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertEqual(result.action.action_type, ActionType.VALIDATE)
         self.assertEqual(
             result.action.validation_subject,
@@ -497,6 +504,7 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         )
 
         assert result.action is not None
+        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertEqual(result.action.action_type, ActionType.VALIDATE)
         self.assertEqual(
             result.action.validation_subject,
@@ -526,15 +534,16 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         )
 
         assert result.action is not None
+        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertEqual(result.action.action_type, ActionType.VALIDATE)
         self.assertEqual(
             result.action.validation_subject,
             "Cart screen with both requested items",
         )
 
-    def test_verify_goal_complete_does_not_set_validation_subject(self) -> None:
+    def test_verify_goal_complete_preserves_validation_subject(self) -> None:
         """
-        verify_goal terminal completion remains a COMPLETE action, not validation evidence.
+        verify_goal terminal completion remains COMPLETE while carrying validation evidence.
         """
 
         parser = ToolResponseParser()
@@ -556,8 +565,63 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         )
 
         assert result.action is not None
+        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertEqual(result.action.action_type, ActionType.COMPLETE)
-        self.assertIsNone(result.action.validation_subject)
+        self.assertEqual(result.action.validation_subject, "The final step is complete.")
+
+    def test_verify_goal_complete_advances_validation_subgoal_contract(self) -> None:
+        """
+        verify_goal COMPLETE carries validation evidence through parser, reasoner, and gate.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=GenerateResult(
+                content="",
+                metrics={},
+                tool_calls=[
+                    _Call(
+                        name="verify_goal",
+                        args={
+                            "assistant_message": "The Home screen is visible.",
+                            "goal_completed": True,
+                            "sub_goal_completed": True,
+                            "goal_completion_reason": "The Home screen is visible.",
+                            "subgoal_completion_reason": "The Home screen is visible.",
+                            "current_screen": "Home screen",
+                            "completion_criteria_met": ["Home screen is visible"],
+                        },
+                    )
+                ],
+            )
+        )
+        assert result.action is not None
+        sub_goal = SubGoal(
+            index=5,
+            kind=SubGoalKind.VALIDATION,
+            directive=ActionType.VALIDATE,
+            description="Validate the Home screen is visible",
+        )
+
+        evidence = Reasoner(
+            intent="Validate the Home screen is visible",
+            opener_policy=OpenerSignalPolicy(),
+        ).assess_completion(
+            execution_success=True,
+            analysis=result,
+            sub_goal=sub_goal,
+            screen_changed=False,
+        )
+        decision = CompletionGate().adjudicate(
+            sub_goal=sub_goal,
+            action_kind=ActionKindResolver.resolve(action_type=result.action.action_type),
+            evidence=evidence,
+        )
+
+        self.assertEqual(result.action.action_type, ActionType.COMPLETE)
+        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
+        self.assertTrue(evidence.validation.executed)
+        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
 
 
 class ToolResponseParserBoundaryTest(unittest.TestCase):

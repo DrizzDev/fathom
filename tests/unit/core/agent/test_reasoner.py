@@ -4,7 +4,7 @@ import logging
 import unittest
 from typing import Optional
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
 from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.reasoner import Reasoner
 from fathom.schemas.actions import Action
@@ -51,6 +51,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         action_type: ActionType = ActionType.TAP,
         reasoning: str = "Submit tapped; new screen visible.",
         validation_subject: Optional[str] = None,
+        event_type: Optional[StepEvent] = None,
         subgoal_completion_reason: Optional[str] = None,
     ) -> AnalysisResult:
         """
@@ -60,6 +61,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         return AnalysisResult(
             action=Action(
                 action_type=action_type,
+                event_type=event_type,
                 target="t",
                 rationale="r",
                 confidence=1.0,
@@ -176,14 +178,33 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
     def test_validation_evidence_requires_executed_validate_subject(self) -> None:
         """
-        A validate action produces validation evidence only when it executed and names a subject.
+        A validation-family action produces validation evidence only when it executed and names a subject.
         """
 
         evidence = self.__reasoner().assess_completion(
             execution_success=True,
             analysis=self.__analysis(
                 action_type=ActionType.VALIDATE,
+                event_type=StepEvent.VALIDATION,
                 validation_subject="cart items are visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
+        )
+
+        self.assertTrue(evidence.validation.executed)
+
+    def test_validation_evidence_accepts_complete_from_validation_family(self) -> None:
+        """
+        A verify_goal COMPLETE action remains terminal while counting as validation evidence.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.COMPLETE,
+                event_type=StepEvent.VALIDATION,
+                validation_subject="home screen is visible",
             ),
             sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
             screen_changed=False,
@@ -201,6 +222,41 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
             analysis=self.__analysis(action_type=ActionType.TAP),
             sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
             screen_changed=True,
+        )
+
+        self.assertFalse(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_subject_without_validation_event(self) -> None:
+        """
+        A normal action cannot become validation evidence by carrying a subject string.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.TAP,
+                validation_subject="home screen is visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=True,
+        )
+
+        self.assertFalse(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_validation_event_without_subject(self) -> None:
+        """
+        A validation-family action still needs assertion content.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.COMPLETE,
+                event_type=StepEvent.VALIDATION,
+                validation_subject="",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
         )
 
         self.assertFalse(evidence.validation.executed)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from fathom.constants import StepEvent
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactRole
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.authoring import (
@@ -31,7 +32,6 @@ class AuthoringEvidenceBuilder:
     Builds authoring task evidence views from normalized execution evidence.
     """
 
-    __VALIDATION = "validation"
     __MANIFEST_SUFFIXES: Tuple[str, ...] = (".json", ".xml")
     __IMAGE_SUFFIXES: Tuple[str, ...] = (".gif", ".jpg", ".jpeg", ".png", ".webp")
 
@@ -193,7 +193,7 @@ class AuthoringEvidenceBuilder:
         Build authoring validation facts when the step recorded a validation subject.
         """
 
-        if step.event != AuthoringEvidenceBuilder.__VALIDATION:
+        if step.event != StepEvent.VALIDATION:
             return None
 
         subject = step.target.export or step.target.name or step.target.generalized

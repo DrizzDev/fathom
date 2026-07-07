@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
-from fathom.constants import GESTURE_ACTION_TYPES, GESTURE_SCROLL_DIRECTION, ActionType
+from fathom.constants import GESTURE_ACTION_TYPES, GESTURE_SCROLL_DIRECTION, ActionType, StepEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.flow import EvidenceMarker, IssueCode, LaunchProvenance, NodeKind
 from fathom.constants.state import RunOutcome
@@ -28,8 +28,6 @@ class Policy:
     """
     Validates a flow against its recorded evidence for fidelity before rendering.
     """
-
-    __VALIDATION = "validation"
 
     def __init__(self, *, launchers: FrozenSet[str] = LAUNCHER_PACKAGES) -> None:
         """
@@ -706,7 +704,7 @@ class Policy:
         validations = {
             step.index
             for step in evidence.steps
-            if step.event == self.__VALIDATION and step.outcome.success
+            if step.event == StepEvent.VALIDATION and step.outcome.success
         }
         terminal = nodes[-1] if nodes else None
         validation_grounded = (
