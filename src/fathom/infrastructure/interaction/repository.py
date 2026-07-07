@@ -96,7 +96,7 @@ class ThreadRepository(Protocol):
 
     async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
         """
-        Set the thread title only when the stored title is currently null.
+        Set or replace the thread title.
         """
 
         ...

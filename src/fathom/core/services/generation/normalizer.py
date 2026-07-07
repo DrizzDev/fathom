@@ -15,7 +15,7 @@ class RunTraceNormalizer:
 
     def __init__(self, *, classifier: PackageClassifier) -> None:
         """
-        Bind the package classifier used to recognise launcher-executed steps.
+        Bind the package classifier used to recognize launcher-executed steps.
         """
 
         self.__classifier = classifier
@@ -27,47 +27,50 @@ class RunTraceNormalizer:
 
         ordered = sorted(records, key=lambda record: record.step_number)
 
-        entries: List[NormalizedEntry] = []
-        current_app: Optional[str] = None
-        pending_launcher: List[int] = []
+        sources: List[int] = []
+        foreground: Optional[str] = None
+        timeline: List[NormalizedEntry] = []
 
         for record in ordered:
             execution = self.__package(activity=record.execution_activity)
 
             if execution is not None and self.__classifier.is_launcher(package=execution):
-                pending_launcher.append(record.step_number)
+                sources.append(record.step_number)
                 observed = self.__package(activity=record.activity)
 
                 if (
                     observed
                     and not self.__classifier.is_launcher(package=observed)
-                    and observed != current_app
+                    and observed != foreground
                 ):
-                    entries.append(self.__transition(target=observed, steps=pending_launcher))
-                    current_app = observed
-                    pending_launcher = []
+                    timeline.append(self.__transition(target=observed, steps=sources))
+
+                    sources = []
+                    foreground = observed
 
                 continue
 
             if execution is None:
-                entries.append(NormalizedEntry(record=record))
-                pending_launcher = []
+                timeline.append(NormalizedEntry(record=record))
+                sources = []
                 continue
 
-            if current_app is None:
-                entries.append(self.__open(target=execution, steps=pending_launcher))
-                current_app = execution
-                pending_launcher = []
-            elif pending_launcher and execution != current_app:
-                entries.append(self.__transition(target=execution, steps=pending_launcher))
-                current_app = execution
-                pending_launcher = []
+            if foreground is None:
+                timeline.append(self.__open(target=execution, steps=sources))
+                foreground = execution
+                sources = []
+
+            elif sources and execution != foreground:
+                timeline.append(self.__transition(target=execution, steps=sources))
+                foreground = execution
+                sources = []
+
             else:
-                pending_launcher = []
+                sources = []
 
-            entries.append(NormalizedEntry(record=record))
+            timeline.append(NormalizedEntry(record=record))
 
-        return NormalizedTrace(entries=tuple(entries))
+        return NormalizedTrace(entries=tuple(timeline))
 
     def __open(self, *, target: str, steps: List[int]) -> NormalizedEntry:
         """
@@ -89,8 +92,8 @@ class RunTraceNormalizer:
         return NormalizedEntry(
             launch=LaunchMarker(
                 package=target,
-                provenance=LaunchProvenance.LAUNCHER_TRANSITION,
                 source_steps=tuple(steps),
+                provenance=LaunchProvenance.LAUNCHER_TRANSITION,
             )
         )
 

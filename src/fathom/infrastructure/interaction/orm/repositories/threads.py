@@ -157,7 +157,7 @@ class ThreadRepository:
 
     async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
         """
-        Set a thread title only when the stored title is null.
+        Set or replace a thread title.
         """
 
         async with self.__transaction.transaction() as connection:
@@ -169,18 +169,14 @@ class ThreadRepository:
             if existing is None:
                 raise InteractionError("Thread does not exist.")
 
-            if existing.title is not None:
-                return existing
-
             metadata = dict(existing.metadata.entries)
             if request.metadata.entries:
                 metadata["title"] = request.metadata.entries
 
             await (
                 ConversationRecord.filter(
-                    tenant_id=request.tenant,
                     id=request.thread,
-                    title__isnull=True,
+                    tenant_id=request.tenant,
                     **Visibility().as_filters(),
                 )
                 .using_db(connection)
@@ -223,8 +219,8 @@ class ThreadRepository:
 
             await (
                 ConversationRecord.filter(
-                    tenant_id=request.tenant,
                     id=request.thread,
+                    tenant_id=request.tenant,
                     **Visibility(archived=True).as_filters(),
                 )
                 .using_db(connection)
@@ -300,8 +296,8 @@ class ThreadRepository:
             return ThreadPage(items=(), next=None, total=0)
 
         memberships = await MembershipRecord.filter(
-            tenant_id=query.tenant,
             actor=query.actor,
+            tenant_id=query.tenant,
             **MembershipVisibility(
                 deleted=query.state is ThreadState.DELETED,
             ).as_filters(),
@@ -317,9 +313,9 @@ class ThreadRepository:
             return ThreadPage(items=(), next=None, total=0)
 
         if query.state is not None and query.state not in (
+            ThreadState.ACTIVE,
             ThreadState.DELETED,
             ThreadState.ARCHIVED,
-            ThreadState.ACTIVE,
         ):
             return ThreadPage(items=(), next=None, total=0)
 
@@ -330,10 +326,13 @@ class ThreadRepository:
         )
         if query.workspace is not None:
             queryset = queryset.filter(workspace_id=query.workspace)
+
         if query.title is not None:
             queryset = queryset.filter(title__istartswith=query.title)
+
         if query.updated_since is not None:
             queryset = queryset.filter(updated_at__gte=query.updated_since)
+
         if query.updated_until is not None:
             queryset = queryset.filter(updated_at__lt=query.updated_until)
 
@@ -363,12 +362,16 @@ class ThreadRepository:
 
         if state is ThreadState.DELETED:
             return {"deleted_at__isnull": False}
+
         if state is ThreadState.ARCHIVED:
             return {"deleted_at__isnull": True, "archived_at__isnull": False}
+
         if state is ThreadState.ACTIVE:
             return Visibility().as_filters()
+
         if include_archived:
             return Visibility(archived=True).as_filters()
+
         return Visibility().as_filters()
 
     async def __load_thread(
@@ -385,8 +388,10 @@ class ThreadRepository:
         """
 
         filters: Dict[str, object] = {"tenant_id": tenant, "id": thread}
+
         if not include_deleted:
             filters["deleted_at__isnull"] = True
+
         if not include_archived:
             filters["archived_at__isnull"] = True
 

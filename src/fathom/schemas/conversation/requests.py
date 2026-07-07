@@ -228,7 +228,11 @@ class ScriptSave(ThreadMetadataScope):
     task: Optional[str] = Field(default=None, description="Task that produced the script.")
     artifact: Optional[str] = Field(default=None, description="Export artifact identifier.")
 
-    title: Optional[str] = Field(default=None, description="User-facing script title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="User-facing script title.",
+    )
     format: ScriptFormat = Field(
         default=ScriptFormat.TEXT_PLAIN, description="Script content format."
     )

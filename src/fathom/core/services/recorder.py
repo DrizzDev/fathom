@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import timedelta
 from hashlib import sha256
 from logging import getLogger
-from typing import Awaitable, Callable, Dict, Optional, TypeVar
+from typing import Awaitable, Callable, Dict, Optional, Set, TypeVar
 from uuid import uuid4
 
 from pydantic import JsonValue
@@ -27,7 +28,6 @@ from fathom.constants.collaboration import (
 from fathom.constants.conversation import (
     RECORDER_BUILDER,
     REQUEST_EXPIRY_DAYS,
-    THREAD_TITLE_MAX_LENGTH,
     EntryKind,
     RecorderEvent,
 )
@@ -35,6 +35,7 @@ from fathom.constants.events import FathomEvent
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import InteractionError, ThreadConflictError
 from fathom.core.services.conversation import ConversationService
+from fathom.core.services.conversation.title import TitleComposer
 from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.conversation import (
     AddActor,
@@ -48,6 +49,7 @@ from fathom.schemas.conversation import (
     TaskNodeView,
     TaskStart,
     ThreadCreate,
+    TitleContext,
 )
 from fathom.schemas.interaction import (
     BeginRequest,
@@ -152,10 +154,11 @@ class ConversationRecorder:
         *,
         telemetry: TelemetryPort,
         conversation: ConversationService,
+        title: Optional[TitleComposer] = None,
         identifier: Optional[Callable[[], str]] = None,
     ) -> None:
         """
-        Initialize the recorder with a conversation service and telemetry port.
+        Initialize the recorder with conversation services and telemetry.
         """
 
         self.__logger = getLogger(".".join((__name__, self.__class__.__name__)))
@@ -163,6 +166,9 @@ class ConversationRecorder:
         self.__telemetry = telemetry
         self.__conversation = conversation
         self.__identifier = identifier or (lambda: str(uuid4()))
+
+        self.__title = title or TitleComposer()
+        self.__background_tasks: Set[asyncio.Task[None]] = set()
 
         self.__health = RecorderHealth()
 
@@ -184,6 +190,27 @@ class ConversationRecorder:
             do=lambda: self.__do_record_run_started(run=run),
             envelope_for=lambda handle: self.__envelope_run_started(run=run, handle=handle),
         )
+
+    async def drain_background_tasks(self) -> None:
+        """
+        Await recorder-owned background work without failing the run.
+        """
+
+        pending = [task for task in self.__background_tasks if not task.done()]
+        if not pending:
+            return
+
+        results = await asyncio.gather(*pending, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                self.__logger.exception(
+                    "Conversation recorder background task failed",
+                    extra={
+                        "event": "conversation.recorder.background.failed",
+                        "error": str(result),
+                        "error.type": type(result).__name__,
+                    },
+                )
 
     async def record_run_finished(self, *, completion: Completion) -> Optional[EntryView]:
         """
@@ -542,6 +569,8 @@ class ConversationRecorder:
                 execution=execution,
             )
 
+        self.__schedule_title(run=run)
+
         return Handle(
             task=task,
             request=request,
@@ -685,7 +714,7 @@ class ConversationRecorder:
                         workspace=run.workspace,
                         member=members.requester,
                         role=MembershipRole.REQUESTER,
-                        title=self.__title(intent=run.intent),
+                        title=self.__title.initial(context=self.__title_context(run=run)),
                     )
                 )
                 return
@@ -718,17 +747,70 @@ class ConversationRecorder:
             )
         )
 
+    def __schedule_title(self, *, run: Run) -> None:
+        """
+        Schedule a non-blocking title update for the run thread.
+        """
+
+        task = asyncio.create_task(self.__record_title(run=run))
+
+        self.__background_tasks.add(task)
+        task.add_done_callback(self.__background_tasks.discard)
+
+    async def __record_title(self, *, run: Run) -> None:
+        """
+        Compose and persist the conversation title after run-start records exist.
+        """
+
+        try:
+            title = await self.__compose_title(run=run)
+            await self.__conversation.title(
+                title=title,
+                source="intent",
+                tenant=run.tenant,
+                thread=run.thread,
+                updated=run.created,
+                operator=run.requester.id,
+            )
+        except Exception as exception:
+            self.__logger.warning(
+                "Conversation title update failed",
+                extra={
+                    "event": "conversation.title.update.failed",
+                    "workflow.id": run.workflow,
+                    "conversation.id": run.thread,
+                    "error": str(exception),
+                    "error.type": type(exception).__name__,
+                },
+            )
+
+    async def __compose_title(self, *, run: Run) -> str:
+        """
+        Compose a background title with a deterministic fallback.
+        """
+
+        try:
+            return await self.__title.compose(context=self.__title_context(run=run))
+        except Exception as exception:
+            self.__logger.exception(
+                "Conversation title generation failed; using fallback title",
+                extra={
+                    "event": "conversation.title.generation.failed",
+                    "workflow.id": run.workflow,
+                    "conversation.id": run.thread,
+                    "error": str(exception),
+                    "error.type": type(exception).__name__,
+                },
+            )
+            return self.__title.initial(context=self.__title_context(run=run))
+
     @staticmethod
-    def __title(*, intent: str) -> str:
+    def __title_context(*, run: Run) -> TitleContext:
         """
-        Return a stored thread title that fits the conversation title boundary.
+        Return title context from a runtime run.
         """
 
-        title = " ".join(intent.split())
-        if len(title) <= THREAD_TITLE_MAX_LENGTH:
-            return title
-
-        return title[:THREAD_TITLE_MAX_LENGTH].rstrip()
+        return TitleContext(intent=run.intent, package=run.package)
 
     async def __thread_exists(self, *, run: Run) -> bool:
         """
@@ -1059,12 +1141,14 @@ class ConversationRecorder:
         Persist reusable script content and version audit metadata.
         """
 
+        title = self.__title.normalize(value=output.title) if output.title is not None else None
+
         return await self.__conversation.save(
             request=ScriptSave(
+                title=title,
                 id=output.id,
                 task=output.task,
                 actor=output.actor,
-                title=output.title,
                 thread=output.thread,
                 tenant=output.tenant,
                 source=output.source,

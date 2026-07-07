@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set, Tuple
 
 from fathom.constants.authoring import AuthoringKind, AuthoringStatus
-from fathom.constants.generation import ScriptSource
+from fathom.constants.generation import ScriptCommandRole, ScriptSource
 from fathom.schemas.authoring import AuthoringBaseline, AuthoringBaselineCommand
 from fathom.schemas.authoring.draft import AuthoringDraft
-from fathom.schemas.flow import Evidence, Issue
+from fathom.schemas.flow import Evidence, EvidenceStep, Issue
 from fathom.schemas.generation import (
     CompletionValidation,
     GenerationResult,
@@ -42,6 +42,7 @@ class StepDraftComposer:
         commands = self.__with_completion(
             commands=commands, completion=completion, evidence=evidence
         )
+        missing = self.__missing_steps(commands=commands, evidence=evidence)
 
         lines = self.__lines(commands=commands)
 
@@ -50,11 +51,15 @@ class StepDraftComposer:
             return None
 
         reason = evidence.reason
-        partial = evidence.partial or completion.missing
+        partial = evidence.partial or completion.missing or bool(missing)
 
         if completion.missing:
             reason = (
                 reason or "Completion assertions could not be rendered into a terminal validation."
+            )
+        elif missing:
+            reason = reason or (
+                "Some executed steps were omitted because no grounded script command was available."
             )
 
         return GenerationResult(
@@ -138,13 +143,13 @@ class StepDraftComposer:
                     continue
 
                 source_steps = tuple(step for step in command.source_steps if step not in covered)
-                if not source_steps:
+                if not source_steps and command.role is not ScriptCommandRole.LAUNCH:
                     continue
 
                 if len(source_steps) != len(command.source_steps):
                     continue
 
-                if self.__merged(command=command):
+                if self.__stable(command=command):
                     commands.append(self.__baseline_command(command=command))
                     covered.update(command.source_steps)
                     continue
@@ -160,7 +165,13 @@ class StepDraftComposer:
                 covered.add(step_index)
 
         for step in evidence.steps:
+            if step.launch is not None:
+                continue
+
             if step.index in covered:
+                continue
+
+            if self.__guarded_step(step=step):
                 continue
 
             draft = drafts.get(step.index)
@@ -169,12 +180,20 @@ class StepDraftComposer:
 
         return tuple(commands)
 
+    @staticmethod
+    def __guarded_step(*, step: EvidenceStep) -> bool:
+        """
+        Return whether a step needs IF structure to remain replayable.
+        """
+
+        return step.guard.conditional
+
     def __with_completion(
         self,
         *,
-        commands: Tuple[ScriptCommand, ...],
-        completion: CompletionValidation,
         evidence: Evidence,
+        completion: CompletionValidation,
+        commands: Tuple[ScriptCommand, ...],
     ) -> Tuple[ScriptCommand, ...]:
         """
         Return commands with required terminal validation added or provenance-upgraded once.
@@ -184,6 +203,7 @@ class StepDraftComposer:
             return commands
 
         commands = self.__without_redundant_validation(commands=commands, evidence=evidence)
+
         matched: Set[str] = set()
         updated: List[ScriptCommand] = []
 
@@ -313,6 +333,7 @@ class StepDraftComposer:
 
         return ScriptCommand(
             text=command.text,
+            role=command.role,
             structural=command.structural,
             source_steps=command.source_steps,
             verified_by=("execution",) if command.source_steps else (),
@@ -359,9 +380,28 @@ class StepDraftComposer:
         return tuple(advisories)
 
     @staticmethod
-    def __merged(*, command: AuthoringBaselineCommand) -> bool:
+    def __missing_steps(
+        *, commands: Tuple[ScriptCommand, ...], evidence: Evidence
+    ) -> Tuple[int, ...]:
         """
-        Return whether one baseline command represents multiple evidence steps.
+        Return non-launch evidence steps not represented by the composed commands.
         """
 
-        return len(command.source_steps) > 1
+        represented = {step for command in commands for step in command.source_steps}
+        return tuple(
+            step.index
+            for step in evidence.steps
+            if step.launch is None and step.index not in represented
+        )
+
+    @staticmethod
+    def __stable(*, command: AuthoringBaselineCommand) -> bool:
+        """
+        Return whether a baseline command must not be replaced by a step draft.
+        """
+
+        return (
+            command.role is ScriptCommandRole.LAUNCH
+            or command.role is ScriptCommandRole.BRANCH
+            or len(command.source_steps) > 1
+        )

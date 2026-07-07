@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ from fathom.constants.storage import PostgresMigrationMode
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import InteractionError, ThreadConflictError, ThreadNotFoundError
 from fathom.core.services.conversation import ConversationService, Ports
+from fathom.core.services.conversation.title import TitleComposer
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.telemetry import TelemetryPort
@@ -54,6 +56,7 @@ from fathom.schemas.conversation import (
     ThreadView,
     TimelineQuery,
     TimelineView,
+    TitleContext,
 )
 from fathom.schemas.interaction import (
     BeginRequest,
@@ -89,6 +92,7 @@ from fathom.schemas.recording import (
     Output,
     Question,
     Run,
+    ScriptOutput,
     Step,
     StepCompletion,
     Usage,
@@ -157,6 +161,44 @@ class _StubTelemetry(TelemetryPort):
         return list(self.__events)
 
 
+class _BlockingTitleComposer(TitleComposer):
+    """
+    Title composer test double that waits until the test releases it.
+    """
+
+    def __init__(self) -> None:
+        """
+        Create release markers for the asynchronous title job.
+        """
+
+        super().__init__()
+        self.__released = asyncio.Event()
+
+    @property
+    def released(self) -> asyncio.Event:
+        """
+        Return the event controlling completion of the title job.
+        """
+
+        return self.__released
+
+    def release(self) -> None:
+        """
+        Allow the blocked compose call to finish.
+        """
+
+        self.__released.set()
+
+    async def compose(self, *, context: TitleContext) -> str:
+        """
+        Wait for release before returning a generated title.
+        """
+
+        _ = context
+        await self.__released.wait()
+        return "Generated Conversation Title"
+
+
 class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
     """
     Unit tests for host-neutral runtime conversation recording.
@@ -198,6 +240,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         Close the ORM adapter and drop the disposable schema.
         """
 
+        await self.__recorder.drain_background_tasks()
         await self.__interaction.aclose()
         await self.__schema.__aexit__(
             exception_type=None,
@@ -324,15 +367,16 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handle.execution, execution.identity.id)
         self.assertEqual("workflow-1", execution.workflow_id)
 
-    async def test_record_run_started_truncates_thread_title_not_intent(self) -> None:
+    async def test_record_run_started_uses_neutral_fallback_title_not_intent(self) -> None:
         """
-        Long run intents fit the thread-title boundary while preserving intent payloads.
+        Long run intents do not become thread titles while preserving intent payloads.
         """
 
         intent = " ".join(("Open Instamart, change the address, add products," for _ in range(12)))
         run = self.__run().model_copy(update={"intent": intent})
 
         handle = await self.__recorder.record_run_started(run=run)
+        await self.__recorder.drain_background_tasks()
 
         assert handle is not None
         threads = await self.__interaction.list_threads(
@@ -350,11 +394,11 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(1, len(threads.items))
-        title = threads.items[0].title
-        self.assertIsNotNone(title)
-        assert title is not None
-        self.assertLessEqual(len(title), THREAD_TITLE_MAX_LENGTH)
-        self.assertEqual(intent[:THREAD_TITLE_MAX_LENGTH].rstrip(), title)
+        stored_title = threads.items[0].title
+        self.assertIsNotNone(stored_title)
+        assert stored_title is not None
+        self.assertLessEqual(len(stored_title), THREAD_TITLE_MAX_LENGTH)
+        self.assertEqual("Authoring com.example", stored_title)
 
         assert execution is not None
         self.assertEqual(intent, execution.intent)
@@ -362,6 +406,36 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(body, dict)
         assert isinstance(body, dict)
         self.assertEqual(intent, body["intent"])
+
+    async def test_record_run_started_does_not_wait_for_generated_title(self) -> None:
+        """
+        Run-start recording returns before the background title composer finishes.
+        """
+
+        title = _BlockingTitleComposer()
+        recorder = ConversationRecorder(
+            conversation=self.__conversation,
+            telemetry=self.__telemetry,
+            title=title,
+        )
+
+        handle = await recorder.record_run_started(run=self.__run())
+
+        assert handle is not None
+        self.assertFalse(title.released.is_set())
+        threads_before = await self.__interaction.list_threads(
+            query=ThreadListQuery(tenant="tenant-1", actor="human-1")
+        )
+        self.assertEqual(1, len(threads_before.items))
+        self.assertEqual("Authoring com.example", threads_before.items[0].title)
+
+        title.release()
+        await recorder.drain_background_tasks()
+        threads_after = await self.__interaction.list_threads(
+            query=ThreadListQuery(tenant="tenant-1", actor="human-1")
+        )
+
+        self.assertEqual("Generated Conversation Title", threads_after.items[0].title)
 
     async def test_explicit_summary_and_detail_are_preserved_on_result_body(self) -> None:
         """
@@ -909,6 +983,31 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("artifact-trace-1", self.__ids(timeline=debug))
+
+    async def test_record_script_normalizes_overlong_title(self) -> None:
+        """
+        Script recording bounds generated titles before constructing ledger requests.
+        """
+
+        await self.__recorder.record_run_started(run=self.__run())
+        script = await self.__recorder.record_script(
+            output=ScriptOutput(
+                id="script-1",
+                tenant="tenant-1",
+                thread="thread-1",
+                execution="execution-run-1",
+                task="task-run-1",
+                actor="agent-1",
+                title="\n".join("Generated checkout script title" for _ in range(20)),
+                content="OPEN_APP: com.example",
+                created=self.__now.replace(second=5),
+            )
+        )
+
+        assert script is not None
+        self.assertIsNotNone(script.title)
+        assert script.title is not None
+        self.assertLessEqual(len(script.title), THREAD_TITLE_MAX_LENGTH)
 
     async def test_record_run_failed_rejects_successful_completion(self) -> None:
         """

@@ -49,8 +49,8 @@ SCRIPT_CONTENT_FILENAME: Final[str] = "script.txt"
 # the query reaches the storage adapter; keeps unbounded scans off the floor.
 THREAD_TITLE_PREFIX_MAX_LENGTH: Final[int] = 200
 
-# Upper bound enforced on stored thread titles at the schema boundary.
-THREAD_TITLE_MAX_LENGTH: Final[int] = 256
+# Upper bound enforced by the ledger for stored conversation and script titles.
+THREAD_TITLE_MAX_LENGTH: Final[int] = 200
 
 # Opaque cursor envelope version. Bumped when the cursor payload format changes
 # in a way that older cursors cannot be decoded.

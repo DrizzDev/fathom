@@ -250,6 +250,7 @@ class RecorderResilienceHarness:
         """
 
         assert self.__admin is not None
+
         definition = await self.__admin.fetchval(
             "SELECT pg_get_constraintdef(constraint_record.oid) "
             "FROM pg_constraint constraint_record "
@@ -275,8 +276,8 @@ class RunFactory:
         *,
         tenant: str,
         operator: str,
-        workflow: Optional[str] = None,
         thread: Optional[str] = None,
+        workflow: Optional[str] = None,
         created: Optional[datetime] = None,
     ) -> Run:
         """
@@ -284,22 +285,22 @@ class RunFactory:
         """
 
         return Run(
+            package=None,
             tenant=tenant,
             workspace=None,
             thread=thread or str(uuid4()),
-            created=created or datetime(2026, 7, 1, tzinfo=timezone.utc),
-            workflow=(identifier := workflow or str(uuid4())),
-            execution=InteractionIdentity.stable(scope="execution", parts=(identifier,)),
             intent="open the app and sign in",
-            package=None,
+            workflow=(identifier := workflow or str(uuid4())),
             metadata={"starting_package": "com.sec.android.app.launcher"},
             requester=ActorInput(id=operator, name=operator, kind=ActorKind.HUMAN),
+            created=created or datetime(2026, 7, 1, tzinfo=timezone.utc),
+            execution=InteractionIdentity.stable(scope="execution", parts=(identifier,)),
             responder=ActorInput(
+                provider="gemini",
                 id="agent:fathom",
                 name="agent:fathom",
                 kind=ActorKind.AGENT,
                 model="gemini-3-flash-preview",
-                provider="gemini",
             ),
         )
 
@@ -311,7 +312,7 @@ class TestRecorderMultiTenantResilience:
 
     __TENANTS: Tuple[Tuple[str, str], ...] = (
         ("1", "alice@drizz.dev"),
-        ("343", "avinash@salaryse.com"),
+        ("343", "aman@drizz.com"),
         ("500", "bob@othercorp.com"),
         ("900", "carol@newco.com"),
         ("1201", "dan@scaleup.io"),
@@ -400,7 +401,7 @@ class TestRecorderRetryReplay:
                     thread=thread,
                     created=started,
                     workflow=workflow,
-                    operator="avinash@salaryse.com",
+                    operator="aman@drizz.com",
                 )
 
             # Two independent runs with identical content, as a deterministic retry
@@ -431,7 +432,7 @@ class TestRecorderBestEffort:
             recorder = harness.recorder()
 
             handle = await recorder.record_run_started(
-                run=RunFactory.build(tenant="343", operator="avinash@salaryse.com")
+                run=RunFactory.build(tenant="343", operator="aman@drizz.com")
             )
 
             assert handle is None
@@ -444,11 +445,11 @@ class Checkpoint:
     """
 
     __TENANT = "343"
-    __THREAD = "conversation-343"
-    __WORKFLOW = "workflow-343"
-    __EXECUTION = "execution-343"
     __TASK = "task-343"
     __ACTOR = "agent:fathom"
+    __WORKFLOW = "workflow-343"
+    __EXECUTION = "execution-343"
+    __THREAD = "conversation-343"
     __NOW = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
     @classmethod
@@ -472,10 +473,10 @@ class Checkpoint:
             tenant=cls.__TENANT,
             thread=cls.__THREAD,
             workspace=None,
+            responder=cls.__ACTOR,
             workflow=cls.__WORKFLOW,
             execution=cls.__EXECUTION,
-            requester="avinash@salaryse.com",
-            responder=cls.__ACTOR,
+            requester="aman@drizz.com",
         )
 
     @classmethod
@@ -540,7 +541,7 @@ class Checkpoint:
             tenant=cls.__TENANT,
             thread=cls.__THREAD,
             workflow=cls.__WORKFLOW,
-            operator="avinash@salaryse.com",
+            operator="aman@drizz.com",
         )
 
     @classmethod
@@ -550,13 +551,13 @@ class Checkpoint:
         """
 
         return Analysis(
+            step=1,
             **cls.__scope(),
-            id="message-analysis-343",
+            created=cls.__NOW,
             actor=cls.__ACTOR,
+            id="message-analysis-343",
             execution=cls.__EXECUTION,
             summary="tap the login button",
-            step=1,
-            created=cls.__NOW,
         )
 
     @classmethod
@@ -567,11 +568,11 @@ class Checkpoint:
 
         return Question(
             **cls.__scope(),
-            id="message-question-343",
             actor=cls.__ACTOR,
+            created=cls.__NOW,
+            id="message-question-343",
             execution=cls.__EXECUTION,
             body={"text": "which account?"},
-            created=cls.__NOW,
         )
 
     @classmethod
@@ -582,12 +583,12 @@ class Checkpoint:
 
         return Answer(
             **cls.__scope(),
+            created=cls.__NOW,
             id="message-answer-343",
-            actor="avinash@salaryse.com",
+            actor="aman@drizz.com",
             execution=cls.__EXECUTION,
             body={"text": "the primary one"},
             question="message-question-343",
-            created=cls.__NOW,
         )
 
     @classmethod
@@ -599,11 +600,11 @@ class Checkpoint:
         return Output(
             **cls.__scope(),
             id="artifact-343",
-            execution=cls.__EXECUTION,
+            created=cls.__NOW,
             kind=ArtifactKind.TRACE,
             uri="/tmp/trace-343.json",
+            execution=cls.__EXECUTION,
             backend=ArtifactBackend.LOCAL,
-            created=cls.__NOW,
         )
 
     @classmethod

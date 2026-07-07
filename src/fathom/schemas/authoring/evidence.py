@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 from pydantic import Field, model_validator
 
 from fathom.constants.authoring import AuthoringTrust
+from fathom.constants.generation import ScriptCommandRole
 from fathom.constants.state import RunOutcome
 from fathom.schemas.authoring.artifact import AuthoringArtifactReference
 from fathom.schemas.authoring.draft import AuthoringDraft
@@ -56,6 +57,10 @@ class AuthoringBaselineCommand(SealedModel):
     """
 
     text: str = Field(min_length=1, description="Rendered baseline command text.")
+    role: ScriptCommandRole = Field(
+        default=ScriptCommandRole.ACTION,
+        description="Semantic command role used by fallback composition.",
+    )
     source_steps: Tuple[int, ...] = Field(
         default_factory=tuple, description="Evidence step numbers represented by the command."
     )

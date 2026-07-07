@@ -8,7 +8,7 @@ from fathom.core.services.generation.classifier import LauncherClassifier
 
 class LauncherClassifierTest(unittest.TestCase):
     """
-    Cover launcher recognition across every known launcher package and injected sets.
+    Cover package role recognition across known and injected package sets.
     """
 
     def setUp(self) -> None:

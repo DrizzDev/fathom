@@ -18,9 +18,12 @@ class Distiller:
     __DISMISSAL_ACTION = "tap"
     __PARTIAL_REASON = "No successful goal validation was recorded; the run did not complete."
     __LOOP_REASON = "Recovery thrash distilled and no successful goal validation was recorded."
+
     __DISMISSAL_TARGETS = frozenset({"close", "dismiss", "x"})
-    __DISMISSAL_TERMS = frozenset({"close", "closing", "dismiss", "dismissing", "overlay", "blocker"})
     __INTENTIONAL_DISMISSAL_TERMS = frozenset({"close", "dismiss"})
+    __DISMISSAL_TERMS = frozenset(
+        {"close", "closing", "dismiss", "dismissing", "overlay", "blocker"}
+    )
 
     def distill(self, *, records: Sequence[StepRecord]) -> Distillation:
         """

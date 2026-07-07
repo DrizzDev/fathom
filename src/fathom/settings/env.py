@@ -137,7 +137,7 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
-    # Interaction storage tunables
+    # Interaction storage tunable's
     interaction_backend: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(

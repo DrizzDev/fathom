@@ -125,7 +125,7 @@ class ThreadPort(ABC):
     @abstractmethod
     async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
         """
-        Set a thread title when the stored title is empty.
+        Set or replace a thread title.
         """
 
         raise NotImplementedError

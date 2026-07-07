@@ -125,7 +125,7 @@ class TestThreadRepository:
             with pytest.raises(InteractionError, match="Actor does not exist"):
                 await InteractionRepositoryFactory().threads().create_thread(request=request)
 
-    async def test_set_thread_title_only_when_empty(self) -> None:
+    async def test_set_thread_title_replaces_existing_title(self) -> None:
         async with InteractionPostgresSchema(prefix="conversation_thread_repository"):
             request = self.__request(title=None)
             repository = InteractionRepositoryFactory().threads()
@@ -156,7 +156,7 @@ class TestThreadRepository:
 
             assert first.title == "First title"
             assert first.metadata.entries["title"]["source"] == "intent"
-            assert second.title == "First title"
+            assert second.title == "Second title"
 
     async def test_archive_unarchive_and_delete_filter_public_reads(self) -> None:
         async with InteractionPostgresSchema(prefix="conversation_thread_repository"):

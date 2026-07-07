@@ -13,7 +13,6 @@ from fathom.constants.conversation import (
     SHA256_HEX_LENGTH,
     SUMMARY_MESSAGE_LIMIT,
     SUMMARY_SCRIPT_LIMIT,
-    THREAD_TITLE_MAX_LENGTH,
     TIMELINE_MAX_LIMIT,
     EntryKind,
     Visibility,
@@ -28,6 +27,7 @@ from fathom.core.services.conversation.access import ConversationAccessGuard
 from fathom.core.services.conversation.metadata import ThreadMetadataProjector
 from fathom.core.services.conversation.ports import ConversationPorts
 from fathom.core.services.conversation.summary import SummaryLoader
+from fathom.core.services.conversation.title import TitleComposer
 from fathom.interfaces.signing import SigningPort
 from fathom.schemas import conversation as ConversationSchemas
 from fathom.schemas import interaction as InteractionSchemas
@@ -48,6 +48,7 @@ class ConversationService:
         signer: SigningPort,
         ports: ConversationPorts,
         timeline: Optional[TimelineComposer] = None,
+        title: Optional[TitleComposer] = None,
     ) -> None:
         """
         Initialize the service with explicit durable ledger ports and a signer.
@@ -64,6 +65,7 @@ class ConversationService:
         self.__summary = SummaryLoader()
         self.__metadata = ThreadMetadataProjector()
         self.__timeline = timeline or TimelineComposer()
+        self.__title = title or TitleComposer()
 
     @asynccontextmanager
     async def atomic(self) -> AsyncGenerator[None, None]:
@@ -601,18 +603,17 @@ class ConversationService:
         source: str = "intent",
     ) -> ConversationSchemas.ThreadView:
         """
-        Set a thread title only when the stored title is null. Idempotent — a non-null title is preserved.
-        The host calls this on the first crawler-intent for a fresh conversation so the chat UI gets a title without the client having to supply one.
+        Set or replace a thread title after access validation.
         """
 
         await self.__access.require(tenant=tenant, thread=thread, operator=operator)
 
         result = await self.__ports.threads.title(
             request=InteractionSchemas.SetThreadTitle(
-                title=self.__title(value=title),
                 tenant=tenant,
                 thread=thread,
                 updated_at=updated,
+                title=self.__title.normalize(value=title),
                 metadata=InteractionSchemas.Metadata(
                     entries={
                         "source": source,
@@ -622,18 +623,6 @@ class ConversationService:
             )
         )
         return self.__thread_view(thread=result)
-
-    @staticmethod
-    def __title(*, value: str) -> str:
-        """
-        Return a stored thread title that fits the conversation title boundary.
-        """
-
-        title = " ".join(value.split())
-        if len(title) <= THREAD_TITLE_MAX_LENGTH:
-            return title
-
-        return title[:THREAD_TITLE_MAX_LENGTH].rstrip()
 
     async def list(
         self, *, query: ConversationSchemas.ConversationListQuery

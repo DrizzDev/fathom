@@ -119,9 +119,7 @@ class PostAction:
                     "error.kind": type(exception).__name__,
                 },
             )
-            await self.__context.telemetry.warning(
-                "Observe: Post-action observation timed out"
-            )
+            await self.__context.telemetry.warning("Observe: Post-action observation timed out")
             return None, None, pre_hash, context.package, None
         except Exception as exception:
             await self.__context.telemetry.warning(

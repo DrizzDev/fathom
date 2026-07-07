@@ -6,11 +6,18 @@ from typing import Tuple
 from fathom.authoring.application.composer import StepDraftComposer
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.dialect import DialectName
-from fathom.constants.flow import AssertionSource, CheckKind
-from fathom.constants.generation import ScriptSource
+from fathom.constants.flow import AssertionSource, CheckKind, LaunchProvenance
+from fathom.constants.generation import ScriptCommandRole, ScriptSource
 from fathom.schemas.authoring import AuthoringArtifact, AuthoringBaseline, AuthoringBaselineCommand
 from fathom.schemas.authoring.draft import AuthoringDraft
-from fathom.schemas.flow import CompletionAssertion, Evidence, EvidenceStep, StepOutcome
+from fathom.schemas.flow import (
+    CompletionAssertion,
+    Evidence,
+    EvidenceStep,
+    StepGuard,
+    StepLaunch,
+    StepOutcome,
+)
 from fathom.schemas.generation import CompletionValidation
 
 
@@ -139,6 +146,124 @@ class StepDraftComposerTest(unittest.TestCase):
             [(), ("execution",), ()],
         )
 
+    def test_grounded_launch_baseline_is_not_duplicated_by_step_draft(self) -> None:
+        """
+        STEP_DRAFTS keeps the deterministic launch scaffold and skips launch drafts.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="login",
+            goal="login",
+            package="com.healthtap.userhtexpress",
+            partial=False,
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    event="launch",
+                    action="launch",
+                    launch=StepLaunch(
+                        package="com.healthtap.userhtexpress",
+                        provenance=LaunchProvenance.LAUNCHER_TRANSITION,
+                        source_steps=(0,),
+                    ),
+                ),
+                EvidenceStep(index=1, event="action", action="type"),
+            ),
+        )
+        baseline = AuthoringBaseline(
+            content="\n".join(
+                (
+                    "OPEN_APP: com.healthtap.userhtexpress",
+                    'Type "user@example.com" into Email field',
+                )
+            ),
+            partial=False,
+            commands=(
+                AuthoringBaselineCommand(
+                    text="OPEN_APP: com.healthtap.userhtexpress",
+                    role=ScriptCommandRole.LAUNCH,
+                    source_steps=(0,),
+                ),
+                AuthoringBaselineCommand(
+                    text='Type "user@example.com" into Email field',
+                    source_steps=(1,),
+                ),
+            ),
+        )
+        drafts = (
+            self.__draft(step=0, text="OPEN_APP: com.healthtap.userhtexpress"),
+            self.__draft(step=1, text='Type "user@example.com" into Email field'),
+        )
+
+        result = composer.compose(drafts=drafts, evidence=evidence, baseline=baseline)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.text.splitlines().count("OPEN_APP: com.healthtap.userhtexpress"), 1)
+
+    def test_warm_start_launch_baseline_is_kept_without_source_steps(self) -> None:
+        """
+        A synthetic launch without source steps still remains the launch scaffold.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="login",
+            goal="login",
+            package="com.healthtap.userhtexpress",
+            partial=False,
+            steps=(
+                EvidenceStep(
+                    index=0,
+                    event="launch",
+                    action="launch",
+                    launch=StepLaunch(
+                        package="com.healthtap.userhtexpress",
+                        provenance=LaunchProvenance.SYNTHETIC_WARM_START,
+                    ),
+                ),
+                EvidenceStep(index=1, event="action", action="type"),
+            ),
+        )
+        baseline = AuthoringBaseline(
+            content="\n".join(
+                (
+                    "OPEN_APP: com.healthtap.userhtexpress",
+                    'Type "user@example.com" into Email field',
+                )
+            ),
+            partial=False,
+            commands=(
+                AuthoringBaselineCommand(
+                    text="OPEN_APP: com.healthtap.userhtexpress",
+                    role=ScriptCommandRole.LAUNCH,
+                ),
+                AuthoringBaselineCommand(
+                    text='Type "user@example.com" into Email field',
+                    source_steps=(1,),
+                ),
+            ),
+        )
+        drafts = (
+            self.__draft(step=0, text="OPEN_APP: com.healthtap.userhtexpress"),
+            self.__draft(step=1, text='Type "user@example.com" into Email field'),
+        )
+
+        result = composer.compose(drafts=drafts, evidence=evidence, baseline=baseline)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.text,
+            "\n".join(
+                (
+                    "OPEN_APP: com.healthtap.userhtexpress",
+                    'Type "user@example.com" into Email field',
+                )
+            ),
+        )
+
     def test_extra_draft_lines_do_not_inherit_step_provenance(self) -> None:
         """
         Multi-line step drafts cannot launder invented follow-up commands as executed.
@@ -232,6 +357,80 @@ class StepDraftComposerTest(unittest.TestCase):
                 )
             ),
         )
+
+    def test_guarded_baseline_command_is_not_replaced_by_bare_step_draft(self) -> None:
+        """
+        Conditional baseline structure is preserved over an unguarded step draft.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="login",
+            goal="login",
+            package="com.example",
+            partial=True,
+            steps=(
+                EvidenceStep(index=1, event="action", action="tap"),
+                EvidenceStep(index=2, event="action", action="tap"),
+            ),
+        )
+        guarded = "\n".join(
+            (
+                "IF Not now popup is visible",
+                "{",
+                "    Tap on Not now button",
+                "}",
+            )
+        )
+        baseline = AuthoringBaseline(
+            content=guarded,
+            partial=True,
+            commands=(
+                AuthoringBaselineCommand(
+                    text=guarded,
+                    role=ScriptCommandRole.BRANCH,
+                    source_steps=(1, 2),
+                ),
+            ),
+        )
+        drafts = (self.__draft(step=2, text="Tap on Not now button"),)
+
+        result = composer.compose(drafts=drafts, evidence=evidence, baseline=baseline)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.text, guarded)
+        self.assertEqual(result.review.commands[0].role, ScriptCommandRole.BRANCH)
+        self.assertEqual(result.review.commands[0].source_steps, (1, 2))
+
+    def test_conditional_step_draft_without_baseline_is_omitted_honestly(self) -> None:
+        """
+        A conditional step draft is not published as an unguarded command without baseline structure.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="login",
+            goal="login",
+            package="com.example",
+            partial=False,
+            steps=(
+                EvidenceStep(
+                    index=2,
+                    event="action",
+                    action="tap",
+                    guard=StepGuard(
+                        conditional=True,
+                        condition="Not now popup is visible",
+                    ),
+                ),
+            ),
+        )
+        drafts = (self.__draft(step=2, text="Tap on Not now button"),)
+
+        result = composer.compose(drafts=drafts, evidence=evidence)
+
+        self.assertIsNone(result)
 
     def test_compose_appends_rendered_terminal_validation(self) -> None:
         """

@@ -26,6 +26,17 @@ class ScriptSource(StrEnum):
     STEP_DRAFTS = "STEP_DRAFTS"
 
 
+class ScriptCommandRole(StrEnum):
+    """
+    Semantic role of one rendered script command.
+    """
+
+    ACTION = "ACTION"
+    BRANCH = "BRANCH"
+    CHECK = "CHECK"
+    LAUNCH = "LAUNCH"
+
+
 class ScriptStatus(StrEnum):
     """
     Whether a script artifact was produced or generation failed.

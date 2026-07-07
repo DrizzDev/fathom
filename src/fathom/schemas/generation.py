@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 from pydantic import Field, model_validator
 
 from fathom.constants.flow import LaunchProvenance
-from fathom.constants.generation import ScriptSource, ScriptStatus, SkipReason
+from fathom.constants.generation import ScriptCommandRole, ScriptSource, ScriptStatus, SkipReason
 from fathom.schemas.base import SealedModel
 from fathom.schemas.flow import Flow, Issue
 from fathom.schemas.steps import StepRecord
@@ -126,6 +126,10 @@ class ScriptCommand(SealedModel):
     """
 
     text: str = Field(min_length=1, description="Rendered command text for one flow node.")
+    role: ScriptCommandRole = Field(
+        default=ScriptCommandRole.ACTION,
+        description="Semantic command role used by fallback composition.",
+    )
     source_steps: Tuple[int, ...] = Field(
         default_factory=tuple, description="Evidence steps represented by this command."
     )

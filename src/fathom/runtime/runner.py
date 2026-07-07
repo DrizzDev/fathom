@@ -44,6 +44,7 @@ from fathom.core.exceptions import IdentityError, InteractionError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.artifacts import ArtifactCatalog
 from fathom.core.services.conversation import ConversationService, Ports
+from fathom.core.services.conversation.title import TitleComposer
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
@@ -170,15 +171,16 @@ class FathomRunner:
 
         self.__qualifier = qualifier
         self.__interaction = interaction
+        self.__config = config or FathomConfiguration()
 
         self.__runtime_configuration = runtime_configuration
+
         self.__recorder = self.__recorder_for(interaction=interaction)
 
         self.__path_manager = path_manager
 
         self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
 
-        self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
 
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
@@ -374,6 +376,7 @@ class FathomRunner:
 
         if self.__recorder is not None:
             self.__recorder.health.reset()
+
             handle = await self.__recorder.record_run_started(
                 run=Run(
                     tenant=tenant,
@@ -921,6 +924,12 @@ class FathomRunner:
             except Exception as exception:
                 logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
 
+        if self.__recorder is not None:
+            try:
+                await self.__recorder.drain_background_tasks()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] recorder drain failed: {exception}")
+
         # 2. LLM — delete cached content, close clients
         try:
             await self.__llm.cleanup()
@@ -1312,6 +1321,7 @@ class FathomRunner:
                 signer=NoopSigner(),
                 ports=self.__ports(interaction=interaction),
             ),
+            title=TitleComposer(llm=self.__llm),
         )
 
     def __ports(self, *, interaction: InteractionPort) -> Ports:

@@ -134,6 +134,49 @@ class RunTraceNormalizerTest(unittest.TestCase):
         self.assertEqual(len(self.__launches(entries=entries)), 1)
         self.assertEqual(self.__kept(entries=entries), (0, 1, 2))
 
+    def test_app_triggered_external_surface_stays_in_flow(self) -> None:
+        """
+        An app-triggered external surface is kept as a step, not a second OPEN_APP.
+        """
+
+        records = (
+            self.__record(number=0, execution="com.healthtap.userhtexpress"),
+            self.__record(
+                number=1,
+                execution="com.healthtap.userhtexpress",
+                activity="com.android.chrome",
+            ),
+            self.__record(number=2, execution="com.android.chrome"),
+        )
+
+        entries = self.__normalizer.normalize(records=records).entries
+        launches = self.__launches(entries=entries)
+
+        self.assertEqual([marker.package for marker in launches], ["com.healthtap.userhtexpress"])
+        self.assertEqual(self.__kept(entries=entries), (0, 1, 2))
+
+    def test_launcher_opened_browser_remains_a_real_launch(self) -> None:
+        """
+        An explicit browser app launch is still represented as OPEN_APP.
+        """
+
+        records = (
+            self.__record(number=0, execution="com.healthtap.userhtexpress"),
+            self.__record(
+                number=1,
+                execution=self.__launcher(),
+                activity="com.android.chrome",
+            ),
+            self.__record(number=2, execution="com.android.chrome"),
+        )
+
+        launches = self.__launches(entries=self.__normalizer.normalize(records=records).entries)
+
+        self.assertEqual(
+            [marker.package for marker in launches],
+            ["com.healthtap.userhtexpress", "com.android.chrome"],
+        )
+
     def test_trailing_launcher_step_is_dropped_without_launch(self) -> None:
         """
         A launcher step that leads nowhere is collapsed away and never becomes a launch.
@@ -157,9 +200,17 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution=self.__launcher(), activity="com.app.one"),
+            self.__record(
+                number=0,
+                execution=self.__launcher(),
+                activity="com.app.one",
+            ),
             self.__record(number=1, execution="com.app.one"),
-            self.__record(number=2, execution=self.__launcher(), activity="com.app.two"),
+            self.__record(
+                number=2,
+                execution=self.__launcher(),
+                activity="com.app.two",
+            ),
             self.__record(number=3, execution="com.app.two"),
         )
 

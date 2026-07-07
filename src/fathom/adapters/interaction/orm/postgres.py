@@ -273,7 +273,7 @@ class PostgresInteraction(InteractionPort):
 
     async def set_thread_title(self, *, request: SetThreadTitle) -> Thread:
         """
-        Set a thread title only when the stored title is null.
+        Set or replace a thread title.
         """
 
         async with self.__runtime.session():

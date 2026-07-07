@@ -944,6 +944,7 @@ class IntentStrategy:
             commands=tuple(
                 AuthoringBaselineCommand(
                     text=command.text,
+                    role=command.role,
                     structural=command.structural,
                     source_steps=command.source_steps,
                 )
