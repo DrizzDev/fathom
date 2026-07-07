@@ -25,7 +25,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
-from fathom.schemas.vision import ActionKind, PastActionEntry, action_kind_for
+from fathom.schemas.vision import ActionKind, ActionKindResolver, PastActionEntry
 
 
 class ExpectedBehaviour(BaseModel):
@@ -35,7 +35,7 @@ class ExpectedBehaviour(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: ActionKind = Field(description="Functional kind from action_kind_for.")
+    kind: ActionKind = Field(description="Functional kind from ActionKindResolver.")
     spatial: bool = Field(description="Membership in SPATIAL_ACTION_TYPES.")
     gesture: bool = Field(description="Membership in GESTURE_ACTION_TYPES.")
     executed: bool = Field(description="Membership in ACTION_EXECUTED_TYPES (legacy dispatched).")
@@ -296,12 +296,12 @@ class CommandBehaviourBaselineTest(unittest.TestCase):
 
     def test_action_kind_matches_baseline(self) -> None:
         """
-        action_kind_for reproduces the recorded kind for every command.
+        ActionKindResolver reproduces the recorded kind for every command.
         """
 
         for action_type, expected in self.__BASELINE.items():
             with self.subTest(action_type=action_type):
-                self.assertEqual(action_kind_for(action_type), expected.kind)
+                self.assertEqual(ActionKindResolver.resolve(action_type=action_type), expected.kind)
 
     def test_frozenset_membership_matches_baseline(self) -> None:
         """
@@ -324,7 +324,10 @@ class CommandBehaviourBaselineTest(unittest.TestCase):
 
         for action_type, expected in self.__BASELINE.items():
             with self.subTest(action_type=action_type):
-                active = action_kind_for(action_type) in AUTONOMOUS_RECOVERY_ACTIVE_KINDS
+                active = (
+                    ActionKindResolver.resolve(action_type=action_type)
+                    in AUTONOMOUS_RECOVERY_ACTIVE_KINDS
+                )
                 self.assertEqual(active, expected.recovery_active)
 
     def test_expected_visual_change_matches_baseline(self) -> None:

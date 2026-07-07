@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 
 from pydantic import Field, model_validator
 
+from fathom.constants.authoring import AuthoringTrust
 from fathom.constants.state import RunOutcome
 from fathom.schemas.authoring.artifact import AuthoringArtifactReference
 from fathom.schemas.authoring.draft import AuthoringDraft
@@ -57,6 +58,9 @@ class AuthoringBaselineCommand(SealedModel):
     text: str = Field(min_length=1, description="Rendered baseline command text.")
     source_steps: Tuple[int, ...] = Field(
         default_factory=tuple, description="Evidence step numbers represented by the command."
+    )
+    structural: bool = Field(
+        default=False, description="Whether this line is syntax structure rather than a command."
     )
 
 
@@ -113,6 +117,10 @@ class AuthoringNarrative(SealedModel):
     Planner-authored explanation and screen observation for one step.
     """
 
+    trust: AuthoringTrust = Field(
+        default=AuthoringTrust.CLAIM,
+        description="Planner narrative is a claim and must yield to screen artifacts.",
+    )
     reasoning: Optional[str] = Field(default=None, description="Planner reasoning for the step.")
     observation: Optional[str] = Field(default=None, description="Post-step screen observation.")
 
@@ -122,6 +130,10 @@ class AuthoringScreen(SealedModel):
     Screen effect facts recorded for one step.
     """
 
+    trust: AuthoringTrust = Field(
+        default=AuthoringTrust.SCREEN,
+        description="Screen facts and artifacts are preferred when planner claims disagree.",
+    )
     changed: bool = Field(description="Whether the screen changed after the command.")
     duration: Optional[int] = Field(
         default=None, ge=0, description="Recorded command duration in milliseconds."

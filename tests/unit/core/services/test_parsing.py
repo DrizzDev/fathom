@@ -359,6 +359,7 @@ class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):
         )
         args["action"]["action_type"] = "tap"
         args["action"]["target_name"] = "Search box"
+        args["action"]["export_target"] = "Search box"
         response = self.__response(args=args)
 
         result = parser.parse(response=response)
@@ -429,6 +430,136 @@ class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):
         )
 
 
+class ToolResponseParserValidationSubjectTest(unittest.TestCase):
+    """
+    Covers canonical validation subject normalization across validation tools.
+    """
+
+    @staticmethod
+    def __response(*, call: _Call) -> GenerateResult:
+        """
+        Wrap one tool call in a generate result.
+        """
+
+        return GenerateResult(content="", tool_calls=[call], metrics={})
+
+    def test_validate_state_sets_validation_subject_from_condition(self) -> None:
+        """
+        validate_state must produce a validate action completion can recognize.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="validate_state",
+                    args={
+                        "assistant_message": "Both items are visible in the cart.",
+                        "condition_to_verify": (
+                            "Coca-Cola Diet Coke and Sunfeast Dark fantasy are present"
+                        ),
+                        "condition_met": True,
+                        "evidence": "The cart list shows both products with quantity 1.",
+                        "goal_completed": False,
+                        "sub_goal_completed": True,
+                    },
+                )
+            )
+        )
+
+        assert result.action is not None
+        self.assertEqual(result.action.action_type, ActionType.VALIDATE)
+        self.assertEqual(
+            result.action.validation_subject,
+            "Coca-Cola Diet Coke and Sunfeast Dark fantasy are present",
+        )
+
+    def test_verify_goal_sets_validation_subject_when_goal_is_not_complete(self) -> None:
+        """
+        verify_goal must prefer explicit sub-goal reason as validation evidence.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="verify_goal",
+                    args={
+                        "assistant_message": "The cart screen is visible.",
+                        "goal_completed": False,
+                        "sub_goal_completed": True,
+                        "subgoal_completion_reason": "Cart screen is visible.",
+                        "current_screen": "Cart screen with both requested items",
+                        "evidence": "The cart has Diet Coke and Dark Fantasy.",
+                    },
+                )
+            )
+        )
+
+        assert result.action is not None
+        self.assertEqual(result.action.action_type, ActionType.VALIDATE)
+        self.assertEqual(
+            result.action.validation_subject,
+            "Cart screen is visible.",
+        )
+
+    def test_verify_goal_falls_back_to_current_screen_for_validation_subject(self) -> None:
+        """
+        verify_goal uses current screen only when no explicit validation reason exists.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="verify_goal",
+                    args={
+                        "assistant_message": "The cart screen is visible.",
+                        "goal_completed": False,
+                        "sub_goal_completed": True,
+                        "subgoal_completion_reason": "",
+                        "current_screen": "Cart screen with both requested items",
+                        "evidence": "The cart has Diet Coke and Dark Fantasy.",
+                    },
+                )
+            )
+        )
+
+        assert result.action is not None
+        self.assertEqual(result.action.action_type, ActionType.VALIDATE)
+        self.assertEqual(
+            result.action.validation_subject,
+            "Cart screen with both requested items",
+        )
+
+    def test_verify_goal_complete_does_not_set_validation_subject(self) -> None:
+        """
+        verify_goal terminal completion remains a COMPLETE action, not validation evidence.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="verify_goal",
+                    args={
+                        "assistant_message": "The full task is complete.",
+                        "goal_completed": True,
+                        "goal_completion_reason": "All requested items are in the cart.",
+                        "sub_goal_completed": True,
+                        "subgoal_completion_reason": "The final step is complete.",
+                        "current_screen": "Cart screen with total amount",
+                        "evidence": "The cart has both items and the total price.",
+                    },
+                )
+            )
+        )
+
+        assert result.action is not None
+        self.assertEqual(result.action.action_type, ActionType.COMPLETE)
+        self.assertIsNone(result.action.validation_subject)
+
+
 class ToolResponseParserBoundaryTest(unittest.TestCase):
     """
     Covers the model-tool response boundary.
@@ -493,6 +624,7 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
                             "action": {
                                 "action_type": "tap",
                                 "target_name": "Filter",
+                                "export_target": "Filter button",
                                 "confidence": 0.9,
                             },
                         },
@@ -532,6 +664,7 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
                             "action": {
                                 "action_type": "tap",
                                 "target_name": "Product card",
+                                "export_target": "Product card",
                                 "confidence": 0.9,
                             },
                         },
@@ -587,7 +720,8 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
         )
 
         action = result.metadata["tool_args"]["action"]
-        self.assertEqual(action["capture"]["value"], "<redacted>")
+        self.assertEqual(action["capture"]["value"], "<redacted:length=3>")
+        self.assertNotIn("₹86", str(action))
         assert result.tool_response is not None
         command = result.tool_response.command
         assert command is not None
@@ -644,7 +778,7 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
 
     def test_validation_failure_feedback_and_logs_do_not_leak_capture_value(self) -> None:
         """
-        Malformed STORE payloads keep capture values out of logs and retry feedback.
+        Malformed STORE payloads expose exact validation messages without payload values.
         """
 
         parser = ToolResponseParser()
@@ -685,9 +819,49 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
 
         self.assertEqual(invalid.__dict__["tool.name"], "execute_ui")
         self.assertIn("action.confidence", invalid.__dict__["tool.error.locations"])
+        self.assertIn("Field required", invalid.__dict__["tool.error.messages"])
+        self.assertEqual(
+            invalid.__dict__["tool.action.keys"],
+            ("action_type", "capture"),
+        )
         self.assertNotIn("₹86", rendered)
         self.assertNotIn("₹86", context.exception.feedback.message)
         self.assertIn("execute_ui arguments validation failed", context.exception.feedback.message)
+        self.assertIn("Field required", context.exception.feedback.message)
+
+    def test_validation_failure_feedback_names_missing_validate_subject(self) -> None:
+        """
+        validate actions missing validation_subject produce actionable retry feedback.
+        """
+
+        parser = ToolResponseParser()
+
+        with self.assertRaises(ToolValidationError) as context:
+            parser.parse(
+                response=self.__response(
+                    calls=[
+                        _Call(
+                            name="execute_ui",
+                            args={
+                                "assistant_message": "check state",
+                                "goal_completed": False,
+                                "sub_goal_completed": False,
+                                "action": {
+                                    "action_type": "validate",
+                                    "target_name": "HSR Layout",
+                                    "confidence": 0.9,
+                                },
+                            },
+                        )
+                    ]
+                )
+            )
+
+        self.assertIn(
+            "validation_subject is required for action_type='validate'",
+            context.exception.feedback.message,
+        )
+        self.assertTrue(context.exception.retryable)
 
     def test_recall_memory_does_not_invent_tool_data(self) -> None:
         """

@@ -85,6 +85,7 @@ class CommandGateTest(unittest.TestCase):
         payload = ExecuteAction.model_construct(
             action_type="type",
             target_name="Search box",
+            export_target="Search box",
             confidence=0.9,
         )
 

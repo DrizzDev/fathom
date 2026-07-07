@@ -10,7 +10,8 @@ from fathom.constants.flow import AssertionSource, CheckKind
 from fathom.constants.generation import ScriptSource
 from fathom.schemas.authoring import AuthoringArtifact, AuthoringBaseline, AuthoringBaselineCommand
 from fathom.schemas.authoring.draft import AuthoringDraft
-from fathom.schemas.flow import CompletionAssertion, Evidence, EvidenceStep
+from fathom.schemas.flow import CompletionAssertion, Evidence, EvidenceStep, StepOutcome
+from fathom.schemas.generation import CompletionValidation
 
 
 class StepDraftComposerTest(unittest.TestCase):
@@ -61,6 +62,22 @@ class StepDraftComposerTest(unittest.TestCase):
         )
         self.assertTrue(result.review.partial)
         self.assertEqual(result.review.discarded, (3,))
+        self.assertEqual(
+            [lineage.source_steps for lineage in result.review.lineage],
+            [(1,), (2,), (4,)],
+        )
+        self.assertEqual(
+            [command.source_steps for command in result.review.commands],
+            [(1,), (2,), (4,)],
+        )
+        self.assertEqual(
+            [command.verified_by for command in result.review.commands],
+            [(), (), ()],
+        )
+        self.assertEqual(
+            [lineage.screen_authored for lineage in result.review.lineage],
+            [True, True, True],
+        )
 
     def test_compose_fills_missing_step_draft_from_baseline(self) -> None:
         """
@@ -112,6 +129,52 @@ class StepDraftComposerTest(unittest.TestCase):
                     "Tap on first product card",
                 )
             ),
+        )
+        self.assertEqual(
+            [command.source_steps for command in result.review.commands],
+            [(1,), (2,), (3,)],
+        )
+        self.assertEqual(
+            [command.verified_by for command in result.review.commands],
+            [(), ("execution",), ()],
+        )
+
+    def test_extra_draft_lines_do_not_inherit_step_provenance(self) -> None:
+        """
+        Multi-line step drafts cannot launder invented follow-up commands as executed.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=True,
+            steps=(EvidenceStep(index=1, event="action", action="type"),),
+        )
+        drafts = (
+            self.__draft(
+                step=1,
+                text="\n".join(
+                    (
+                        'Type "soap" into search field',
+                        'Wait until "suggestions list is visible"',
+                    )
+                ),
+            ),
+        )
+
+        result = composer.compose(drafts=drafts, evidence=evidence)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            [command.source_steps for command in result.review.commands],
+            [(1,), ()],
+        )
+        self.assertEqual(
+            [lineage.screen_authored for lineage in result.review.lineage],
+            [True, True],
         )
 
     def test_compose_fills_missing_draft_by_source_step_not_position(self) -> None:
@@ -196,8 +259,11 @@ class StepDraftComposerTest(unittest.TestCase):
         result = composer.compose(
             drafts=drafts,
             evidence=evidence,
-            completion_validation=("Validate login screen is visible",),
-            require_completion_validation=True,
+            completion=CompletionValidation(
+                lines=("Validate login screen is visible",),
+                required=True,
+                source_steps=(1,),
+            ),
         )
 
         self.assertIsNotNone(result)
@@ -206,6 +272,118 @@ class StepDraftComposerTest(unittest.TestCase):
         self.assertEqual(
             result.text,
             "\n".join(("OPEN_APP: com.example", "Validate login screen is visible")),
+        )
+        self.assertEqual(result.review.commands[-1].source_steps, (1,))
+        self.assertEqual(result.review.commands[-1].verified_by, ("completion_assertion",))
+        self.assertEqual(result.review.lineage[-1].verified_by, ("completion_assertion",))
+
+    def test_compose_keeps_one_terminal_validation_when_baseline_already_has_it(self) -> None:
+        """
+        Completed composed drafts do not duplicate a baseline terminal validation.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=False,
+            steps=(
+                EvidenceStep(index=1, event="action", action="tap"),
+                EvidenceStep(index=2, event="validation", action="validate"),
+            ),
+        )
+        validation = "Validate login screen is visible"
+        baseline = AuthoringBaseline(
+            content="\n".join(("OPEN_APP: com.example", validation)),
+            partial=False,
+            commands=(
+                AuthoringBaselineCommand(text="OPEN_APP: com.example", source_steps=(1,)),
+                AuthoringBaselineCommand(text=validation, source_steps=(2,)),
+            ),
+        )
+        drafts = (self.__draft(step=1, text="OPEN_APP: com.example"),)
+
+        result = composer.compose(
+            drafts=drafts,
+            evidence=evidence,
+            baseline=baseline,
+            completion=CompletionValidation(
+                lines=(validation,),
+                required=True,
+                source_steps=(2,),
+            ),
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.text.splitlines().count(validation), 1)
+        self.assertEqual(result.review.commands[-1].text, validation)
+        self.assertEqual(result.review.commands[-1].source_steps, (2,))
+        self.assertEqual(
+            result.review.commands[-1].verified_by, ("execution", "completion_assertion")
+        )
+
+    def test_completion_replaces_terminal_state_runtime_validation(self) -> None:
+        """
+        Assertion-grounded terminal validation replaces terminal-state runtime validation.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="checkout",
+            goal="cart verified",
+            package="com.example",
+            partial=False,
+            steps=(
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    outcome=StepOutcome(changed=True),
+                ),
+                EvidenceStep(index=2, event="validation", action="validate"),
+                EvidenceStep(index=3, event="action", action="store"),
+            ),
+        )
+        baseline = AuthoringBaseline(
+            content="\n".join(
+                (
+                    "Tap on View Cart",
+                    "Validate cart status is visible",
+                    "Store 186 as amount",
+                )
+            ),
+            partial=False,
+            commands=(
+                AuthoringBaselineCommand(text="Tap on View Cart", source_steps=(1,)),
+                AuthoringBaselineCommand(text="Validate cart status is visible", source_steps=(2,)),
+                AuthoringBaselineCommand(text="Store 186 as amount", source_steps=(3,)),
+            ),
+        )
+
+        result = composer.compose(
+            drafts=(),
+            evidence=evidence,
+            baseline=baseline,
+            completion=CompletionValidation(
+                required=True,
+                lines=("Validate cart contents and total are visible",),
+                source_steps=(3,),
+            ),
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.text,
+            "\n".join(
+                (
+                    "Tap on View Cart",
+                    "Store 186 as amount",
+                    "Validate cart contents and total are visible",
+                )
+            ),
         )
 
     def test_compose_marks_completed_draft_partial_when_terminal_validation_is_missing(
@@ -226,7 +404,9 @@ class StepDraftComposerTest(unittest.TestCase):
         drafts = (self.__draft(step=1, text="OPEN_APP: com.example"),)
 
         result = composer.compose(
-            drafts=drafts, evidence=evidence, require_completion_validation=True
+            drafts=drafts,
+            evidence=evidence,
+            completion=CompletionValidation(required=True),
         )
 
         self.assertIsNotNone(result)
@@ -236,6 +416,49 @@ class StepDraftComposerTest(unittest.TestCase):
             result.review.reason,
             "Completion assertions could not be rendered into a terminal validation.",
         )
+
+    def test_partially_covered_merged_baseline_command_is_not_reused(self) -> None:
+        """
+        A baseline command cannot represent a step already covered by another command.
+        """
+
+        composer = StepDraftComposer()
+        evidence = Evidence(
+            intent="search",
+            goal="search",
+            package="com.example",
+            partial=True,
+            steps=(
+                EvidenceStep(index=1, event="action", action="swipe_up"),
+                EvidenceStep(index=2, event="action", action="swipe_up"),
+            ),
+        )
+        baseline = AuthoringBaseline(
+            content="\n".join(("Scroll down", 'Scroll down until "product is visible"')),
+            partial=True,
+            commands=(
+                AuthoringBaselineCommand(text="Scroll down", source_steps=(1,)),
+                AuthoringBaselineCommand(
+                    text='Scroll down until "product is visible"',
+                    source_steps=(1, 2),
+                ),
+            ),
+        )
+        drafts = (
+            self.__draft(step=1, text="Scroll down"),
+            self.__draft(step=2, text='Scroll down until "product card is visible"'),
+        )
+
+        result = composer.compose(drafts=drafts, evidence=evidence, baseline=baseline)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.text,
+            "\n".join(("Scroll down", 'Scroll down until "product card is visible"')),
+        )
+        covered = [step for command in result.review.commands for step in command.source_steps]
+        self.assertEqual(covered, [1, 2])
 
     @staticmethod
     def __draft(*, step: int, text: str) -> AuthoringDraft:

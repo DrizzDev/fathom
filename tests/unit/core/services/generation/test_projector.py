@@ -341,9 +341,9 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tap.selector.text, "product card")
         self.assertEqual(Policy().evaluate(flow=flow, evidence=evidence).issues, ())
 
-    async def test_unverified_claim_without_anchor_renders_and_marks_partial(self) -> None:
+    async def test_unverified_claim_without_anchor_is_skipped_and_marks_partial(self) -> None:
         """
-        A baseline preserves executed steps but marks partial when target provenance is weak.
+        A baseline never uses an unverified planner claim as a replay target.
         """
 
         evidence = self.__evidence(
@@ -365,13 +365,47 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         report = self.__generator().project(evidence=evidence)
 
         self.assertTrue(report.flow.partial)
-        self.assertEqual(report.skipped, ())
-        self.assertTrue(
+        self.assertEqual(report.skipped[0].index, 1)
+        self.assertIs(report.skipped[0].reason, SkipReason.MISSING_TARGET)
+        self.assertFalse(
             any(
                 isinstance(node, TapNode) and node.selector.text == "Magic Soap 3 Pack"
                 for node in report.flow.nodes
             )
         )
+
+    async def test_dynamic_address_claim_without_anchor_is_not_rendered(self) -> None:
+        """
+        Dynamic address content descriptions must not leak into deterministic tap targets.
+        """
+
+        address = (
+            "Selected address is Manhattan, A108 Adams St, New York, NY 10007, "
+            "USA Delivering in null minutes"
+        )
+        evidence = self.__evidence(
+            steps=(
+                self.__launch(index=0),
+                EvidenceStep(
+                    index=1,
+                    event="action",
+                    action="tap",
+                    target=StepTarget(
+                        claim=TargetClaim(text=address, verified=False),
+                        name=address,
+                    ),
+                    outcome=StepOutcome(success=True),
+                ),
+                self.__validation(index=2),
+            ),
+        )
+
+        report = self.__generator().project(evidence=evidence)
+
+        self.assertTrue(report.flow.partial)
+        self.assertEqual(report.skipped[0].index, 1)
+        self.assertIs(report.skipped[0].reason, SkipReason.MISSING_TARGET)
+        self.assertFalse(any(isinstance(node, TapNode) for node in report.flow.nodes))
 
     async def test_validation_without_target_yields_partial_flow(self) -> None:
         """

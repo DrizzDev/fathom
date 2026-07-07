@@ -15,6 +15,7 @@ from fathom.schemas.flow import (
     StepLaunch,
     StepOutcome,
     StepTarget,
+    TargetClaim,
 )
 
 
@@ -116,6 +117,10 @@ class BaselineScriptServiceTest(unittest.TestCase):
 
         self.assertFalse(artifact.metadata.review.partial)
         self.assertTrue(artifact.text.startswith("OPEN_APP"))
+        self.assertEqual(
+            [command.source_steps for command in artifact.metadata.review.commands],
+            [(0,), (1,), (2,)],
+        )
 
     def test_skipped_steps_are_carried_into_metadata(self) -> None:
         """
@@ -158,6 +163,45 @@ class BaselineScriptServiceTest(unittest.TestCase):
         self.assertIsNotNone(artifact.text)
         assert artifact.text is not None
         self.assertIn("Tap on", artifact.text)
+
+    def test_unverified_dynamic_address_claim_does_not_render(self) -> None:
+        """
+        A dynamic unverified address claim is skipped instead of becoming a replay target.
+        """
+
+        address = (
+            "Selected address is Manhattan, A108 Adams St, New York, NY 10007, "
+            "USA Delivering in null minutes"
+        )
+        artifact = self.__service().build(
+            evidence=self.__evidence(
+                steps=(
+                    self.__launch(),
+                    EvidenceStep(
+                        index=1,
+                        action="tap",
+                        event="action",
+                        target=StepTarget(
+                            claim=TargetClaim(text=address, verified=False),
+                            name=address,
+                        ),
+                        outcome=StepOutcome(success=True),
+                    ),
+                    self.__validation(index=2),
+                )
+            )
+        )
+
+        self.assertIs(artifact.metadata.status, ScriptStatus.GENERATED)
+        self.assertTrue(artifact.metadata.review.partial)
+
+        self.assertIsNotNone(artifact.text)
+        assert artifact.text is not None
+        self.assertNotIn("Manhattan", artifact.text)
+        self.assertNotIn("null minutes", artifact.text)
+
+        skipped = {step.index: step.reason for step in artifact.metadata.skipped}
+        self.assertEqual(skipped[1], SkipReason.MISSING_TARGET)
 
     def test_run_with_no_scriptable_steps_fails_not_empty_generated(self) -> None:
         """

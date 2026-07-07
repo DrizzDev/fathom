@@ -8,7 +8,7 @@ from fathom.authoring.application.request import AuthoringRequestBuilder
 from fathom.authoring.application.reviewer import AuthoringReviewer
 from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.constants.authoring import AuthoringKind, AuthoringStatus
-from fathom.constants.flow import AssertionSource, CheckKind, IssueCode
+from fathom.constants.flow import AssertionSource, CheckKind, IssueCode, LaunchProvenance
 from fathom.core.dialect.policy import Policy
 from fathom.core.services.authoring import AuthoringService
 from fathom.interfaces.llm import LLMPort, PromptPart
@@ -21,7 +21,9 @@ from fathom.schemas.flow import (
     Evidence,
     EvidenceStep,
     Flow,
+    LaunchNode,
     Selector,
+    StepLaunch,
     StepTarget,
     TapNode,
     TargetClaim,
@@ -347,3 +349,126 @@ class AuthoringServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.lineage[0].source_steps, (1,))
         self.assertEqual(response.artifact.lineage[0].verified_by, ("execution",))
         self.assertTrue(response.artifact.lineage[0].screen_authored)
+
+    async def test_materializes_launch_source_steps_before_policy_review(self) -> None:
+        """
+        RUN authoring should not fail when the model omits evidence-owned launch source steps.
+        """
+
+        evidence = Evidence(
+            intent="open app",
+            goal="app open",
+            package="com.example",
+            partial=True,
+            steps=(
+                EvidenceStep(
+                    action="launch",
+                    event="launch",
+                    index=0,
+                    launch=StepLaunch(
+                        package="com.example",
+                        source_steps=(0,),
+                        provenance=LaunchProvenance.LAUNCHER_TRANSITION,
+                    ),
+                ),
+            ),
+        )
+        task = AuthoringTask(
+            kind=AuthoringKind.RUN,
+            intent="open app",
+            step_number=1,
+            execution_id="execution-1",
+            evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
+        )
+        flow = Flow(
+            intent="open app",
+            package="com.example",
+            partial=True,
+            nodes=(
+                LaunchNode(
+                    package="com.example",
+                    provenance=LaunchProvenance.LAUNCHER_TRANSITION,
+                ),
+            ),
+        )
+        dialect = DrizzDialectFactory().create()
+        service = AuthoringService(
+            llm=FakeAuthoringLlm(flow=flow),
+            attempts=1,
+            use_cache=True,
+            reviewer=AuthoringReviewer(policy=Policy(), dialect=dialect),
+            requests=AuthoringRequestBuilder(artifacts=NoopAuthoringArtifactProvider()),
+        )
+
+        response = await service.author(task=task)
+
+        self.assertIs(response.status, AuthoringStatus.GENERATED)
+        self.assertEqual(response.script, "OPEN_APP: com.example")
+        self.assertIsNotNone(response.artifact)
+        assert response.artifact is not None
+        self.assertEqual(response.artifact.lineage[0].source_steps, (0,))
+        self.assertEqual(response.artifact.commands[0].source_steps, (0,))
+
+    async def test_materializes_only_matched_assertion_metadata(self) -> None:
+        """
+        RUN authoring should attach only assertion metadata matching the authored check.
+        """
+
+        evidence = Evidence(
+            intent="reach login",
+            goal="login visible",
+            package="com.example",
+            assertions=(
+                CompletionAssertion(
+                    id="checkout-assertion",
+                    kind=CheckKind.VISIBLE,
+                    subject="Checkout screen",
+                    source=AssertionSource.VERIFICATION,
+                    step_index=7,
+                ),
+                CompletionAssertion(
+                    id="login-assertion",
+                    kind=CheckKind.VISIBLE,
+                    subject="Phone number input field",
+                    source=AssertionSource.VERIFICATION,
+                    step_index=9,
+                ),
+            ),
+            steps=(
+                EvidenceStep(action="tap", event="action", index=7),
+                EvidenceStep(action="tap", event="action", index=9),
+            ),
+        )
+        task = AuthoringTask(
+            kind=AuthoringKind.RUN,
+            intent="reach login",
+            step_number=9,
+            execution_id="execution-1",
+            evidence=AuthoringEvidenceBuilder().build_run(evidence=evidence),
+        )
+        flow = Flow(
+            intent="reach login",
+            package="com.example",
+            nodes=(
+                CheckNode(
+                    source_steps=(9,),
+                    checks=(Check(kind=CheckKind.VISIBLE, subject="Phone number input field"),),
+                ),
+            ),
+        )
+        dialect = DrizzDialectFactory().create()
+        service = AuthoringService(
+            llm=FakeAuthoringLlm(flow=flow),
+            attempts=1,
+            use_cache=True,
+            reviewer=AuthoringReviewer(policy=Policy(), dialect=dialect),
+            requests=AuthoringRequestBuilder(artifacts=NoopAuthoringArtifactProvider()),
+        )
+
+        response = await service.author(task=task)
+
+        self.assertIs(response.status, AuthoringStatus.GENERATED)
+        self.assertIsNotNone(response.artifact)
+        assert response.artifact is not None
+        self.assertEqual(response.artifact.lineage[0].source_steps, (9,))
+        self.assertEqual(response.artifact.commands[0].source_steps, (9,))

@@ -8,7 +8,7 @@ from fathom.constants.authoring import AuthoringArtifactKind, AuthoringArtifactR
 from fathom.constants.dialect import DialectName
 from fathom.schemas.base import SealedModel
 from fathom.schemas.flow import Issue
-from fathom.schemas.generation import ScriptLineage
+from fathom.schemas.generation import ScriptCommand, ScriptLineage
 
 
 class AuthoringArtifact(SealedModel):
@@ -24,6 +24,9 @@ class AuthoringArtifact(SealedModel):
     )
     lineage: Tuple[ScriptLineage, ...] = Field(
         default_factory=tuple, description="Evidence provenance for authored script nodes."
+    )
+    commands: Tuple[ScriptCommand, ...] = Field(
+        default_factory=tuple, description="Rendered commands with evidence provenance."
     )
 
 

@@ -11,7 +11,7 @@ from fathom.interfaces.authoring import AuthoringDraftStore, AuthoringPort, Auth
 from fathom.interfaces.evidence import EvidenceSource
 from fathom.schemas.authoring import AuthoringTask
 from fathom.schemas.authoring.draft import AuthoringDraft
-from fathom.schemas.flow import RunObjective
+from fathom.schemas.flow import Evidence, RunObjective
 
 logger = getLogger(__name__)
 
@@ -114,6 +114,17 @@ class StepAuthoringScheduler(AuthoringScheduler):
 
         try:
             evidence = await self.__source.read(execution_id=execution_id, objective=objective)
+            if not self.__authorable_step(evidence=evidence, step_index=step_index):
+                logger.info(
+                    "step authoring skipped for discarded evidence step",
+                    extra={
+                        "event": "authoring.step.discarded",
+                        "execution.id": execution_id,
+                        "authoring.step": step_index,
+                    },
+                )
+                return
+
             response = await self.__runner.author(
                 author=self.__author,
                 task=AuthoringTask(
@@ -146,3 +157,14 @@ class StepAuthoringScheduler(AuthoringScheduler):
                     "exception.message": str(exception),
                 },
             )
+
+    @staticmethod
+    def __authorable_step(*, evidence: Evidence, step_index: int) -> bool:
+        """
+        Return whether the distilled evidence still contains the requested step.
+        """
+
+        if step_index in evidence.discarded:
+            return False
+
+        return any(step.index == step_index for step in evidence.steps)

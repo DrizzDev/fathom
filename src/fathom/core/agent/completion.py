@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
+from typing import Optional
+
 from fathom.constants.completion import (
-    CompletionThreshold,
+    DURABLE_OUTCOME_TERMS,
     GateOutcome,
     RetainReason,
 )
@@ -13,9 +16,16 @@ from fathom.schemas.vision import ActionKind
 class CompletionGate:
     """
     Domain gate that adjudicates one turn's CompletionEvidence per sub-goal kind and emitted action kind.
-    VALIDATION sub-goals short-circuit on asserted claim; ACTION sub-goals require screen-verified dispatch,
-    with a VALIDATION-kind escape branch for implicit-completion when the world is already past the failed step.
+    VALIDATION sub-goals require a recorded validate action; ACTION sub-goals require screen-verified dispatch,
+    with durable outcome sub-goals requiring recorded validation evidence before advancement.
     """
+
+    def __init__(self, *, outcome_policy: Optional["OutcomeEvidencePolicy"] = None) -> None:
+        """
+        Bind the durable-outcome policy used for action sub-goals.
+        """
+
+        self.__outcome_policy = outcome_policy or OutcomeEvidencePolicy()
 
     def adjudicate(
         self,
@@ -31,32 +41,48 @@ class CompletionGate:
         effective = evidence.action.dispatched and evidence.screen.evolved
 
         if sub_goal.kind is SubGoalKind.VALIDATION:
-            return self.__adjudicate_validation(
-                evidence=evidence,
-                effective=effective,
-            )
+            return self.__adjudicate_validation(evidence=evidence)
 
         return self.__adjudicate_action(
+            sub_goal=sub_goal,
             evidence=evidence,
-            action_kind=action_kind,
             effective=effective,
         )
 
-    def __adjudicate_validation(
+    def __adjudicate_validation(self, *, evidence: CompletionEvidence) -> GateDecision:
+        """
+        Validation sub-goal: completion requires a concrete validate action.
+        """
+
+        if evidence.validation.executed:
+            return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
+
+        return GateDecision(
+            outcome=GateOutcome.RETAIN,
+            retain_reason=RetainReason.MISSING_VALIDATION,
+        )
+
+    def __adjudicate_action(
         self,
         *,
+        sub_goal: SubGoal,
         evidence: CompletionEvidence,
         effective: bool,
     ) -> GateDecision:
         """
-        Validation sub-goal: short-circuit on asserted claim, else 2-of-3 threshold.
+        Action sub-goal: strict path needs screen-verified dispatch unless durable outcome proof is required.
         """
 
-        if evidence.claim.asserted:
+        if self.__outcome_policy.needs_proof(sub_goal=sub_goal):
+            return self.__adjudicate_durable_outcome(
+                evidence=evidence,
+                effective=effective,
+            )
+
+        if evidence.claim.asserted and evidence.claim.explained and effective:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
-        met = sum((evidence.claim.justified, effective))
-        if met >= CompletionThreshold.VALIDATION_WITHOUT_CLAIM:
+        if evidence.claim.asserted and evidence.validation.executed:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
         return GateDecision(
@@ -64,26 +90,24 @@ class CompletionGate:
             retain_reason=self.__diagnose(evidence=evidence),
         )
 
-    def __adjudicate_action(
+    def __adjudicate_durable_outcome(
         self,
         *,
-        action_kind: ActionKind,
         evidence: CompletionEvidence,
         effective: bool,
     ) -> GateDecision:
         """
-        Action sub-goal: strict path needs screen-verified dispatch; VALIDATION-kind action advances on claim alone.
+        Durable action sub-goal: require validate evidence before accepting a model claim.
         """
 
-        if evidence.claim.asserted and evidence.claim.justified and effective:
+        if evidence.claim.asserted and evidence.validation.executed:
             return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
 
-        if (
-            evidence.claim.asserted
-            and evidence.action.dispatched
-            and action_kind is ActionKind.VALIDATION
-        ):
-            return GateDecision(outcome=GateOutcome.ADVANCE, retain_reason=None)
+        if evidence.claim.asserted and evidence.claim.explained and effective:
+            return GateDecision(
+                outcome=GateOutcome.RETAIN,
+                retain_reason=RetainReason.MISSING_OUTCOME_EVIDENCE,
+            )
 
         return GateDecision(
             outcome=GateOutcome.RETAIN,
@@ -99,10 +123,30 @@ class CompletionGate:
         if not evidence.claim.asserted:
             return RetainReason.MISSING_CLAIM
 
-        if not evidence.claim.justified:
+        if not evidence.claim.explained:
             return RetainReason.MISSING_JUSTIFICATION
 
         if not evidence.action.dispatched:
             return RetainReason.MISSING_DISPATCH
 
         return RetainReason.MISSING_SCREEN_EVOLUTION
+
+
+class OutcomeEvidencePolicy:
+    """
+    Classifies action sub-goals whose durable outcome needs validation evidence before advancement.
+    """
+
+    __WORD_PATTERN = re.compile(r"[a-z]+")
+
+    def needs_proof(self, *, sub_goal: SubGoal) -> bool:
+        """
+        Return whether the sub-goal describes a durable outcome rather than a transient navigation step.
+        """
+
+        words = set(
+            self.__WORD_PATTERN.findall(
+                f"{sub_goal.description} {sub_goal.criterion or ''}".lower()
+            )
+        )
+        return bool(words.intersection(DURABLE_OUTCOME_TERMS))

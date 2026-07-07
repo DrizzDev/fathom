@@ -716,6 +716,12 @@ class ExecutionConfiguration(BaseModel):
         default=0.5,
         description="Wait time after action for screen settlement (max 1.5s)",
     )
+    transition_grace_period: float = Field(
+        ge=0.0,
+        le=2.0,
+        default=1.0,
+        description="Additional bounded delay before one transition-screen recapture after a no-progress observation",
+    )
     workflow: WorkflowHostConfiguration = Field(
         default_factory=WorkflowHostConfiguration,
         description="Workflow-host execution policy",

@@ -18,6 +18,7 @@ from fathom.schemas.completion import (
     CompletionEvidence,
     GateDecision,
     ScreenEvidence,
+    ValidationEvidence,
 )
 from fathom.schemas.criterion import CriterionDecision
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
@@ -27,7 +28,7 @@ from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
-from fathom.schemas.vision import ActionKind, action_kind_for
+from fathom.schemas.vision import ActionKind, ActionKindResolver
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -42,7 +43,7 @@ class SubGoalEvaluator:
     screen, optional criterion) and the emitted action kind, which the
     CompletionGate adjudicates per sub-goal kind:
 
-      - ACTION sub-goals require asserted claim AND justified rationale AND
+      - ACTION sub-goals require asserted claim AND explained rationale AND
         a dispatched action that caused screen evolution. The single
         exception is the VALIDATION-kind escape branch: when the planner
         emits a VALIDATE action against an ACTION sub-goal and asserts
@@ -50,8 +51,9 @@ class SubGoalEvaluator:
         VALIDATE is a read action that cannot move the screen; requiring
         screen.evolved for this branch would loop indefinitely whenever
         the world is already past the failed step.
-      - VALIDATION sub-goals short-circuit on an asserted claim; otherwise
-        require any two of justified rationale and screen-verified dispatch.
+      - VALIDATION sub-goals advance only when this turn executed a concrete
+        VALIDATE action with a structured validation subject. Planner claims
+        alone are logged as claims; they do not close validation sub-goals.
 
     The CriterionObserver remains as an additive RCA-grade signal. Its
     verdict is folded into CompletionEvidence.criterion and logged on every
@@ -104,7 +106,7 @@ class SubGoalEvaluator:
             return None
 
         active = cast("SubGoal", current)
-        emitted_kind = action_kind_for(step_result.step.action.action_type)
+        emitted_kind = ActionKindResolver.resolve(action_type=step_result.step.action.action_type)
 
         if self.__requires_capture_completion(active=active):
             decision = self.__capture_policy.evaluate(
@@ -284,8 +286,9 @@ class SubGoalEvaluator:
         return CompletionEvidence(
             notes=(note,),
             screen=ScreenEvidence(evolved=False),
-            claim=ClaimEvidence(asserted=False, justified=False),
+            claim=ClaimEvidence(asserted=False, explained=False),
             action=ActionEvidence(dispatched=False, executed=step_result.executed),
+            validation=ValidationEvidence(executed=False),
         )
 
     async def __semantic_similarity(
@@ -543,8 +546,9 @@ class SubGoalEvaluator:
                 "sub_goal.kind": active.kind.value,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.justified": evidence.claim.justified,
+                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
+                "validation.executed": evidence.validation.executed,
                 "sub_goal.description": active.description[:80],
                 "event": CompletionEvent.EVIDENCE_ASSESSED.value,
                 "criterion.observed": (
@@ -585,8 +589,9 @@ class SubGoalEvaluator:
                 "gate.outcome": decision.outcome.value,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.justified": evidence.claim.justified,
+                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
+                "validation.executed": evidence.validation.executed,
                 "event": CompletionEvent.GATE_ADJUDICATED.value,
                 "step.screen_changed": step_result.screen_changed,
                 "gate.retain_reason": (
@@ -629,6 +634,9 @@ class SubGoalEvaluator:
             and action_kind is ActionKind.VALIDATION
         ):
             return AdvanceReason.VALIDATION_IMPLICIT_COMPLETION.value
+
+        if sub_goal.kind is SubGoalKind.VALIDATION and evidence.validation.executed:
+            return AdvanceReason.VALIDATION_ACTION.value
 
         return AdvanceReason.STRICT_PATH.value
 

@@ -133,11 +133,17 @@ class ValidateStateArgs(GeminiCompletionFlags):
 
 _SWIPE_SCROLL_TYPES = frozenset(
     {
+        "scroll",
         "swipe_up",
         "swipe_down",
         "swipe_left",
         "swipe_right",
-        "scroll",
+    }
+)
+_REPLAY_TARGET_ACTIONS = frozenset(
+    {
+        ActionType.TAP.value,
+        ActionType.TYPE.value,
     }
 )
 _GENERIC_EXPORT_TARGETS = frozenset(
@@ -333,6 +339,12 @@ class ExecuteAction(BaseModel):
                 "Ground every scroll action to a manifest container or an explicit visible region."
             )
 
+        if at in _REPLAY_TARGET_ACTIONS and not self.__has_replay_target():
+            raise ValueError(
+                f"export_target or script_target is required for action_type='{at}'. "
+                "Provide the stable replay target separately from the exact visible target."
+            )
+
         # wait_subject is required for wait actions.
         if at == "wait" and not (self.wait_subject or "").strip():
             raise ValueError(
@@ -356,6 +368,13 @@ class ExecuteAction(BaseModel):
             )
 
         return self
+
+    def __has_replay_target(self) -> bool:
+        """
+        Return whether tap/type carries a stable phrase for script replay.
+        """
+
+        return bool((self.export_target or "").strip() or (self.script_target or "").strip())
 
     @model_validator(mode="after")
     def __normalize_conditionals(self) -> "ExecuteAction":

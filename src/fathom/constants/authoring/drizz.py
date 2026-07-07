@@ -97,8 +97,8 @@ DRIZZ_GUIDE = DialectGuide(
                 "A control label is recorded, and evidence also identifies the role or purpose of "
                 "the control."
             ),
-            preferred="Include the role, such as Tap on Buy Now button or Tap on search input field.",
-            avoided="Use only the raw label, such as Tap on Buy Now or Tap on search hint text.",
+            preferred="Include the role visible on screen, such as button, field, dropdown, row, or card.",
+            avoided="Use only the raw label or placeholder text when the role is known.",
             reason="A replayable command should identify the UI role of the object being used.",
         ),
         AuthoringScenario(
@@ -124,7 +124,7 @@ DRIZZ_GUIDE = DialectGuide(
                 "A step records both a placeholder-like raw name and a cleaner exported role for "
                 "the same target."
             ),
-            preferred='Use one clear replay target, such as Type "search query" into search input field.',
+            preferred="Use one clear replay target that names the field role once.",
             avoided=(
                 'Combine aliases, such as Type "search query" into Search by Keyword under Search box.'
             ),
@@ -160,6 +160,25 @@ DRIZZ_GUIDE = DialectGuide(
             ),
             avoided="Use target.claim.text as the command target just because it was recorded.",
             reason="Planner claims are useful context, but only verified anchors are target truth.",
+        ),
+        AuthoringScenario(
+            title="dynamic address control",
+            situation=(
+                "A tap opens or changes delivery location, and the recorded target claim is the "
+                "current address, user data, ETA, or a full content-description sentence."
+            ),
+            preferred=(
+                "Use the actual visible UI role and purpose from the screen, such as a dropdown, "
+                "field, row, card, chip, button, icon, tab, or menu item."
+            ),
+            avoided=(
+                "Use the runtime value, such as Tap on Selected address is Manhattan, A108 Adams "
+                "St, New York, NY 10007, USA Delivering in null minutes."
+            ),
+            reason=(
+                "Addresses, user data, and ETA text are runtime values; replay should identify the "
+                "control by its visible role and purpose, not the current value."
+            ),
         ),
         AuthoringScenario(
             title="incomplete evidence",
@@ -214,6 +233,12 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
             ),
             CommandExample(
                 kind=AuthoringExampleKind.PREFERRED,
+                command="Tap on location dropdown",
+                reason="The command names the actual visible UI role and purpose instead of the current address value.",
+                situation="A delivery/location control was tapped and the screenshot shows a dropdown affordance.",
+            ),
+            CommandExample(
+                kind=AuthoringExampleKind.PREFERRED,
                 situation="A result was selected because it matched a runtime condition.",
                 command="Tap on the first matching result card in the results grid",
                 reason="The command carries the dynamic condition that made the selected card replayable.",
@@ -224,19 +249,28 @@ DRIZZ_COMMANDS: Tuple[CommandDoc, ...] = (
                 reason="The command leaves the UI role implicit even though evidence can name it.",
                 situation="A button label is recorded with enough evidence to identify it as a button.",
             ),
+            CommandExample(
+                command=(
+                    "Tap on Selected address is Manhattan, A108 Adams St, New York, NY 10007, "
+                    "USA Delivering in null minutes"
+                ),
+                kind=AuthoringExampleKind.AVOID,
+                reason="The command copies a dynamic runtime value and content-description sentence.",
+                situation="A delivery/location control was tapped to change the address.",
+            ),
         ),
     ),
     CommandDoc(
         name="type",
         syntax='Type "<value>" into <field>',
-        example='Type "John" into name input field',
+        example='Type "John" into name field',
         purpose="Enter a value into a focused field.",
         rules=("Use the recorded typed value and the field it was entered into.",),
         examples=(
             CommandExample(
                 kind=AuthoringExampleKind.PREFERRED,
                 situation="A field has raw placeholder text plus a cleaner semantic role.",
-                command='Type "search query" into search input field',
+                command='Type "search query" into search field',
                 reason="The replay target uses the field role instead of copying placeholder text.",
             ),
             CommandExample(

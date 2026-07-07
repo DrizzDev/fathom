@@ -152,6 +152,58 @@ class ExecuteActionValidationTest(unittest.TestCase):
         self.assertEqual(action.validation_subject, "Login screen")
 
 
+class ExecuteActionReplayTargetTest(unittest.TestCase):
+    """
+    Pins replay target requirements for executable tap and type commands.
+    """
+
+    def test_tap_without_export_or_script_target_is_rejected(self) -> None:
+        """
+        Tap must carry a stable replay phrase separate from the execution target.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "tap",
+                    "confidence": 0.9,
+                    "target_name": "Selected address is Manhattan",
+                }
+            )
+
+    def test_tap_accepts_dynamic_script_target(self) -> None:
+        """
+        Dynamic controls can keep exact target text while supplying a replay target.
+        """
+
+        action = ExecuteAction.model_validate(
+            {
+                "action_type": "tap",
+                "confidence": 0.9,
+                "target_name": "Selected address is Manhattan",
+                "target_type": "dynamic",
+                "script_target": "delivery address bar",
+            }
+        )
+
+        self.assertEqual(action.script_target, "delivery address bar")
+
+    def test_type_requires_replay_target(self) -> None:
+        """
+        Type must identify the field replay should use.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "type",
+                    "confidence": 0.9,
+                    "target_name": "Search an area or address",
+                    "text": "HSR",
+                }
+            )
+
+
 class ExecuteActionConditionalWaitTest(unittest.TestCase):
     """
     Pins the conditional-wait normalization the planner relies on.
@@ -252,6 +304,7 @@ class ExecuteActionConditionalWaitTest(unittest.TestCase):
             self.__payload(
                 action_type="tap",
                 target_name="Dismiss",
+                export_target="Dismiss button",
                 condition="Account chooser dialog is visible",
                 overlay_detected=True,
             ),

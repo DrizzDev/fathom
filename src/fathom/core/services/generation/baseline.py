@@ -6,6 +6,7 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.core.dialect.policy import Policy
 from fathom.core.exceptions import LanguageComplianceError
+from fathom.core.services.generation.commands import ScriptCommandBuilder
 from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.interfaces.dialect import Dialect
 from fathom.schemas.flow import BranchNode, Evidence, FlowNode, Issue
@@ -39,6 +40,7 @@ class BaselineScriptService:
         self.__policy = policy
         self.__dialect = dialect
         self.__generator = generator
+        self.__commands = ScriptCommandBuilder(dialect=dialect)
 
     def build(self, *, evidence: Evidence) -> BaselineArtifact:
         """
@@ -51,6 +53,7 @@ class BaselineScriptService:
             partial=report.flow.partial,
             discarded=evidence.discarded,
             lineage=self.__lineage(nodes=report.flow.nodes),
+            commands=self.__commands.build(flow=report.flow),
             reason=evidence.reason or (self.__PARTIAL_REASON if report.flow.partial else None),
         )
 

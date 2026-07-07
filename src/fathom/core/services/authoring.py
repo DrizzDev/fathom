@@ -112,9 +112,10 @@ class AuthoringService(AuthoringPort):
                     artifact=AuthoringArtifact(
                         content=review.text,
                         dialect=task.dialect,
-                        kind=AuthoringArtifactKind.TEXT,
-                        advisories=review.advisories,
                         lineage=review.lineage,
+                        commands=review.commands,
+                        advisories=review.advisories,
+                        kind=AuthoringArtifactKind.TEXT,
                     ),
                 )
 

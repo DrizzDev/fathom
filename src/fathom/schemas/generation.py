@@ -68,6 +68,40 @@ class Distillation(SealedModel):
     reason: Optional[str] = Field(default=None, description="Why the run was marked partial.")
 
 
+class ScrollCollapseState(SealedModel):
+    """
+    Tracks the active repeated-command region during recovery distillation.
+    """
+
+    command: Optional[str] = Field(
+        default=None, description="Command family currently eligible for collapse."
+    )
+    region: Optional[int] = Field(
+        default=None, description="Recovery interval currently being collapsed."
+    )
+
+    def repeats(self, *, command: Optional[str], region: Optional[int]) -> bool:
+        """
+        Return whether the incoming command repeats the active collapse state.
+        """
+
+        return (
+            command is not None
+            and region is not None
+            and (self.command == command and self.region == region)
+        )
+
+    def advance(self, *, command: Optional[str], region: Optional[int]) -> "ScrollCollapseState":
+        """
+        Return the next collapse state after a kept command.
+        """
+
+        if command is None or region is None:
+            return ScrollCollapseState()
+
+        return self.model_copy(update={"command": command, "region": region})
+
+
 class ScriptLineage(SealedModel):
     """
     Evidence provenance for one rendered script node.
@@ -86,6 +120,55 @@ class ScriptLineage(SealedModel):
     )
 
 
+class ScriptCommand(SealedModel):
+    """
+    Rendered command text paired with the flow node provenance that produced it.
+    """
+
+    text: str = Field(min_length=1, description="Rendered command text for one flow node.")
+    source_steps: Tuple[int, ...] = Field(
+        default_factory=tuple, description="Evidence steps represented by this command."
+    )
+    verified_by: Tuple[str, ...] = Field(
+        default_factory=tuple, description="Evidence channels that verified the command text."
+    )
+    screen_authored: bool = Field(
+        default=False, description="Whether the command text was authored from screen context."
+    )
+    structural: bool = Field(
+        default=False,
+        description="Whether the text is syntax structure; reserved for structural renderers.",
+    )
+
+
+class CompletionValidation(SealedModel):
+    """
+    Rendered terminal validation required to prove completed fallback scripts.
+    """
+
+    required: bool = Field(
+        default=False, description="Whether fallback composition must include terminal validation."
+    )
+    lines: Tuple[str, ...] = Field(
+        default_factory=tuple, description="Rendered terminal validation lines."
+    )
+    source_steps: Tuple[int, ...] = Field(
+        default_factory=tuple, description="Evidence steps grounding terminal validation lines."
+    )
+    verified_by: Tuple[str, ...] = Field(
+        default=("completion_assertion",),
+        description="Evidence channels that verified terminal validation lines.",
+    )
+
+    @property
+    def missing(self) -> bool:
+        """
+        Return whether required terminal validation is unavailable.
+        """
+
+        return self.required and not self.lines
+
+
 class ScriptReview(SealedModel):
     """
     Shared review state of a script-generation outcome.
@@ -93,6 +176,7 @@ class ScriptReview(SealedModel):
 
     partial: bool = Field(default=False, description="Whether the script needs review.")
     reason: Optional[str] = Field(default=None, description="Why the run is partial, when it is.")
+
     discarded: Tuple[int, ...] = Field(
         default_factory=tuple, description="Step numbers dropped during distillation."
     )
@@ -103,6 +187,10 @@ class ScriptReview(SealedModel):
     lineage: Tuple[ScriptLineage, ...] = Field(
         default_factory=tuple,
         description="Per-node evidence provenance labels for authored script review.",
+    )
+    commands: Tuple[ScriptCommand, ...] = Field(
+        default_factory=tuple,
+        description="Rendered commands with evidence provenance, keyed by source steps.",
     )
 
 

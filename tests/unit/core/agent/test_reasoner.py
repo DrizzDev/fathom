@@ -50,6 +50,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         is_goal_complete: bool = False,
         action_type: ActionType = ActionType.TAP,
         reasoning: str = "Submit tapped; new screen visible.",
+        validation_subject: Optional[str] = None,
         subgoal_completion_reason: Optional[str] = None,
     ) -> AnalysisResult:
         """
@@ -62,6 +63,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
                 target="t",
                 rationale="r",
                 confidence=1.0,
+                validation_subject=validation_subject,
             ),
             reasoning=reasoning,
             screen_description="post-action screen",
@@ -141,9 +143,9 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertFalse(evidence.claim.asserted)
 
-    def test_claim_justified_when_explicit_reason_present(self) -> None:
+    def test_claim_explained_when_explicit_explained(self) -> None:
         """
-        Explicit subgoal_completion_reason with asserted claim → claim.justified=True.
+        Explicit subgoal_completion_reason with asserted claim → claim.explained=True.
         """
 
         evidence = self.__reasoner().assess_completion(
@@ -156,7 +158,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
             screen_changed=True,
         )
 
-        self.assertTrue(evidence.claim.justified)
+        self.assertTrue(evidence.claim.explained)
 
     def test_action_dispatched_for_tap_action(self) -> None:
         """
@@ -171,6 +173,37 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         )
 
         self.assertTrue(evidence.action.dispatched)
+
+    def test_validation_evidence_requires_executed_validate_subject(self) -> None:
+        """
+        A validate action produces validation evidence only when it executed and names a subject.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.VALIDATE,
+                validation_subject="cart items are visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
+        )
+
+        self.assertTrue(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_non_validate_action(self) -> None:
+        """
+        A tap on a validation sub-goal is not validation evidence.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(action_type=ActionType.TAP),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=True,
+        )
+
+        self.assertFalse(evidence.validation.executed)
 
     def test_action_dispatched_for_directional_swipe_actions(self) -> None:
         """
@@ -402,11 +435,11 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertTrue(evidence.screen.evolved)
 
-    def test_dispatched_tap_with_justified_claim_and_screen_change_produces_all_action_signals(
+    def test_dispatched_tap_with_explained_claim_and_screen_change_produces_all_action_signals(
         self,
     ) -> None:
         """
-        A dispatched TAP with a justified completion claim and an evolved
+        A dispatched TAP with a explained completion claim and an evolved
         screen yields all four ACTION-level evidence signals regardless of
         criterion verdict.
         """
@@ -426,7 +459,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         )
 
         self.assertTrue(evidence.claim.asserted)
-        self.assertTrue(evidence.claim.justified)
+        self.assertTrue(evidence.claim.explained)
         self.assertTrue(evidence.action.dispatched)
         self.assertTrue(evidence.screen.evolved)
         assert evidence.criterion is not None

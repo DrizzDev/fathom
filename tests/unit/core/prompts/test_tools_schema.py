@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from fathom.constants.tools import ToolName
+from fathom.core.prompts import templates
 from fathom.core.prompts.tools import ToolRegistry
 
 
@@ -108,6 +109,33 @@ class ToolRegistryTest(unittest.TestCase):
 
         self.assertNotIn("enter", action_type["enum"])
 
+    def test_store_schema_and_guidance_stay_congruent(self) -> None:
+        """
+        execute_ui STORE must be taught wherever the execute_ui schema exposes it.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        action_type = execute_ui["parameters"]["properties"]["action"]["properties"]["action_type"]
+
+        self.assertIn("store", action_type["enum"])
+        self.assertIn("store", templates.ACTION_RULES)
+        self.assertIn("action_type='store'", templates.ACTION_RULES["store"])
+        self.assertIn("store", templates.TOOL_DESCRIPTIONS[ToolName.EXECUTE_UI])
+        self.assertIn(
+            "use execute_ui action_type='store'",
+            templates.TOOL_DESCRIPTIONS[ToolName.STORE_MEMORY],
+        )
+
+    def test_plannable_execute_actions_are_taught_in_prompt(self) -> None:
+        """
+        The execute_ui guidance must teach every first-class action family it exposes.
+        """
+
+        self.assertIn("- " + templates.ACTION_RULES["store"], templates.COMMON_RULES)
+
     def test_bbox_description_demands_tight_visible_extent(self) -> None:
         """
         The bbox schema description must instruct the planner to hug visible glyph extent only.
@@ -135,6 +163,69 @@ class ToolRegistryTest(unittest.TestCase):
 
         self.assertIn("EXACT visible text", target_name["description"])
         self.assertIn("Do NOT append interaction-kind suffixes", target_name["description"])
+
+    def test_execute_ui_description_matches_single_action_contract(self) -> None:
+        """
+        execute_ui declaration must not advertise multi-action turns.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+
+        self.assertIn("Execute one UI action", execute_ui["description"])
+        self.assertNotIn("sequence of UI actions", execute_ui["description"])
+
+    def test_wait_duration_description_points_to_required_wait_subject(self) -> None:
+        """
+        wait_duration must not look like the required wait field.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        properties = execute_ui["parameters"]["properties"]["action"]["properties"]
+
+        self.assertIn(
+            "wait_subject is the required semantic field",
+            properties["wait_duration"]["description"],
+        )
+        self.assertIn("REQUIRED for all wait actions", properties["wait_subject"]["description"])
+
+    def test_export_target_description_requires_scriptable_target(self) -> None:
+        """
+        export_target docs must require a script phrase without stale action families.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        export_target = execute_ui["parameters"]["properties"]["action"]["properties"][
+            "export_target"
+        ]
+
+        self.assertNotIn("long_press", export_target["description"])
+        self.assertIn("REQUIRED for tap and type", export_target["description"])
+        self.assertIn("stable replay target", export_target["description"])
+        self.assertIn("dropdown", export_target["description"])
+        self.assertNotIn("delivery address bar", export_target["description"])
+
+    def test_overlay_description_excludes_task_relevant_surfaces(self) -> None:
+        """
+        overlay_detected must not teach the planner to dismiss useful task surfaces.
+        """
+
+        definitions = ToolRegistry.get_all_definitions()["function_declarations"]
+        execute_ui = next(
+            definition for definition in definitions if definition["name"] == "execute_ui"
+        )
+        overlay = execute_ui["parameters"]["properties"]["action"]["properties"]["overlay_detected"]
+
+        self.assertIn("unrelated overlay", overlay["description"])
+        self.assertIn("contains the control", overlay["description"])
 
     def test_verify_goal_schema_exposes_completion_reason_fields(self) -> None:
         """

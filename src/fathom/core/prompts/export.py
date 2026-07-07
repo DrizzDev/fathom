@@ -59,7 +59,7 @@ class GeminiExportPromptBuilder(ExportPromptBuilder):
             "2) Group consecutive condition-bound actions into the same IF block when they share the same intent guard.\n"
             "3) For intents like 'if cart is not empty clear cart then add item', include ALL cart-clearing actions inside IF cart-not-empty block, and keep remaining actions outside that block.\n"
             "4) Never invent new actions, screens, or targets. Use only the provided trace data.\n"
-            "5) For repeatability, replace product-specific dynamic targets with generic references (e.g., 'the first search result') if the user intent does not explicitly name that product. Strip any store or brand names (like Costco, Walmart) from targets.\n"
+            "5) For repeatability, replace product-specific dynamic targets with role/ordinal descriptors when the user intent does not explicitly name that product. Strip any store or brand names from targets.\n"
             "6) Do not include store-brand names in action/condition targets; use generic functional targets instead.\n"
             "7) Keep OPEN_APP and final validations when supported by trace.\n"
             "8) The final non-structural line is final_validation: a single concise UI state assertion (what screen, page, or primary content is visible or displayed), inferred from intent and trace. Align with the user's goal semantically but abstract procedural wording into an end-state phrase—not a generic placeholder and not a verbatim copy of a long imperative intent.\n"

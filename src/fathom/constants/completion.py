@@ -1,6 +1,21 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
+from typing import Final, FrozenSet
+
+DURABLE_OUTCOME_TERMS: Final[FrozenSet[str]] = frozenset(
+    {
+        "add",
+        "added",
+        "adding",
+        "capture",
+        "captured",
+        "save",
+        "saved",
+        "store",
+        "stored",
+    }
+)
 
 
 class VerifyEvidenceDimension(StrEnum):
@@ -31,8 +46,10 @@ class RetainReason(StrEnum):
     MISSING_CLAIM = "MISSING_CLAIM"
     MISSING_CAPTURE = "MISSING_CAPTURE"
     MISSING_DISPATCH = "MISSING_DISPATCH"
+    MISSING_VALIDATION = "MISSING_VALIDATION"
     MISSING_JUSTIFICATION = "MISSING_JUSTIFICATION"
     MISSING_CAPTURE_REQUEST = "MISSING_CAPTURE_REQUEST"
+    MISSING_OUTCOME_EVIDENCE = "MISSING_OUTCOME_EVIDENCE"
     MISSING_SCREEN_EVOLUTION = "MISSING_SCREEN_EVOLUTION"
 
     CAPTURE_FAILED = "CAPTURE_FAILED"
@@ -56,4 +73,5 @@ class AdvanceReason(StrEnum):
     """
 
     STRICT_PATH = "STRICT_PATH"
+    VALIDATION_ACTION = "VALIDATION_ACTION"
     VALIDATION_IMPLICIT_COMPLETION = "VALIDATION_IMPLICIT_COMPLETION"

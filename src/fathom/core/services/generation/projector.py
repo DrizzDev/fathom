@@ -431,7 +431,28 @@ class DeterministicFlowGenerator(FlowGenerator):
         if step.target.structure.role:
             return step.target.structure.role
 
-        return step.target.export or step.target.name or step.target.claim.text
+        alias = DeterministicFlowGenerator.__stable_alias(step=step)
+        if alias is not None:
+            return alias
+
+        if step.target.claim.verified:
+            return step.target.claim.text
+
+        return None
+
+    @staticmethod
+    def __stable_alias(*, step: EvidenceStep) -> Optional[str]:
+        """
+        Return a typed replay alias that is not merely an unconfirmed planner claim.
+        """
+
+        unconfirmed = step.target.claim.text if not step.target.claim.verified else None
+
+        for alias in (step.target.generalized, step.target.export):
+            if alias and alias != unconfirmed:
+                return alias
+
+        return None
 
     @staticmethod
     def __subject(*, step: EvidenceStep) -> Optional[str]:
@@ -453,7 +474,7 @@ class DeterministicFlowGenerator(FlowGenerator):
         if step.guard.condition:
             return step.guard.condition
 
-        return step.target.export or step.target.name or step.target.generalized
+        return None
 
     @staticmethod
     def __action(*, value: str) -> Optional[ActionType]:

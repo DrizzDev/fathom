@@ -49,7 +49,7 @@ class Policy:
         issues: List[Issue] = []
         issues.extend(self.__completion(flow=flow, evidence=evidence))
         issues.extend(self.__recovery(indexed=indexed, index=index))
-        issues.extend(self.__provenance(indexed=indexed, index=index))
+        issues.extend(self.__provenance(indexed=indexed, index=index, evidence=evidence))
         issues.extend(self.__grounded_conditions(indexed=indexed, index=index))
         issues.extend(self.__unguarded_conditional(nodes=flow.nodes, index=index))
         issues.extend(self.__type_content(indexed=indexed, index=index))
@@ -143,7 +143,11 @@ class Policy:
         return issues
 
     def __provenance(
-        self, *, indexed: List[Tuple[int, FlowNode]], index: Dict[int, EvidenceStep]
+        self,
+        *,
+        indexed: List[Tuple[int, FlowNode]],
+        index: Dict[int, EvidenceStep],
+        evidence: Evidence,
     ) -> List[Issue]:
         """
         Require every cited evidence step to exist (the schema already guarantees non-empty).
@@ -153,6 +157,22 @@ class Policy:
 
         for position, node in indexed:
             if isinstance(node, (BranchNode, LaunchNode)):
+                continue
+
+            if isinstance(node, CheckNode) and node.assertion_ids:
+                if self.__matches_completion_assertions(node=node, evidence=evidence):
+                    continue
+
+                issues.append(
+                    Issue(
+                        node_index=position,
+                        code=IssueCode.DANGLING_PROVENANCE,
+                        message=(
+                            f"Check node {position} cites completion assertions absent from "
+                            "the evidence."
+                        ),
+                    )
+                )
                 continue
 
             for step in node.source_steps:

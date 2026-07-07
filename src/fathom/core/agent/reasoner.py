@@ -30,6 +30,7 @@ from fathom.schemas.completion import (
     CompletionEvidence,
     CriterionEvidence,
     ScreenEvidence,
+    ValidationEvidence,
 )
 from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
@@ -290,13 +291,15 @@ class Reasoner:
         explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
 
         if directive_aborts:
-            justified = True
+            explained = True
             rationale_similarity = 1.0
-            notes.append("claim.justified.via_operator_directive")
-            rationale_note: Optional[str] = "Rationale verified via operator directive (HITL)"
+            notes.append("claim.explained.via_operator_directive")
+            rationale_note: Optional[str] = (
+                "Completion reason provided by operator directive (HITL)"
+            )
         elif asserted and explicit_reason:
-            justified = True
-            rationale_note = f"Rationale verified via model reason: '{explicit_reason}'"
+            explained = True
+            rationale_note = f"Completion reason provided by model: '{explicit_reason}'"
             rationale_similarity = (
                 semantic_similarity
                 if semantic_similarity is not None
@@ -306,27 +309,25 @@ class Reasoner:
                     f"{analysis.reasoning} {screen_description or ''}".lower(),
                 ).ratio()
             )
-            notes.append("claim.justified.via_explicit_reason")
+            notes.append("claim.explained.via_explicit_reason")
         elif (
             asserted
             and semantic_similarity is not None
             and semantic_similarity >= LATERAL_CREDIT_SIMILARITY_THRESHOLD
         ):
-            justified = True
-            rationale_note = (
-                f"Rationale verified via embedding similarity (cosine={semantic_similarity:.2f})"
-            )
+            explained = True
+            rationale_note = f"Completion reason aligned by embedding similarity (cosine={semantic_similarity:.2f})"
             rationale_similarity = semantic_similarity
-            notes.append("claim.justified.via_embedding_similarity")
+            notes.append("claim.explained.via_embedding_similarity")
         else:
-            justified, rationale_note, _, rationale_similarity = self.__verify_rationale(
+            explained, rationale_note, _, rationale_similarity = self.__verify_rationale(
                 target=target,
                 analysis=analysis,
                 flagged_complete=asserted,
                 screen_description=screen_description,
             )
-        if justified and rationale_note is not None:
-            notes.append(f"claim.justified: {rationale_note}")
+        if explained and rationale_note is not None:
+            notes.append(f"claim.explained: {rationale_note}")
 
         if asserted and rationale_similarity < LATERAL_CREDIT_SIMILARITY_THRESHOLD:
             logger.info(
@@ -334,7 +335,7 @@ class Reasoner:
                 extra={
                     "component": "reasoner",
                     "event": "completion.lateral_credit.observed",
-                    "claim.justified": justified,
+                    "claim.explained": explained,
                     "sub_goal.index": sub_goal.index,
                     "action.type": action.action_type.value,
                     "sub_goal.description": sub_goal.description[:120],
@@ -381,8 +382,28 @@ class Reasoner:
             notes=tuple(notes),
             criterion=criterion_evidence,
             screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(dispatched=dispatched, executed=execution_success),
-            claim=ClaimEvidence(asserted=asserted, justified=justified),
+            action=ActionEvidence(
+                dispatched=dispatched,
+                executed=execution_success,
+            ),
+            validation=ValidationEvidence(
+                executed=self.__validation_executed(
+                    action=action, execution_success=execution_success
+                )
+            ),
+            claim=ClaimEvidence(asserted=asserted, explained=explained),
+        )
+
+    @staticmethod
+    def __validation_executed(*, action: Action, execution_success: bool) -> bool:
+        """
+        Return whether this turn recorded a concrete validate action.
+        """
+
+        return (
+            execution_success
+            and action.action_type is ActionType.VALIDATE
+            and bool((action.validation_subject or "").strip())
         )
 
     @staticmethod
@@ -394,8 +415,8 @@ class Reasoner:
         screen_description: Optional[str],
     ) -> Tuple[bool, Optional[str], bool, float]:
         """
-        Decide rationale verification.
-        Returns ``(verified, evidence, keyword_match, similarity)``.
+        Decide whether a claim carried a reason-like signal.
+        Returns ``(present, evidence, keyword_match, similarity)``.
         """
 
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
@@ -408,7 +429,7 @@ class Reasoner:
         if flagged_complete and explicit_reason:
             return (
                 True,
-                f"Rationale verified via model reason: '{explicit_reason}'",
+                f"Completion reason provided by model: '{explicit_reason}'",
                 keyword_match,
                 similarity,
             )
@@ -416,7 +437,8 @@ class Reasoner:
         if keyword_match or (similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found):
             return (
                 True,
-                f"Rationale verified via heuristic (similarity={similarity:.2f})",
+                f"Completion reason inferred by legacy rationale matcher "
+                f"(similarity={similarity:.2f})",
                 keyword_match,
                 similarity,
             )

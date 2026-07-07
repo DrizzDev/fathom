@@ -62,6 +62,15 @@ class AuthoringArtifactRole(StrEnum):
     ANNOTATED = "ANNOTATED"
 
 
+class AuthoringTrust(StrEnum):
+    """
+    Trust label for authoring evidence channels.
+    """
+
+    CLAIM = "CLAIM"
+    SCREEN = "SCREEN"
+
+
 class AuthoringExampleKind(StrEnum):
     """
     Role of an example supplied to an authoring prompt.

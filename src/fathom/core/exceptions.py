@@ -142,7 +142,7 @@ class ToolValidationError(VisionError):
 
     def __init__(self, feedback: ToolErrorFeedback) -> None:
         # Use the feedback message directly so callers see a concise, model-ready description of what went wrong.
-        super().__init__(message=feedback.message, retryable=False)
+        super().__init__(message=feedback.message, retryable=True)
         self.feedback = feedback
 
 

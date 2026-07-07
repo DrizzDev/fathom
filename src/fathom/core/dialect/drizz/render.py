@@ -11,6 +11,7 @@ from fathom.constants.dialect.drizz import (
     Syntax,
 )
 from fathom.constants.flow import CheckKind, ScrollDirection
+from fathom.core.dialect.drizz.assertions import AssertionSubjectNormalizer
 from fathom.core.dialect.drizz.quote import Quoting
 from fathom.core.exceptions import InvariantViolation
 from fathom.interfaces.renderer import Renderer as RenderPort
@@ -44,6 +45,7 @@ class Renderer(RenderPort):
     """
 
     __quoting = Quoting()
+    __subjects = AssertionSubjectNormalizer()
 
     __STATES: Dict[CheckKind, State] = {
         CheckKind.VISIBLE: State.VISIBLE,
@@ -166,10 +168,16 @@ class Renderer(RenderPort):
             return f"{Keyword.SET_GPS}(latitude={node.latitude}, longitude={node.longitude})"
 
         if isinstance(node, StoreNode):
-            return f"{Keyword.STORE} {self.__quoting.conditional(value=node.value)} {Phrase.AS} {node.name}"
+            return (
+                f"{Keyword.STORE} {self.__quoting.conditional(value=node.value)} "
+                f"{Phrase.AS} {node.name}"
+            )
 
         if isinstance(node, MapNode):
-            return f"{Keyword.MAP_ACTION} {Keyword.TAP} {Phrase.ON} {self.__selector(selector=node.selector)}"
+            return (
+                f"{Keyword.MAP_ACTION} {Keyword.TAP} {Phrase.ON} "
+                f"{self.__selector(selector=node.selector)}"
+            )
 
         if isinstance(node, CheckNode):
             return self.__check(node=node)
@@ -270,7 +278,7 @@ class Renderer(RenderPort):
 
         word = self.__GROUP_STATES[node.checks[0].kind]
         numbered = " ".join(
-            f"{index}. {self.__quoting.wrap(value=check.subject)}"
+            f"{index}. {self.__quoting.wrap(value=self.__subject(check=check))}"
             for index, check in enumerate(node.checks, start=1)
         )
         return f"{Keyword.VALIDATE} {Phrase.FOLLOWING} {word}: {numbered}"
@@ -280,4 +288,14 @@ class Renderer(RenderPort):
         Render one assertion as 'subject state'.
         """
 
-        return f"{self.__quoting.conditional(value=check.subject)} {self.__STATES[check.kind]}"
+        return (
+            f"{self.__quoting.conditional(value=self.__subject(check=check))} "
+            f"{self.__STATES[check.kind]}"
+        )
+
+    def __subject(self, *, check: Check) -> str:
+        """
+        Return the assertion subject without duplicate rendered state words.
+        """
+
+        return self.__subjects.normalize(subject=check.subject, state=self.__STATES[check.kind])

@@ -27,6 +27,9 @@ class AuthoringPrompt(ABC):
         "Use dialect.guide.lexicon as advisory UI terminology when it helps make a command complete and replayable.",
         "Use task.evidence.run.baseline as the deterministic scaffold when present; improve wording and structure only when the surrounding evidence, drafts, assertions, and artifacts support it.",
         "Use target.anchors and target.structure as target truth; use target.claim only when target.claim.verified is true.",
+        "When target.claim.verified is false, never use target.claim.text as the replay target; use confirmed anchors, structural role, screenshots, or mark the Flow partial.",
+        "For dynamic controls, describe the actual visible UI role and purpose seen on screen instead of copying the current address, user data, ETA, cart total, or content-description sentence; if it visually behaves like a dropdown, use dropdown, not bar.",
+        "Treat narrative fields marked trust=CLAIM as planner claims; prefer screenshot, annotated screen, trace, manifest, target anchors, and target structure when they disagree.",
         "Use action, target, guard, capture, launch, observation, rationale, artifacts, and review as evidence, not as text to copy mechanically.",
         "When screenshots are attached, inspect visible UI state, target identity, and validation evidence; when manifests or UI trees are attached, use them to disambiguate element role and structure.",
         "Artifacts are optional; if they are absent, author from the recorded execution data without pretending visual or manifest evidence was available.",
@@ -34,6 +37,7 @@ class AuthoringPrompt(ABC):
         "Collapse repeated attempts when one episode shows several tries toward one user-level purpose.",
         "Keep separate commands when the evidence shows separate user-level purposes.",
         "For completed run authoring, end with a Validate node grounded in supplied completion assertions; cite the assertion id in assertion_ids.",
+        "Copy completion assertion subjects exactly; do not paraphrase verifier-owned assertion text.",
     )
 
     def system_instruction(self) -> str:

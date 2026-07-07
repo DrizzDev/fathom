@@ -11,6 +11,7 @@ from fathom.constants.dialect.drizz import (
     Syntax,
 )
 from fathom.constants.flow import CheckKind, ScrollDirection
+from fathom.core.dialect.drizz.assertions import AssertionSubjectNormalizer
 from fathom.core.dialect.drizz.quote import Quoting
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.dialect.drizz.command import (
@@ -59,6 +60,7 @@ class CanonicalPrinter:
         ScrollDirection.RIGHT: Direction.RIGHT,
     }
     __quoting = Quoting()
+    __subjects = AssertionSubjectNormalizer()
 
     def emit(self, *, script: DrizzScript) -> str:
         """
@@ -227,7 +229,7 @@ class CanonicalPrinter:
 
         word = self.__GROUP_STATES[command.assertions[0].state]
         numbered = " ".join(
-            f"{index}. {self.__quoting.wrap(value=assertion.subject)}"
+            f"{index}. {self.__quoting.wrap(value=self.__subject(assertion=assertion))}"
             for index, assertion in enumerate(command.assertions, start=1)
         )
         return f"{Keyword.VALIDATE} {Phrase.FOLLOWING} {word}: {numbered}"
@@ -237,4 +239,16 @@ class CanonicalPrinter:
         Print one assertion as 'subject state'.
         """
 
-        return f"{self.__quoting.conditional(value=assertion.subject)} {self.__STATES[assertion.state]}"
+        return (
+            f"{self.__quoting.conditional(value=self.__subject(assertion=assertion))} "
+            f"{self.__STATES[assertion.state]}"
+        )
+
+    def __subject(self, *, assertion: Assertion) -> str:
+        """
+        Return the assertion subject without duplicate rendered state words.
+        """
+
+        return self.__subjects.normalize(
+            subject=assertion.subject, state=self.__STATES[assertion.state]
+        )

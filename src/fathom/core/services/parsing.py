@@ -175,14 +175,19 @@ class ToolResponseParser:
             raise VisionError(f"Unknown function call: {name}")
 
     @staticmethod
-    def __validation_error(*, tool_name: str, error: ValidationError) -> ToolValidationError:
+    def __validation_error(
+        *, tool_name: str, error: ValidationError, arguments: Any
+    ) -> ToolValidationError:
         """
         Build value-safe model feedback for malformed tool arguments.
         """
 
         issues = error.errors(include_input=False)
-        locations = tuple(ToolResponseParser.__validation_location(issue=issue) for issue in issues)
+
         issue_types = tuple(str(issue.get("type", "unknown")) for issue in issues)
+        argument_keys, action_keys = ToolResponseParser.__argument_key_summary(arguments=arguments)
+        messages = tuple(ToolResponseParser.__validation_message(issue=issue) for issue in issues)
+        locations = tuple(ToolResponseParser.__validation_location(issue=issue) for issue in issues)
 
         logger.warning(
             "Tool schema validation failed",
@@ -190,22 +195,24 @@ class ToolResponseParser:
                 "component": "core.services.parsing",
                 "event": "tool.schema.invalid",
                 "tool.name": tool_name,
-                "tool.error.count": len(issues),
                 "tool.error.locations": locations,
+                "tool.error.count": len(issues),
                 "tool.error.types": issue_types,
+                "tool.error.messages": messages,
+                "tool.action.keys": action_keys,
+                "tool.argument.keys": argument_keys,
             },
         )
 
         location_text = ", ".join(locations) if locations else "<unknown>"
+        message_text = "; ".join(messages) if messages else "No validation detail was provided."
+
         return ToolValidationError(
             ToolErrorFeedback(
-                tool_name=tool_name,
                 tool_call_id=None,
+                tool_name=tool_name,
                 error_kind="validation",
-                message=(
-                    f"{tool_name} arguments validation failed at {location_text}. "
-                    "Fix the tool payload shape and required fields."
-                ),
+                message=f"{tool_name} arguments validation failed at {location_text}: {message_text}",
             )
         )
 
@@ -225,11 +232,33 @@ class ToolResponseParser:
         return str(location)
 
     @staticmethod
-    def __merge_tool_response(
-        *,
-        primary: ToolResponse,
-        extra: ToolResponse,
-    ) -> ToolResponse:
+    def __validation_message(*, issue: Mapping[str, object]) -> str:
+        """
+        Return the Pydantic validation message without payload input values.
+        """
+
+        message = str(issue.get("msg", "")).strip()
+        return message or "Validation failed."
+
+    @staticmethod
+    def __argument_key_summary(*, arguments: Any) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        """
+        Return top-level and action-level argument keys without values.
+        """
+
+        if not isinstance(arguments, Mapping):
+            return (), ()
+
+        action = arguments.get("action")
+        argument_keys = tuple(sorted(str(key) for key in arguments))
+
+        if isinstance(action, Mapping):
+            return argument_keys, tuple(sorted(str(key) for key in action))
+
+        return argument_keys, ()
+
+    @staticmethod
+    def __merge_tool_response(*, extra: ToolResponse, primary: ToolResponse) -> ToolResponse:
         """
         Merge non-command tool-response parts into the primary parsed response.
         """
@@ -238,10 +267,11 @@ class ToolResponseParser:
             raise VisionError("Multiple executable tool commands emitted in one turn")
 
         command = primary.command or extra.command
+
         return ToolResponse(
             command=command,
-            updates=primary.updates + extra.updates,
             data=primary.data + extra.data,
+            updates=primary.updates + extra.updates,
             artifacts=primary.artifacts + extra.artifacts,
             diagnostics=primary.diagnostics + extra.diagnostics,
         )
@@ -270,6 +300,7 @@ class ToolResponseParser:
         """
 
         metadata = dict(arguments)
+
         if name == "store_memory" and "value" in metadata:
             metadata["value"] = "<redacted>"
 
@@ -277,6 +308,7 @@ class ToolResponseParser:
             memory_updates = metadata.get("memory_updates")
             if isinstance(memory_updates, dict):
                 metadata["memory_updates"] = dict.fromkeys(memory_updates, "<redacted>")
+
             action = metadata.get("action")
             if isinstance(action, dict):
                 metadata["action"] = ToolResponseParser.__redacted_action_metadata(action=action)
@@ -286,32 +318,43 @@ class ToolResponseParser:
     @staticmethod
     def __redacted_action_metadata(*, action: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Return execute_ui action metadata with capture values redacted.
+        Return execute_ui action metadata with user-entered values redacted.
         """
 
         metadata = dict(action)
+        for field in ("text", "text_to_type"):
+            if isinstance(metadata.get(field), str):
+                metadata[field] = f"<redacted:length={len(metadata[field])}>"
+
+        for field in ("condition", "rationale", "validation_reason"):
+            if isinstance(metadata.get(field), str):
+                metadata[field] = f"<present:length={len(metadata[field])}>"
+
         capture = metadata.get("capture")
+
         if isinstance(capture, dict) and "value" in capture:
             redacted_capture = dict(capture)
-            redacted_capture["value"] = "<redacted>"
+            value = redacted_capture["value"]
+            redacted_capture["value"] = (
+                f"<redacted:length={len(value)}>" if isinstance(value, str) else "<redacted>"
+            )
             metadata["capture"] = redacted_capture
 
         return metadata
 
     @staticmethod
     def __log_tool_response(
-        *,
-        result: AnalysisResult,
-        primary_tool: str,
-        parallel_count: int,
+        *, primary_tool: str, parallel_count: int, result: AnalysisResult
     ) -> None:
         """
         Emit a value-safe summary of the parsed model-tool turn.
         """
 
         response = result.tool_response or ToolResponse()
+
         command = response.command
         capture = command.payload.capture if command is not None else None
+
         logger.info(
             "Tool turn parsed",
             extra={
@@ -365,7 +408,7 @@ class ToolResponseParser:
                 "Auto-derived missing subgoal_completion_reason from rationale",
                 extra={
                     "component": "core.services.parsing",
-                    "event": "parsing.completion_reason.autofilled",
+                    "event": "parsing.completion_reason.auto-filled",
                     "completion.scope": "subgoal",
                     "source.tool": source_tool,
                     "source.field": "action.rationale",
@@ -378,7 +421,7 @@ class ToolResponseParser:
                 "Auto-derived missing goal_completion_reason from rationale",
                 extra={
                     "component": "core.services.parsing",
-                    "event": "parsing.completion_reason.autofilled",
+                    "event": "parsing.completion_reason.auto-filled",
                     "completion.scope": "goal",
                     "source.tool": source_tool,
                     "source.field": "action.rationale",
@@ -513,7 +556,9 @@ class ToolResponseParser:
         try:
             args = VerifyGoalArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="verify_goal", error=error) from error
+            raise self.__validation_error(
+                tool_name="verify_goal", error=error, arguments=arguments
+            ) from error
 
         reason = args.assistant_message
         raw_goal_completed = getattr(args, "goal_completed", None)
@@ -522,12 +567,23 @@ class ToolResponseParser:
         sub_completed = bool(raw_sub_goal_completed)
         screen = args.current_screen
 
+        action_type = ActionType.COMPLETE if completed else ActionType.VALIDATE
+        validation_subject = (
+            self.__first_text(
+                args.subgoal_completion_reason,
+                args.goal_completion_reason,
+                screen,
+            )
+            if action_type is ActionType.VALIDATE
+            else None
+        )
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
                 rationale=reason,
                 target=screen,
-                action_type=ActionType.COMPLETE if completed else ActionType.VALIDATE,
+                action_type=action_type,
+                validation_subject=validation_subject,
             ),
             alternatives=[],
             reasoning=reason,
@@ -549,6 +605,18 @@ class ToolResponseParser:
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
 
+    @staticmethod
+    def __first_text(*values: Optional[str]) -> str:
+        """
+        Return the first non-empty text value.
+        """
+
+        for value in values:
+            if value and (text := value.strip()):
+                return text
+
+        return ""
+
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
         """
         Parses the validate_state tool arguments.
@@ -557,7 +625,9 @@ class ToolResponseParser:
         try:
             args = ValidateStateArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="validate_state", error=error) from error
+            raise self.__validation_error(
+                tool_name="validate_state", error=error, arguments=arguments
+            ) from error
 
         evidence = args.evidence
         reason = args.assistant_message
@@ -577,6 +647,7 @@ class ToolResponseParser:
                 target=condition,
                 action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
+                validation_subject=condition.strip(),
             ),
             alternatives=[],
             reasoning=reason,
@@ -605,7 +676,9 @@ class ToolResponseParser:
         try:
             args = ExecuteUIArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="execute_ui", error=error) from error
+            raise self.__validation_error(
+                tool_name="execute_ui", error=error, arguments=arguments
+            ) from error
 
         message = args.assistant_message
         raw_goal_completed = getattr(args, "goal_completed", None)
@@ -657,6 +730,9 @@ class ToolResponseParser:
                 "command.has_bounds": data.bbox is not None,
                 "command.confidence": data.confidence,
                 "capture.present": data.capture is not None,
+                "tool.action.redacted": self.__redacted_action_metadata(
+                    action=data.model_dump(mode="json", exclude_none=True)
+                ),
             },
         )
 
@@ -703,7 +779,9 @@ class ToolResponseParser:
         try:
             args = StoreMemoryArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="store_memory", error=error) from error
+            raise self.__validation_error(
+                tool_name="store_memory", error=error, arguments=arguments
+            ) from error
 
         reason = args.assistant_message
 
@@ -733,7 +811,9 @@ class ToolResponseParser:
         try:
             args = RecallMemoryArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="recall_memory", error=error) from error
+            raise self.__validation_error(
+                tool_name="recall_memory", error=error, arguments=arguments
+            ) from error
 
         reason = args.assistant_message
 
@@ -763,7 +843,9 @@ class ToolResponseParser:
         try:
             args = AskUserArgs.model_validate(arguments or {})
         except ValidationError as error:
-            raise self.__validation_error(tool_name="ask_user", error=error) from error
+            raise self.__validation_error(
+                tool_name="ask_user", error=error, arguments=arguments
+            ) from error
 
         question = (args.question or "").strip()
         context = (args.context or "").strip()

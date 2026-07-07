@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from fathom.authoring.application.materializer import AuthoringMaterializer
 from fathom.constants.authoring import AuthoringKind
 from fathom.constants.flow import IssueCode
 from fathom.core.dialect.policy import Policy
 from fathom.core.exceptions import LanguageComplianceError
+from fathom.core.services.generation.commands import ScriptCommandBuilder
 from fathom.interfaces.dialect import Dialect
 from fathom.schemas.authoring import AuthoringTask
 from fathom.schemas.flow import (
@@ -21,7 +23,7 @@ from fathom.schemas.flow import (
     TapNode,
     TypeNode,
 )
-from fathom.schemas.generation import ScriptLineage
+from fathom.schemas.generation import ScriptCommand, ScriptLineage
 
 
 class AuthoringReview:
@@ -36,13 +38,15 @@ class AuthoringReview:
         issues: Tuple[Issue, ...],
         advisories: Tuple[Issue, ...] = (),
         lineage: Tuple[ScriptLineage, ...] = (),
+        commands: Tuple[ScriptCommand, ...] = (),
     ) -> None:
         """
-        Bind review issues, advisories, lineage, and rendered script text.
+        Bind review issues, advisories, provenance, command map, and rendered script text.
         """
 
         self.__text = text
         self.__issues = issues
+        self.__commands = commands
         self.__advisories = advisories
         self.__lineage_records = lineage
 
@@ -79,6 +83,14 @@ class AuthoringReview:
         return self.__lineage_records
 
     @property
+    def commands(self) -> Tuple[ScriptCommand, ...]:
+        """
+        Return rendered command metadata keyed by evidence source steps.
+        """
+
+        return self.__commands
+
+    @property
     def accepted(self) -> bool:
         """
         Return whether the reviewed flow can be published.
@@ -92,13 +104,21 @@ class AuthoringReviewer:
     Reviews authored flows with hard-truth policy and dialect checks.
     """
 
-    def __init__(self, *, policy: Policy, dialect: Dialect) -> None:
+    def __init__(
+        self,
+        *,
+        policy: Policy,
+        dialect: Dialect,
+        materializer: Optional[AuthoringMaterializer] = None,
+    ) -> None:
         """
-        Bind deterministic policy and target dialect.
+        Bind deterministic policy, target dialect, and metadata materializer.
         """
 
         self.__policy = policy
         self.__dialect = dialect
+        self.__commands = ScriptCommandBuilder(dialect=dialect)
+        self.__materializer = materializer or AuthoringMaterializer()
 
     def review(self, *, task: AuthoringTask, flow: Flow) -> AuthoringReview:
         """
@@ -107,6 +127,9 @@ class AuthoringReviewer:
 
         issues: Tuple[Issue, ...] = ()
         evidence = self.__evidence(task=task)
+
+        if evidence is not None:
+            flow = self.__materializer.materialize(flow=flow, evidence=evidence)
 
         if task.kind is AuthoringKind.RUN and evidence is not None:
             issues = self.__policy.evaluate(flow=flow, evidence=evidence).issues
@@ -123,6 +146,7 @@ class AuthoringReviewer:
         return AuthoringReview(
             text=text,
             issues=issues + syntax.issues,
+            commands=self.__commands.build(flow=flow),
             lineage=self.__lineage(flow=flow, evidence=evidence),
             advisories=self.__advisories(flow=flow, evidence=evidence),
         )
@@ -135,8 +159,8 @@ class AuthoringReviewer:
         if evidence is None:
             return ()
 
-        index = {step.index: step for step in evidence.steps if step.launch is None}
         advisories: List[Issue] = []
+        index = {step.index: step for step in evidence.steps if step.launch is None}
 
         for position, node in enumerate(self.__flatten(nodes=flow.nodes)):
             if self.__uses_unconfirmed_claim(node=node, index=index):
@@ -158,8 +182,8 @@ class AuthoringReviewer:
         Return per-node evidence provenance labels for metadata.
         """
 
-        index = {} if evidence is None else {step.index: step for step in evidence.steps}
         records: List[ScriptLineage] = []
+        index = {} if evidence is None else {step.index: step for step in evidence.steps}
 
         for position, node in enumerate(self.__flatten(nodes=flow.nodes)):
             steps = tuple(step for step in node.source_steps if step in index)
@@ -237,6 +261,7 @@ class AuthoringReviewer:
         """
 
         claim = step.target.claim.text
+
         if claim is None or step.target.claim.verified:
             return False
 

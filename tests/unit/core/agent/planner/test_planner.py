@@ -120,6 +120,7 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
                     payload=ExecuteAction(
                         action_type="tap",
                         target_name="Search box",
+                        export_target="Search box",
                         confidence=0.9,
                     ),
                 )

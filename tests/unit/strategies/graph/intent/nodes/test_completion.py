@@ -19,6 +19,7 @@ from fathom.schemas.completion import (
     CompletionEvidence,
     CriterionEvidence,
     ScreenEvidence,
+    ValidationEvidence,
 )
 from fathom.schemas.criterion import (
     CriterionDecision,
@@ -124,9 +125,10 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
     def __evidence(
         *,
         asserted: bool,
-        justified: bool = True,
+        explained: bool = True,
         dispatched: bool = True,
         evolved: bool = True,
+        validation: bool = False,
         criterion_observed: Optional[bool] = None,
     ) -> CompletionEvidence:
         """
@@ -139,8 +141,12 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
             else None
         )
         return CompletionEvidence(
-            claim=ClaimEvidence(asserted=asserted, justified=justified),
-            action=ActionEvidence(dispatched=dispatched, executed=dispatched),
+            claim=ClaimEvidence(asserted=asserted, explained=explained),
+            action=ActionEvidence(
+                dispatched=dispatched,
+                executed=dispatched,
+            ),
+            validation=ValidationEvidence(executed=validation),
             screen=ScreenEvidence(evolved=evolved),
             criterion=criterion,
         )
@@ -424,7 +430,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """
-        ACTION sub-goal with asserted + justified + dispatched + evolved evidence
+        ACTION sub-goal with asserted + explained + dispatched + evolved evidence
         advances regardless of criterion observer verdict.
         """
 
@@ -466,8 +472,9 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         checker = _StubCriterionChecker(
             decisions=(self.__decision(verdict=CriterionVerdict.UNSATISFIED),),
         )
+        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
         evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
+            context=context,
             criterion_observer=checker,
         )
 
@@ -481,21 +488,65 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        context.agent_state.mark_current_sub_goal_complete.assert_called_once()
 
-    async def test_validation_subgoal_advances_on_claim_asserted_alone(self) -> None:
+    async def test_validation_subgoal_retains_on_claim_asserted_without_validate(
+        self,
+    ) -> None:
         """
-        VALIDATION sub-goal advances on ``claim.asserted`` alone, without
-        requiring action dispatch or screen evolution.
+        VALIDATION sub-goal cannot advance on ``claim.asserted`` alone.
         """
 
         sub_goal = self.__sub_goal(
             kind=SubGoalKind.VALIDATION,
             description="Validate Jars & Containers is visible",
         )
-        evidence = self.__evidence(asserted=True, justified=False, dispatched=False, evolved=False)
+        evidence = self.__evidence(
+            asserted=True,
+            explained=False,
+            dispatched=False,
+            evolved=False,
+            validation=False,
+        )
         signal = self.__signal(flagged_complete=True)
         checker = _StubCriterionChecker(
             decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
+        )
+        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
+        evaluator = SubGoalEvaluator(
+            context=context,
+            criterion_observer=checker,
+        )
+
+        result = await evaluator.evaluate(
+            plan=self.__plan_with_analysis(),
+            step_result=self.__step_result(action_type=ActionType.VALIDATE, screen_changed=False),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        context.agent_state.mark_current_sub_goal_complete.assert_not_called()
+
+    async def test_validation_subgoal_advances_on_validate_evidence(self) -> None:
+        """
+        VALIDATION sub-goal advances on concrete validate action evidence.
+        """
+
+        sub_goal = self.__sub_goal(
+            kind=SubGoalKind.VALIDATION,
+            description="Validate Jars & Containers is visible",
+        )
+        evidence = self.__evidence(
+            asserted=True,
+            explained=True,
+            dispatched=True,
+            evolved=False,
+            validation=True,
+        )
+        signal = self.__signal(flagged_complete=True)
+        checker = _StubCriterionChecker(
+            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
         )
         evaluator = SubGoalEvaluator(
             context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
@@ -515,11 +566,11 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_action_sub_goal_missing_screen_evolution_retains(self) -> None:
         """
-        Action sub-goal with claim+justified+dispatched but no screen change → RETAIN.
+        Action sub-goal with claim+explained+dispatched but no screen change → RETAIN.
         """
 
         sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True, justified=True, dispatched=True, evolved=False)
+        evidence = self.__evidence(asserted=True, explained=True, dispatched=True, evolved=False)
         signal = self.__signal(flagged_complete=True)
         checker = _StubCriterionChecker(
             decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
@@ -684,14 +735,14 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_criterion_satisfied_alone_cannot_advance_action_sub_goal(self) -> None:
         """
-        Criterion observer SATISFIED but no claim/justified/dispatched/evolved → RETAIN.
+        Criterion observer SATISFIED but no claim/explained/dispatched/evolved → RETAIN.
         The criterion observer is additive; it cannot rescue a missing main signal.
         """
 
         sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
         evidence = self.__evidence(
             asserted=False,
-            justified=False,
+            explained=False,
             dispatched=False,
             evolved=False,
             criterion_observed=True,

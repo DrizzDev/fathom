@@ -142,6 +142,23 @@ class RoundTripTest(unittest.TestCase):
         )
         self.assertEqual(self.__check(nodes=nodes), ())
 
+    def test_validation_subject_with_state_phrase_round_trips_once(self) -> None:
+        """
+        A validation subject carrying the state phrase prints the state only once.
+        """
+
+        nodes: Tuple[FlowNode, ...] = (
+            CheckNode(
+                checks=(Check(kind=CheckKind.VISIBLE, subject="cart is visible"),),
+                source_steps=(0,),
+            ),
+        )
+        text = self.__renderer.render(flow=Flow(intent="t", package="com.example", nodes=nodes))
+
+        self.assertIn("Validate cart is visible", text)
+        self.assertNotIn('"cart is visible" is visible', text)
+        self.assertEqual(self.__check(nodes=nodes), ())
+
     def test_wait_subject_with_embedded_single_quotes_round_trips(self) -> None:
         """
         A wait subject containing single quotes renders in a parser-safe form.

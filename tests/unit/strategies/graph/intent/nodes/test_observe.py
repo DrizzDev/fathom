@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.services.settlement import ScreenSettlementService
 from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.results import ExecutionResult
-from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenHashBundle
+from fathom.schemas.settlement import (
+    PostActionScreen,
+    PreActionScreen,
+    ScreenSettlementEvidence,
+)
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.observe import ObserveNode
 
@@ -171,3 +178,103 @@ class ObserveNodeExecutedWiringTest(unittest.IsolatedAsyncioTestCase):
         step_result = result[CommonStateKey.STEP_RESULT]
         self.assertTrue(step_result.executed)
         self.assertFalse(step_result.success)
+
+
+class PostActionSettlementTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins delayed settlement recapture for transition-capable actions.
+    """
+
+    @staticmethod
+    def __diff(*, distance: int) -> ScreenDiff:
+        """
+        Build a minimal screen diff with the requested visual distance.
+        """
+
+        return ScreenDiff(
+            phash_distance=distance,
+            xml_hash_changed=False,
+            activity_changed=False,
+            interaction_hash_changed=False,
+        )
+
+    @staticmethod
+    def __capture(*, image: bytes = b"image", activity: str = "app") -> ScreenCapture:
+        """
+        Build a screen capture fixture.
+        """
+
+        return ScreenCapture(
+            image=image,
+            width=1080,
+            height=2340,
+            activity=activity,
+            timestamp=1,
+        )
+
+    def __settlement(
+        self, *, comparator: MagicMock, observer: MagicMock
+    ) -> ScreenSettlementService:
+        """
+        Build the settlement service with a screenshot-only recapture path.
+        """
+
+        device = MagicMock(name="Device")
+        device.capture_screen = AsyncMock(return_value=b"settled")
+        device.get_current_package = AsyncMock(return_value="app")
+        configuration = SimpleNamespace(
+            engine=SimpleNamespace(stability_wait=0, transition_grace_period=0)
+        )
+
+        return ScreenSettlementService(
+            device=device,
+            state=observer,
+            comparison=comparator,
+            configuration=configuration,
+        )
+
+    async def test_no_progress_navigation_recaptures_settled_screen(self) -> None:
+        """
+        A successful no-progress tap gets one delayed screenshot recapture and returns settled progress.
+        """
+
+        comparator = MagicMock()
+        comparator.compare.return_value = self.__diff(distance=24)
+        observer = MagicMock()
+        observer.resolve_capture_hashes.return_value = ScreenHashBundle(
+            visual_hash="ffffffffffffffff",
+            xml_hash="0",
+            interaction_hash="0",
+        )
+        observer.build_screen_state.return_value = None
+        action = Action(action_type=ActionType.TAP, rationale="open cart")
+        execution = ExecutionContext(
+            package="app",
+            step=Step(step_number=1, screen_hash="0", action=action),
+            capture=self.__capture(),
+            localization=LocalizationResult(status=LocalizationStatus.RESOLVED, confidence=1.0),
+            execution_result=ExecutionResult(success=True, duration=1),
+        )
+
+        result = await self.__settlement(
+            comparator=comparator,
+            observer=observer,
+        ).compare(
+            evidence=ScreenSettlementEvidence(
+                execution=execution,
+                before=PreActionScreen(capture=self.__capture()),
+                after=PostActionScreen(
+                    capture=self.__capture(),
+                    hashes=ScreenHashBundle(
+                        visual_hash="0000000000000000",
+                        xml_hash="0",
+                        interaction_hash="0",
+                    ),
+                    diff=self.__diff(distance=0),
+                ),
+            )
+        )
+
+        self.assertEqual(result.capture.image, b"settled")
+        self.assertEqual(result.hashes.visual_hash, "ffffffffffffffff")
+        self.assertEqual(result.diff.phash_distance, 24)

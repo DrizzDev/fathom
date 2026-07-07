@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 from fathom.constants import ActionType
+from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.schemas.actions import Action
@@ -273,7 +275,13 @@ class PostActionCancellationTest(unittest.IsolatedAsyncioTestCase):
         """
 
         context = SimpleNamespace(
-            configuration=SimpleNamespace(engine=SimpleNamespace(stability_wait=0)),
+            configuration=SimpleNamespace(
+                engine=SimpleNamespace(stability_wait=0, transition_grace_period=0)
+            ),
+            device=SimpleNamespace(
+                capture_screen=AsyncMock(return_value=b"post"),
+                get_current_package=AsyncMock(return_value="app"),
+            ),
             perception_port=SimpleNamespace(capture=AsyncMock(return_value=self.__capture())),
             storage=SimpleNamespace(backend=None),
             telemetry=AsyncMock(),
@@ -303,6 +311,59 @@ class PostActionCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(artifacts.screen.after)
         comparator.compare.assert_not_called()
         observer.observe.assert_not_called()
+
+    async def test_post_action_observation_timeout_degrades_without_hanging(self) -> None:
+        """
+        A hung post-action perception capture returns degraded evidence instead of wedging the run.
+        """
+
+        async def capture_slowly() -> ScreenCapture:
+            """
+            Simulate a wedged perception adapter.
+            """
+
+            await asyncio.sleep(delay=1.0)
+            return self.__capture()
+
+        context = SimpleNamespace(
+            configuration=SimpleNamespace(
+                engine=SimpleNamespace(stability_wait=0, transition_grace_period=0),
+                device=SimpleNamespace(
+                    type=DeviceConnectionType.LOCAL,
+                    platform=DevicePlatform.ANDROID,
+                    android=SimpleNamespace(snapshot_timeout=0.01),
+                ),
+            ),
+            device=SimpleNamespace(
+                configuration=None,
+                capture_screen=AsyncMock(return_value=b"post"),
+                get_current_package=AsyncMock(return_value="app"),
+            ),
+            perception_port=SimpleNamespace(capture=AsyncMock(side_effect=capture_slowly)),
+            storage=SimpleNamespace(backend=None),
+            telemetry=SimpleNamespace(warning=AsyncMock()),
+            use_xml=True,
+            is_cancelled=False,
+            workflow_id="wf",
+        )
+        observer = Mock()
+        comparator = Mock()
+        post_action = PostAction(
+            context=context,
+            observer=observer,
+            comparator=comparator,
+        )
+
+        observation, screen_diff, post_hash, post_activity, artifacts = await post_action.observe(
+            context=self.__execution_context(),
+        )
+
+        self.assertIsNone(observation)
+        self.assertIsNone(screen_diff)
+        self.assertIsNone(artifacts)
+        self.assertEqual(post_hash, "0000000000000000")
+        self.assertEqual(post_activity, "app")
+        context.telemetry.warning.assert_awaited_once()
 
 
 def _capture(
@@ -688,6 +749,23 @@ class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
         )
         return post_action, observer, context
 
+    def __execution_context(self) -> ExecutionContext:
+        """
+        Build an execution context that is ineligible for settle recapture.
+        """
+
+        return ExecutionContext(
+            package="com.test.app",
+            step=Step(
+                step_number=1,
+                screen_hash="0",
+                action=Action(action_type=ActionType.TAP, rationale="tap"),
+            ),
+            capture=self.__capture(image=b"before"),
+            localization=LocalizationResult(status=LocalizationStatus.RESOLVED, confidence=1.0),
+            execution_result=None,
+        )
+
     async def test_observer_observe_is_not_called_in_post_action_path(self) -> None:
         """
         The post-action compare path bypasses observer.observe entirely so OCR/icon enrichment never re-runs.
@@ -696,6 +774,7 @@ class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
         post_action, observer, _ = self.__build_post_action()
 
         await post_action._PostAction__compare(  # type: ignore[attr-defined]
+            context=self.__execution_context(),
             package_name="com.test.app",
             before_capture=self.__capture(image=b"before"),
             before_state=None,
@@ -712,6 +791,7 @@ class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
         post_action, _, _ = self.__build_post_action()
 
         result = await post_action._PostAction__compare(  # type: ignore[attr-defined]
+            context=self.__execution_context(),
             package_name="com.test.app",
             before_capture=self.__capture(image=b"before"),
             before_state=None,
@@ -731,6 +811,7 @@ class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
             "fathom.strategies.graph.intent.nodes.effect", level="INFO"
         ) as captured:
             await post_action._PostAction__compare(  # type: ignore[attr-defined]
+                context=self.__execution_context(),
                 package_name="com.test.app",
                 before_capture=self.__capture(image=b"before"),
                 before_state=None,

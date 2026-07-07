@@ -22,6 +22,7 @@ from fathom.constants.state import (
     IntentStateKey,
     PlanMetadataKey,
 )
+from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
@@ -390,6 +391,11 @@ class AnalyzeNode:
             # CancelledError is the cooperative cancellation signal; it
             # must propagate so the LangGraph task tree unwinds cleanly.
             raise
+        except ToolValidationError as exception:
+            return self.__handle_tool_validation_exhaustion(
+                exception=exception,
+                state=state,
+            )
         except Exception as exception:
             logger.exception(
                 f"Analysis failed: {exception}",
@@ -497,6 +503,54 @@ class AnalyzeNode:
             return plan_reason
 
         return graph_reason if isinstance(graph_reason, str) else None
+
+    def __handle_tool_validation_exhaustion(
+        self, *, state: IntentGraphState, exception: ToolValidationError
+    ) -> IntentGraphState:
+        """
+        Convert exhausted tool-schema retries into a bounded planner retry state.
+        """
+
+        logger.warning(
+            "Tool schema validation exhausted inside vision analysis",
+            extra={
+                "event": "analyze.tool_schema.invalid",
+                "component": "graph.intent.analyze",
+                "reason": exception.feedback.message,
+                "workflow.id": self.__provider.context.workflow_id,
+            },
+        )
+        diagnostic = f"Tool schema validation failed: {exception.feedback.message}"[:500]
+        result = cast(
+            "IntentGraphState",
+            {
+                IntentStateKey.PLAN: None,
+                IntentStateKey.VERIFY_MODE: None,
+                IntentStateKey.PLANNED_STEP: None,
+                IntentStateKey.SHOULD_RETRY: True,
+                IntentStateKey.INJECTED_CONTEXT: None,
+                IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
+                CommonStateKey.ANALYSIS: None,
+                CommonStateKey.IS_COMPLETE: False,
+                CommonStateKey.ANALYSIS_DURATION: 0.0,
+                CommonStateKey.FAILURE_DIAGNOSTIC: diagnostic,
+                CommonStateKey.COMPLETION_REASON: state.get(CommonStateKey.COMPLETION_REASON),
+                CommonStateKey.SCREEN_OBSERVATION: state.get(CommonStateKey.SCREEN_OBSERVATION),
+            },
+        )
+
+        terminate_result = self.__consume_planner_retry(
+            base_result=result,
+            plan_metadata={
+                RetryMetadataField.BLOCK_REASON.value: diagnostic,
+                RetryMetadataField.BRANCH.value: RetryBranch.UNKNOWN.value,
+                RetryMetadataField.KIND.value: RetryKind.LLM_FEEDBACK.value,
+            },
+        )
+        final_result = terminate_result or result
+        self.__provider.persistence.persist(result=final_result)
+
+        return final_result
 
     @staticmethod
     def __completion_destination(*, completion_reason: Optional[str]) -> str:

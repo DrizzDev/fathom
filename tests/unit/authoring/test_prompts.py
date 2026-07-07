@@ -77,6 +77,9 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
         self.assertIn("few-shot examples", system)
         self.assertIn("target.anchors", system)
         self.assertIn("target.structure", system)
+        self.assertIn("never use target.claim.text", system)
+        self.assertIn("actual visible UI role", system)
+        self.assertIn("dropdown, not bar", system)
         self.assertIn("partial Flow", system)
         self.assertIn("# Dialect Reference", user)
         self.assertIn("# Evidence", user)
@@ -137,6 +140,12 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
         self.assertTrue(
             any("Conditional guards" in scenario.reason for scenario in reference.guide.scenarios)
         )
+        self.assertTrue(
+            any(
+                "actual visible UI role" in scenario.preferred
+                for scenario in reference.guide.scenarios
+            )
+        )
 
         store_examples = commands["store"].examples
         validate_examples = commands["validate"].examples
@@ -154,6 +163,8 @@ class AuthoringPromptFactoryTest(unittest.TestCase):
         )
         self.assertTrue(any("selection context" in example.reason for example in tap_examples))
         self.assertTrue(any("UI role" in example.reason for example in tap_examples))
+        self.assertTrue(any("location dropdown" in example.command for example in tap_examples))
+        self.assertTrue(any("null minutes" in example.command for example in tap_examples))
         self.assertTrue(any("visible state" in example.reason for example in scroll_until_examples))
         self.assertTrue(
             any("concatenates aliases" in example.reason for example in commands["type"].examples)

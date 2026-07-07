@@ -11,6 +11,7 @@ from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
 from fathom.core.agent.action import ActionBuilder
 from fathom.core.agent.command import CommandGate
+from fathom.core.services.settlement import ScreenSettlementService
 from fathom.schemas.actions import Action
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
@@ -25,7 +26,6 @@ from fathom.strategies.graph.exploration.state import (
     get_step_result,
     is_content_exhausted,
 )
-from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,8 @@ class ExplorationNodeProvider:
         """
 
         self.__context = context
-        self.__command_gate = CommandGate(catalog=context.catalog)
         self.__action_builder = ActionBuilder()
+        self.__command_gate = CommandGate(catalog=context.catalog)
 
     async def ground(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -203,8 +203,7 @@ class ExplorationNodeProvider:
             session_id=self.__context.workflow_id,
         )
 
-        # Post-action stability wait with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
+        await ScreenSettlementService.pause_for(configuration=self.__context.configuration)
 
         duration = time.time() - start_time
 
@@ -317,8 +316,7 @@ class ExplorationNodeProvider:
             package_name=self.__context.package_name,
         )
 
-        # Wait for stability with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
+        await ScreenSettlementService.pause_for(configuration=self.__context.configuration)
 
         # Update state with remaining navigation
         result = cast("Dict[str, Any]", dict(state))

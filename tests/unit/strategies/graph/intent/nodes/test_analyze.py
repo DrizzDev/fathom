@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
+from fathom.constants.retries import RetryKind
 from fathom.constants.state import (
     TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
@@ -16,9 +17,10 @@ from fathom.constants.state import (
 )
 from fathom.constants.tools import StateNamespace
 from fathom.core.agent.state import AgentState
+from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult, ToolErrorFeedback
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
@@ -215,6 +217,56 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[CommonStateKey.IS_COMPLETE])
         self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
         self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+
+    async def test_tool_schema_validation_exhaustion_routes_to_retry_not_failed(
+        self,
+    ) -> None:
+        """
+        Exhausted tool-schema retries consume planner budget instead of marking the run failed.
+        """
+
+        agent_state = AgentState(
+            intent="search product",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            side_effect=ToolValidationError(
+                ToolErrorFeedback(
+                    tool_name="execute_ui",
+                    tool_call_id=None,
+                    error_kind="validation",
+                    message=(
+                        "execute_ui arguments validation failed at action: "
+                        "validation_subject is required for action_type='validate'."
+                    ),
+                )
+            )
+        )
+        provider = self.__provider(agent_state=agent_state, planner=planner)
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+        state: Dict[Any, Any] = {
+            CommonStateKey.CAPTURE: ScreenCapture(
+                width=100,
+                height=200,
+                activity="app",
+                image=b"png",
+                timestamp=1,
+            )
+        }
+
+        result = await node.run(state=state)
+
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+        self.assertEqual(agent_state.retries.planner.count, 1)
+        attempt = agent_state.last_retry_attempt
+        assert attempt is not None
+        self.assertEqual(attempt.kind, RetryKind.LLM_FEEDBACK)
+        diagnostic = result[CommonStateKey.FAILURE_DIAGNOSTIC]
+        assert isinstance(diagnostic, str)
+        self.assertIn("validation_subject", diagnostic)
 
 
 class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):

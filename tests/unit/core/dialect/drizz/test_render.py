@@ -174,6 +174,43 @@ class RendererTest(unittest.TestCase):
         )
         self.assertIn('Validate the following are visible: 1. "cart" 2. "total"', text)
 
+    def test_validation_subject_does_not_repeat_rendered_state(self) -> None:
+        """
+        Validation subjects that already include the state render once.
+        """
+
+        text = self.__render(
+            nodes=(
+                CheckNode(
+                    checks=(Check(kind=CheckKind.VISIBLE, subject="cart is visible"),),
+                    source_steps=(0,),
+                ),
+            )
+        )
+
+        self.assertIn("Validate cart is visible", text)
+        self.assertNotIn('"cart is visible" is visible', text)
+
+    def test_grouped_validation_subjects_do_not_repeat_rendered_state(self) -> None:
+        """
+        Grouped validation items strip duplicate state phrases before numbering.
+        """
+
+        text = self.__render(
+            nodes=(
+                CheckNode(
+                    checks=(
+                        Check(kind=CheckKind.VISIBLE, subject="cart is visible"),
+                        Check(kind=CheckKind.VISIBLE, subject="total is visible"),
+                    ),
+                    source_steps=(0,),
+                ),
+            )
+        )
+
+        self.assertIn('Validate the following are visible: 1. "cart" 2. "total"', text)
+        self.assertNotIn('"cart is visible"', text)
+
     def test_branch_renders_indented_body(self) -> None:
         """
         A branch renders an IF header, braces, and an indented body.

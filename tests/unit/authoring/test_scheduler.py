@@ -180,3 +180,44 @@ class StepAuthoringSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(source.reads, 0)
         self.assertEqual(drafts.drafts, ())
+
+    async def test_discarded_step_is_not_authored(self) -> None:
+        """
+        Scheduler skips steps removed by evidence distillation.
+        """
+
+        evidence = Evidence(
+            intent="tap search",
+            goal="search focused",
+            package="com.example",
+            discarded=(3,),
+            steps=(EvidenceStep(action="tap", event="action", index=2),),
+        )
+        drafts = RecordingDraftStore()
+        source = StubEvidenceSource(evidence=evidence)
+        scheduler = StepAuthoringScheduler(
+            builder=AuthoringEvidenceBuilder(),
+            source=source,
+            runner=AuthoringRunner(
+                agent=AuthoringAgent(),
+                configuration=AuthoringConfiguration(
+                    step=StepAuthoringConfiguration(mode=AuthoringMode.SYNC)
+                ),
+            ),
+            drafts=drafts,
+            author=StubAuthoring(),
+        )
+
+        scheduler.schedule_step(
+            execution_id="execution-1",
+            step_index=3,
+            objective=RunObjective(
+                intent="tap search",
+                goal="search focused",
+                package="com.example",
+            ),
+        )
+        await scheduler.drain()
+
+        self.assertEqual(source.reads, 1)
+        self.assertEqual(drafts.drafts, ())

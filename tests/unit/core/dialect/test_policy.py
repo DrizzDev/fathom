@@ -478,6 +478,64 @@ class PolicyTest(unittest.TestCase):
         self.assertNotIn(IssueCode.VALIDATION_SUBJECT_MISMATCH, codes)
         self.assertNotIn(IssueCode.MISSING_GOAL_VALIDATION, codes)
 
+    def test_completion_assertion_provenance_uses_assertions_not_step_index(self) -> None:
+        """
+        Verifier assertion indexes do not have to exist as executable evidence steps.
+        """
+
+        evidence = self.__partial_evidence().model_copy(
+            update={
+                "partial": False,
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.cart",
+                        kind=CheckKind.VISIBLE,
+                        source=AssertionSource.VERIFICATION,
+                        subject="Cart screen",
+                        step_index=22,
+                    ),
+                ),
+            }
+        )
+        terminal = CheckNode(
+            source_steps=(22,),
+            assertion_ids=("terminal.cart",),
+            checks=(Check(kind=CheckKind.VISIBLE, subject="Cart screen"),),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1), terminal)
+
+        codes = self.__codes(nodes=nodes, evidence=evidence)
+
+        self.assertNotIn(IssueCode.DANGLING_PROVENANCE, codes)
+        self.assertNotIn(IssueCode.INVENTED_VALIDATION, codes)
+
+    def test_completion_assertion_rejects_unknown_assertion_id(self) -> None:
+        """
+        Assertion-backed checks must cite persisted assertion identifiers.
+        """
+
+        evidence = self.__partial_evidence().model_copy(
+            update={
+                "partial": False,
+                "assertions": (
+                    CompletionAssertion(
+                        id="terminal.cart",
+                        kind=CheckKind.VISIBLE,
+                        source=AssertionSource.VERIFICATION,
+                        subject="Cart screen",
+                    ),
+                ),
+            }
+        )
+        terminal = CheckNode(
+            source_steps=(22,),
+            assertion_ids=("terminal.missing",),
+            checks=(Check(kind=CheckKind.VISIBLE, subject="Cart screen"),),
+        )
+        nodes: Tuple[FlowNode, ...] = (self.__launch(), self.__tap(step=1), terminal)
+
+        self.assertIn(IssueCode.DANGLING_PROVENANCE, self.__codes(nodes=nodes, evidence=evidence))
+
     def test_completion_assertion_rejects_wrong_terminal_subject(self) -> None:
         """
         A terminal validation citing verifier evidence must match the asserted subject.

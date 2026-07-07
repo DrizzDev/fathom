@@ -105,6 +105,7 @@ class ActionBuilderTest(unittest.TestCase):
                 payload=ExecuteAction(
                     action_type="type",
                     target_name="Search box",
+                    export_target="Search box",
                     text="soap",
                     confidence=0.91,
                 ),

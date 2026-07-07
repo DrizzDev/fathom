@@ -49,6 +49,12 @@ _ACTION_RULES_RAW = {
         "Visual cues: confirm toggle is on/off (green vs gray), banner/toast text is visible, "
         "expected page title or section header is displayed, error message is present or absent."
     ),
+    "store": (
+        "STORE: Use when the active step asks to capture, save, or store a value. "
+        "Emit execute_ui with action_type='store' and capture={name, subject, value}. "
+        "The value must be read from the current screen or trusted task context. "
+        "If the requested value is visible, store it now; do not validate, scroll, or use store_memory instead."
+    ),
     "zoom": "ZOOM: 'zoom_in' to enlarge, 'zoom_out' to shrink. Target the relevant region.",
     "type": (
         "CRITICAL - TAP BEFORE TYPE: Always tap input first to gain focus. "
@@ -61,19 +67,24 @@ ACTION_RULES = MappingProxyType(_ACTION_RULES_RAW)
 # UI handling rules (Immutable)
 _UI_RULES_RAW = {
     "goal_lock": (
-        "GOAL LOCK: Never change intent. Dismiss blockers FIRST, then proceed. "
-        "Common blockers: cookie banners (bottom bar with Accept/Reject), permission dialogs "
-        "(system-styled Allow/Deny), privacy popups, login walls, app update dialogs, "
-        "rating requests (star icons with Maybe Later), survey popups."
+        "GOAL LOCK: Never change intent. Resolve unrelated blockers first, then proceed. "
+        "Common unrelated blockers: cookie banners (bottom bar with Accept/Reject), permission "
+        "dialogs (system-styled Allow/Deny), privacy popups, login walls, app update dialogs, "
+        "rating requests (star icons with Maybe Later), survey popups. Do not dismiss a surface "
+        "that contains the control, option, value, or confirmation required by the active step."
     ),
     "dropdown": (
-        "DROPDOWN DISMISS: If a dropdown, picker, or action sheet is open (floating list over dimmed content, "
-        "or bottom tray with options), dismiss it first via X, 'Close', 'Done', or tapping outside."
+        "SURFACE RELEVANCE: A dropdown, picker, menu, action sheet, or bottom sheet is a task "
+        "surface when it contains controls or options needed for the active step. Interact inside "
+        "that surface. Dismiss it only when it is unrelated to the active step and blocks the "
+        "intended target."
     ),
     "overlay": (
         "OVERLAY DETECTION: Identify app overlays by visual cues: dimmed/darkened background scrim, "
         "centered card/dialog, bottom sheet rising from screen edge, or full-screen modal with X/close button. "
-        "Dismiss these BEFORE interacting with underlying content. Ignore only fixed system chrome (status bar, nav bar)."
+        "Treat an overlay as a blocker only when it prevents the active step and does not contain "
+        "the active step's required control, option, value, or confirmation. Ignore only fixed "
+        "system chrome (status bar, nav bar)."
     ),
     "icon_vs_page": (
         "ICON vs PAGE: Distinguish small icons vs full-page content. "
@@ -91,6 +102,11 @@ COMMON_RULES = f"""
 {UI_RULES["overlay"]}
 {UI_RULES["goal_lock"]}
 
+COMPLETION:
+- For durable outcomes such as adding an item, saving a setting, or storing a value, do not mark the active step complete merely because a new sheet, dialog, or page opened.
+- Continue interacting inside task-relevant surfaces until the requested outcome is visible or recorded.
+- When the outcome is visible and the active step is not itself a STORE, use validate to prove the outcome before claiming the step is complete.
+
 BBOX PRECISION:
 - {PRECISION_RULES["text"]}
 - {PRECISION_RULES["icon"]}
@@ -102,24 +118,27 @@ ACTIONS:
 - {ACTION_RULES["scroll"]}
 - {ACTION_RULES["wait"]}
 - {ACTION_RULES["validate"]}
+- {ACTION_RULES["store"]}
 - {ACTION_RULES["zoom"]}
 
 STRICT FORMAT: Return only valid tool calls using provided schema fields.
 """
 
 _EXECUTE_UI_GUIDANCE = (
-    "- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, zoom).\n"
+    "- execute_ui: PRIMARY tool for interactions (tap, type, swipe, scroll, wait, validate, store, zoom).\n"
     "  * Delta telemetry is MANDATORY on every execute_ui call: always include both delta_observed (boolean) and delta_confidence (0.0-1.0).\n"
     "  * For explicit checks/validation, prefer execute_ui with action_type='validate'.\n"
     "  * For any guard-based step, set is_conditional=true and conditional_type (blocker/transient/error/optional).\n"
     "  * Whenever is_conditional=true, the 'condition' field is MANDATORY: a present-tense sentence describing the visible guard (e.g., 'Permission dialog is displayed', 'Main menu is visible', 'Loading spinner is active').\n"
     "  * For a conditional wait, 'condition' must describe the awaited state in the present tense (e.g., 'Search results are visible'), not the act of waiting.\n"
-    "  * For overlay/popup dismissal: if the screenshot shows a scrim, dialog, sheet, or banner over the main UI, set overlay_detected=true and condition to describe the overlay (e.g., 'Cookie consent banner visible').\n"
+    "  * For overlay/popup dismissal: set overlay_detected=true only when the visible dialog, sheet, or banner is unrelated to the active step and blocks the intended target. If that surface contains the needed control or option, interact inside it instead.\n"
     "  * Evaluate is_valid and validation_reason for EVERY action.\n"
     "  * confidence is REQUIRED for EVERY action.\n"
     "  * If action is risky/ambiguous, set is_valid=False and explain.\n"
     "  * BBOX PRECISION: bbox MUST hug the visible glyph or icon pixels of the SPECIFIC interactive control. Exclude surrounding card, shadow, halo, and empty padding. The runtime taps the geometric center of bbox.\n"
-    "  * COMMAND NAMING: 'target_name' and 'natural_language_target' MUST be the EXACT visible text or glyph label of the control, verbatim (e.g., 'Submit', 'Add to cart', 'HSR Layout'). Do NOT append interaction-kind suffixes such as 'button', 'icon', 'tab', 'link', 'chip', 'cell', 'row' — 'action_type' already names the interaction.\n"
+    "  * COMMAND NAMING: 'target_name' and 'natural_language_target' name the EXACT visible text or glyph label used for execution (e.g., 'Submit', 'Add to cart', 'HSR Layout'). Do NOT append interaction-kind suffixes there.\n"
+    "    'export_target' or 'script_target' is REQUIRED for tap/type and must name the stable replay target separately.\n"
+    "    For dynamic controls, do not copy runtime values such as addresses, user names, ETA text, cart totals, or content-description sentences into export_target; name the actual visible UI role and purpose instead, such as dropdown, field, row, card, chip, button, icon, tab, or menu item.\n"
     "    DO NOT use raw IDs like 'edt_cvv' or 'button_23'. For unlabelled icons describe the visible symbol concisely (e.g., 'Magnifying glass').\n"
     "  * STATE TRACKING (CRITICAL): Use the 'memory_updates' field to atomically track your progress.\n"
     "    Example: memory_updates={'selected_days': 'Mon,Tue', 'roadmap_step_1': 'complete'}\n"
@@ -133,7 +152,10 @@ _TOOL_DESCRIPTIONS_RAW: Mapping[ToolName, str] = {
     ),
     ToolName.VERIFY_GOAL: "- verify_goal: Use for explicit completion checks.",
     ToolName.STORE_MEMORY: (
-        "- store_memory: Secondary tool. Use ONLY for saving complex text data that doesn't fit in execute_ui."
+        "- store_memory: Use only for internal run memory or progress notes that "
+        "are not part of the user's requested captured output. If the user asks "
+        "to store, capture, remember, or save a visible value as a named script "
+        "variable, use execute_ui action_type='store' with a capture payload."
     ),
     ToolName.RECALL_MEMORY: (
         "- recall_memory: Check what you've already done to avoid repeating actions."

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Optional, Tuple
 
 from fathom.core.services.generation.distiller import Distiller
-from fathom.schemas.steps import StepRecord
+from fathom.schemas.steps import StepGoal, StepRecord
 
 
 class DistillerTest(unittest.TestCase):
@@ -44,6 +44,7 @@ class DistillerTest(unittest.TestCase):
         event: Literal["action", "validation"] = "action",
         condition: Optional[str] = None,
         rationale: Optional[str] = None,
+        goal: Optional[StepGoal] = None,
         success: bool = True,
     ) -> StepRecord:
         """
@@ -61,6 +62,7 @@ class DistillerTest(unittest.TestCase):
             success=success,
             screen_changed=True,
             duration=0,
+            goal=goal,
         )
 
     def __recovery(self, *, number: int) -> StepRecord:
@@ -104,6 +106,50 @@ class DistillerTest(unittest.TestCase):
 
         self.assertEqual(self.__numbers(records=result.records), (0, 3))
         self.assertEqual(result.discarded, (1, 2))
+
+    def test_drops_incidental_surface_dismissal(self) -> None:
+        """
+        A planner close/dismiss action outside the active goal is recovery, not replayable script.
+        """
+
+        records = (
+            self.__record(number=0, target="Add"),
+            self.__record(
+                number=1,
+                target="Close",
+                rationale="Closing the quantity sheet to go back to search results.",
+                goal=StepGoal(
+                    index=2,
+                    description="Search and add 1 diet coke to cart",
+                    directive="tap",
+                ),
+            ),
+            self.__record(number=2, target="Cart"),
+        )
+
+        result = self.__distiller.distill(records=records)
+
+        self.assertEqual(self.__numbers(records=result.records), (0, 2))
+        self.assertEqual(result.discarded, (1,))
+
+    def test_keeps_intentional_surface_dismissal(self) -> None:
+        """
+        A close action remains when closing is itself the active goal.
+        """
+
+        records = (
+            self.__record(
+                number=0,
+                target="Close",
+                rationale="Closing the dialog requested by the user.",
+                goal=StepGoal(index=0, description="Close the dialog", directive="tap"),
+            ),
+        )
+
+        result = self.__distiller.distill(records=records)
+
+        self.assertEqual(self.__numbers(records=result.records), (0,))
+        self.assertEqual(result.discarded, ())
 
     def test_does_not_collapse_repeats_across_a_single_recovery(self) -> None:
         """
@@ -151,6 +197,25 @@ class DistillerTest(unittest.TestCase):
         result = self.__distiller.distill(records=records)
 
         self.assertEqual(self.__numbers(records=result.records), (0, 1, 2))
+
+    def test_preserves_trailing_no_screen_change_action(self) -> None:
+        """
+        A normal executed action remains scriptable even when it records no screen change.
+        """
+
+        trailing = self.__record(
+            number=1,
+            condition="Overlay is visible",
+            target="Dismiss",
+        ).model_copy(update={"screen_changed": False})
+        records = (
+            self.__record(number=0, target="Home"),
+            trailing,
+        )
+
+        result = self.__distiller.distill(records=records)
+
+        self.assertEqual(self.__numbers(records=result.records), (0, 1))
 
     def test_collapses_only_consecutive_scrolls_inside_recovery_region(self) -> None:
         """

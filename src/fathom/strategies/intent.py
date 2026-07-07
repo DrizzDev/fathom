@@ -50,9 +50,9 @@ from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.finalization import FinalizationBudgetPolicy
 from fathom.schemas.flow import Check, CheckNode, Evidence, Flow, Issue, RunObjective
 from fathom.schemas.generation import (
+    CompletionValidation,
     GenerationResult,
     ScriptFileMetadata,
-    ScriptLineage,
     ScriptReview,
 )
 from fathom.schemas.metrics import ExecutionMetrics
@@ -771,16 +771,17 @@ class IntentStrategy:
             if artifact is not None:
                 review = review.model_copy(
                     update={
-                        "advisories": artifact.advisories,
                         "lineage": artifact.lineage,
+                        "commands": artifact.commands,
+                        "advisories": artifact.advisories,
                     }
                 )
 
             return GenerationResult(
-                text=response.script or "",
                 attempts=1,
-                source=ScriptSource.QUALITY,
                 review=review,
+                text=response.script or "",
+                source=ScriptSource.QUALITY,
             )
 
         logger.info(
@@ -796,8 +797,11 @@ class IntentStrategy:
             drafts=drafts,
             evidence=evidence,
             baseline=baseline,
-            completion_validation=self.__terminal_assertion_lines(evidence=evidence),
-            require_completion_validation=self.__requires_terminal_assertion(evidence=evidence),
+            completion=CompletionValidation(
+                lines=self.__terminal_assertion_lines(evidence=evidence),
+                required=self.__requires_terminal_assertion(evidence=evidence),
+                source_steps=self.__assertion_source_steps(evidence=evidence),
+            ),
         )
         if draft_result is not None and self.__valid_script(result=draft_result):
             logger.info(
@@ -805,8 +809,8 @@ class IntentStrategy:
                 extra={
                     "event": "authoring.step_drafts.selected",
                     "execution.id": self.__execution_id,
-                    "script.line_count": len(draft_result.text.splitlines()),
                     "script.partial": draft_result.review.partial,
+                    "script.line_count": len(draft_result.text.splitlines()),
                 },
             )
             return draft_result
@@ -937,37 +941,15 @@ class IntentStrategy:
             content=artifact.text,
             reason=artifact.metadata.review.reason,
             partial=artifact.metadata.review.partial,
-            commands=self.__baseline_commands(
-                content=artifact.text,
-                lineage=artifact.metadata.review.lineage,
+            commands=tuple(
+                AuthoringBaselineCommand(
+                    text=command.text,
+                    structural=command.structural,
+                    source_steps=command.source_steps,
+                )
+                for command in artifact.metadata.review.commands
             ),
         )
-
-    @staticmethod
-    def __baseline_commands(
-        *,
-        content: str,
-        lineage: Tuple[ScriptLineage, ...],
-    ) -> Tuple[AuthoringBaselineCommand, ...]:
-        """
-        Pair rendered baseline command text with its evidence source steps.
-        """
-
-        commands: List[AuthoringBaselineCommand] = []
-        lines = tuple(line.strip() for line in content.splitlines() if line.strip())
-
-        for position, line in enumerate(lines):
-            if position >= len(lineage):
-                continue
-
-            commands.append(
-                AuthoringBaselineCommand(
-                    text=line,
-                    source_steps=lineage[position].source_steps,
-                )
-            )
-
-        return tuple(commands)
 
     async def __cancelled_quality_script(
         self,
@@ -1244,10 +1226,10 @@ class IntentStrategy:
                 },
             )
             await self.__emit_script_generated_event(
-                review=artifact.metadata.review,
-                script_data=artifact.text,
                 run_outcome=run_outcome,
+                script_data=artifact.text,
                 source=ScriptSource.BASELINE,
+                review=artifact.metadata.review,
             )
             return
 

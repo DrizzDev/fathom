@@ -8,10 +8,13 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.schemas.flow import Issue
 from fathom.schemas.generation import (
+    CompletionValidation,
     GenerationFailure,
     GenerationResult,
+    ScriptCommand,
     ScriptFileMetadata,
     ScriptReview,
+    ScrollCollapseState,
 )
 
 
@@ -76,6 +79,85 @@ class GenerationResultTest(unittest.TestCase):
 
         self.assertFalse(result.review.partial)
         self.assertEqual(result.review.discarded, ())
+
+
+class CompletionValidationTest(unittest.TestCase):
+    """
+    Pins terminal completion validation semantics for fallback composition.
+    """
+
+    def test_optional_completion_validation_is_not_missing(self) -> None:
+        """
+        Optional completion validation is satisfied without rendered lines.
+        """
+
+        validation = CompletionValidation()
+
+        self.assertFalse(validation.missing)
+
+    def test_required_completion_validation_without_lines_is_missing(self) -> None:
+        """
+        Required completion validation is missing until rendered lines exist.
+        """
+
+        validation = CompletionValidation(required=True)
+
+        self.assertTrue(validation.missing)
+
+    def test_required_completion_validation_with_lines_is_satisfied(self) -> None:
+        """
+        Required completion validation is satisfied by rendered validation lines.
+        """
+
+        validation = CompletionValidation(
+            required=True,
+            lines=("Validate login screen is visible",),
+        )
+
+        self.assertFalse(validation.missing)
+
+
+class ScriptCommandTest(unittest.TestCase):
+    """
+    Pins rendered command provenance defaults.
+    """
+
+    def test_command_defaults_to_unverified_non_screen_authored_text(self) -> None:
+        """
+        Rendered commands do not claim verification unless a producer supplies it.
+        """
+
+        command = ScriptCommand(text="Tap on product card", source_steps=(2,))
+
+        self.assertEqual(command.verified_by, ())
+        self.assertFalse(command.screen_authored)
+
+
+class ScrollCollapseStateTest(unittest.TestCase):
+    """
+    Pins repeated-command collapse state without coupling it to line positions.
+    """
+
+    def test_repeats_only_when_command_and_region_match(self) -> None:
+        """
+        A command repeats only inside the same active recovery region.
+        """
+
+        state = ScrollCollapseState(command="scroll", region=1)
+
+        self.assertTrue(state.repeats(command="scroll", region=1))
+        self.assertFalse(state.repeats(command="scroll", region=2))
+        self.assertFalse(state.repeats(command="tap", region=1))
+
+    def test_advance_resets_when_command_or_region_is_absent(self) -> None:
+        """
+        Missing command or region resets the collapse state.
+        """
+
+        state = ScrollCollapseState(command="scroll", region=1)
+
+        self.assertEqual(state.advance(command=None, region=1), ScrollCollapseState())
+        self.assertEqual(state.advance(command="scroll", region=None), ScrollCollapseState())
 
 
 class GenerationFailureTest(unittest.TestCase):

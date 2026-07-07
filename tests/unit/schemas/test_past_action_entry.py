@@ -5,9 +5,8 @@ import unittest
 from fathom.constants import ActionType
 from fathom.schemas.vision import (
     ActionKind,
+    ActionKindResolver,
     PastActionEntry,
-    action_kind_for,
-    action_kind_from_token,
 )
 
 
@@ -35,56 +34,68 @@ class ActionKindDerivationTest(unittest.TestCase):
             ActionType.HIDE_KEYBOARD,
         ):
             with self.subTest(action_type=action_type):
-                self.assertIs(action_kind_for(action_type), ActionKind.NAVIGATION)
+                self.assertIs(
+                    ActionKindResolver.resolve(action_type=action_type), ActionKind.NAVIGATION
+                )
 
     def test_type_action_is_input_not_navigation(self) -> None:
         """
         TYPE is distinctly INPUT, not NAVIGATION (fix for the overlapping-kind bug).
         """
 
-        self.assertIs(action_kind_for(ActionType.TYPE), ActionKind.INPUT)
+        self.assertIs(ActionKindResolver.resolve(action_type=ActionType.TYPE), ActionKind.INPUT)
 
     def test_validate_is_validation(self) -> None:
         """
         VALIDATE classifies as VALIDATION.
         """
 
-        self.assertIs(action_kind_for(ActionType.VALIDATE), ActionKind.VALIDATION)
+        self.assertIs(
+            ActionKindResolver.resolve(action_type=ActionType.VALIDATE), ActionKind.VALIDATION
+        )
 
     def test_ask_user_is_escalation(self) -> None:
         """
         ASK_USER classifies as ESCALATION so the LLM can recognise prior HITL.
         """
 
-        self.assertIs(action_kind_for(ActionType.ASK_USER), ActionKind.ESCALATION)
+        self.assertIs(
+            ActionKindResolver.resolve(action_type=ActionType.ASK_USER), ActionKind.ESCALATION
+        )
 
     def test_complete_is_terminal(self) -> None:
         """
         COMPLETE classifies as TERMINAL.
         """
 
-        self.assertIs(action_kind_for(ActionType.COMPLETE), ActionKind.TERMINAL)
+        self.assertIs(
+            ActionKindResolver.resolve(action_type=ActionType.COMPLETE), ActionKind.TERMINAL
+        )
 
     def test_wait_is_observation(self) -> None:
         """
         WAIT classifies as OBSERVATION.
         """
 
-        self.assertIs(action_kind_for(ActionType.WAIT), ActionKind.OBSERVATION)
+        self.assertIs(
+            ActionKindResolver.resolve(action_type=ActionType.WAIT), ActionKind.OBSERVATION
+        )
 
     def test_token_lookup_tolerates_unknown(self) -> None:
         """
         Unknown raw tokens map to :attr:`ActionKind.UNKNOWN` rather than raise.
         """
 
-        self.assertIs(action_kind_from_token("not_a_real_action"), ActionKind.UNKNOWN)
+        self.assertIs(
+            ActionKindResolver.resolve_token(token="not_a_real_action"), ActionKind.UNKNOWN
+        )
 
     def test_token_lookup_is_case_tolerant(self) -> None:
         """
         Tokens are lower-cased before lookup so casing differences are tolerated.
         """
 
-        self.assertIs(action_kind_from_token("TAP"), ActionKind.NAVIGATION)
+        self.assertIs(ActionKindResolver.resolve_token(token="TAP"), ActionKind.NAVIGATION)
 
     def test_swipe_and_scroll_tokens_resolve_to_navigation(self) -> None:
         """
@@ -93,7 +104,7 @@ class ActionKindDerivationTest(unittest.TestCase):
 
         for token in ("swipe_left", "swipe_right", "swipe_up", "swipe_down", "scroll"):
             with self.subTest(token=token):
-                self.assertIs(action_kind_from_token(token), ActionKind.NAVIGATION)
+                self.assertIs(ActionKindResolver.resolve_token(token=token), ActionKind.NAVIGATION)
 
 
 class PastActionEntryTest(unittest.TestCase):
