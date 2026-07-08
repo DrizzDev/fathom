@@ -52,6 +52,9 @@ THREAD_TITLE_PREFIX_MAX_LENGTH: Final[int] = 200
 # Upper bound enforced by the ledger for stored conversation and script titles.
 THREAD_TITLE_MAX_LENGTH: Final[int] = 200
 
+# Upper bound accepted at service boundaries before title normalization.
+THREAD_TITLE_INPUT_MAX_LENGTH: Final[int] = 1_024
+
 # Opaque cursor envelope version. Bumped when the cursor payload format changes
 # in a way that older cursors cannot be decoded.
 CURSOR_VERSION: Final[str] = "v1"

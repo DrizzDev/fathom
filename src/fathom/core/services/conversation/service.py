@@ -155,6 +155,14 @@ class ConversationService:
                     )
                 )
 
+            title = (
+                self.__title.normalize(value=request.title)
+                if request.title is not None
+                else self.__title.initial(
+                    context=ConversationSchemas.TitleContext(intent="", package=None)
+                )
+            )
+
             thread = await self.__ports.threads.create(
                 request=InteractionSchemas.CreateThread(
                     identity=InteractionSchemas.Identity(
@@ -162,9 +170,7 @@ class ConversationService:
                         tenant=request.tenant,
                         workspace=request.workspace,
                     ),
-                    title=request.title or self.__title.initial(
-                        context=ConversationSchemas.TitleContext(intent="", package=None)
-                    ),
+                    title=title,
                     created_at=request.created,
                     creator=creator.id if creator is not None else None,
                     metadata=InteractionSchemas.Metadata(entries=request.metadata),

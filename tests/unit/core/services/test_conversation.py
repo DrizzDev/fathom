@@ -245,6 +245,27 @@ class TestConversationService(ConversationStoreTestCase):
 
         self.assertEqual("Authoring session", view.title)
 
+    async def test_create_normalizes_long_initial_title_before_persistence(self) -> None:
+        """
+        Thread creation accepts bounded long input and stores a ledger-safe title.
+        """
+
+        title = "Open swiggy app. " * 60
+
+        view = await self.__service.create(
+            request=ThreadCreate(
+                id="thread-long-title",
+                tenant="tenant-1",
+                title=title,
+                created=self.__now,
+            )
+        )
+
+        self.assertIsNotNone(view.title)
+        assert view.title is not None
+        self.assertLessEqual(len(view.title), THREAD_TITLE_MAX_LENGTH)
+        self.assertEqual(title[:THREAD_TITLE_MAX_LENGTH].rstrip(), view.title)
+
     async def test_get_thread_hides_thread_from_non_member(self) -> None:
         """
         Hide an existing conversation when the caller is not an active member.
