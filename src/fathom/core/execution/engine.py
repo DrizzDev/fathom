@@ -7,6 +7,8 @@ from typing import Optional
 from fathom.base.paths import SharedPathManager
 from fathom.constants import DEFAULT_MAX_RETRIES, DEFAULT_STABILITY_WAIT, SignalType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
+from fathom.core.capability.catalog import CommandCatalog
+from fathom.core.capture.store import CaptureStore
 from fathom.core.exceptions import ExecutionError, PortError, ToolError
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.perception import PerceptionService
@@ -37,13 +39,15 @@ class ExecutionEngine:
         self,
         llm: LLMPort,
         device: DevicePort,
-        perception: PerceptionPort,
         memory: MemoryPort,
         signal: SignalPort,
         storage: StoragePort,
         telemetry: TelemetryPort,
+        perception: PerceptionPort,
         path_manager: SharedPathManager,
         *,
+        catalog: CommandCatalog,
+        capture_store: CaptureStore,
         max_retries: int = DEFAULT_MAX_RETRIES,
         stability_wait: float = DEFAULT_STABILITY_WAIT / 1000.0,  # Convert ms to seconds
     ) -> None:
@@ -66,9 +70,11 @@ class ExecutionEngine:
         )
         self.__action_executor = ActionExecutor(
             device=device,
+            catalog=catalog,
             telemetry=telemetry,
             max_retries=max_retries,
             path_manager=path_manager,
+            capture_store=capture_store,
         )
 
     async def execute_step(
@@ -146,6 +152,8 @@ class ExecutionEngine:
                 error=result.error,
                 post_hash=post_hash,
                 success=result.success,
+                executed=result.success,
+                capture=result.capture,
                 screen_changed=screen_changed,
             )
 

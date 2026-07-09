@@ -96,10 +96,22 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         return (
             "IMPORTANT - COMPOUND ACTIONS:\n"
             "Keep these patterns as SINGLE steps (do NOT split them):\n"
-            '- "Scroll to X and select/tap/click Y" -> ONE step (scroll is just navigation to reach Y)\n'
-            '- "Navigate to X and do Y" -> ONE step (navigate is means to reach Y)\n'
-            '- "Find X and tap/click Y" -> ONE step (find is means to reach Y)\n'
-            '- "Go to X and verify/check Y" -> ONE step (navigation + verification together)'
+            '- "Scroll to {{destination}} and select/tap/click {{target}}" -> ONE step '
+            "(scroll is just navigation to reach the target)\n"
+            '- "Navigate to {{destination}} and do {{action}}" -> ONE step '
+            "(navigate is means to reach the action)\n"
+            '- "Find {{target}} and tap/click {{target}}" -> ONE step '
+            "(find is means to reach the target)\n"
+            '- "Go to {{destination}} and verify/check {{state}}" -> ONE step '
+            "(navigation + verification together)\n"
+            "\n"
+            "Split these patterns into SEPARATE steps:\n"
+            '- Any "store/capture {{value_or_subject}} as {{variable_name}}" clause is its own step, '
+            "even when followed by another action.\n"
+            "- Any conditional capture must separate the condition proof, the capture, and the "
+            "follow-up action. Shape: first validate/check {{condition}}, then store/capture "
+            "{{value_or_subject}} as {{variable_name}}, then emit the next requested action "
+            "as a separate step."
         )
 
     @staticmethod
@@ -116,19 +128,25 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "Each sub-goal must carry a 'directive' field naming the action type the\n"
             "planner is expected to emit. Use these exact tokens (lower-case, no spaces):\n"
             "\n"
-            "  tap          -> 'Tap X', 'Click X', 'Press X', 'Select X' (when X is a UI element),\n"
-            "                  'Open Y app' (tapping an app icon)\n"
-            "  type         -> 'Enter X', 'Type X', 'Input X', 'Fill X with Y'\n"
-            "  validate     -> 'Validate X', 'Verify X', 'Check X', 'Confirm X',\n"
-            "                  'Ensure X is displayed', 'Assert X is visible'\n"
+            "  tap          -> 'Tap {{target}}', 'Click {{target}}', 'Press {{target}}',\n"
+            "                  'Select {{target}}' (when the target is a UI element),\n"
+            "                  'Open {{app_name}} app' (tapping an app icon)\n"
+            "  type         -> 'Enter {{text}}', 'Type {{text}}', 'Input {{text}}',\n"
+            "                  'Fill {{field}} with {{text}}'\n"
+            "  validate     -> 'Validate {{state}}', 'Verify {{state}}', 'Check {{condition}}',\n"
+            "                  'Confirm {{state}}', 'Ensure {{state}} is displayed'\n"
             "  swipe_up     -> 'Swipe up', 'Scroll up' (when directional and the\n"
             "                  surface is a vertical list/feed)\n"
             "  swipe_down   -> 'Swipe down', 'Scroll down'\n"
             "  swipe_left   -> 'Swipe left', 'Scroll left' (carousels)\n"
             "  swipe_right  -> 'Swipe right'\n"
-            "  scroll       -> Generic 'Scroll to X' when no direction is specified\n"
-            "  wait         -> 'Wait', 'Wait for X', 'Wait N seconds'\n"
-            "  long_press   -> 'Long press X', 'Hold X', 'Press and hold X'\n"
+            "  scroll       -> Generic 'Scroll to {{destination}}' when no direction is specified\n"
+            "  wait         -> 'Wait', 'Wait for {{state}}', 'Wait N seconds'\n"
+            "  store        -> 'Store {{value_or_subject}} as {{variable_name}}',\n"
+            "                  'Capture {{value_or_subject}} as {{variable_name}}'\n"
+            "                  (save a visible/context value into a script variable)\n"
+            "  long_press   -> 'Long press {{target}}', 'Hold {{target}}', "
+            "'Press and hold {{target}}'\n"
             "  back         -> 'Go back', 'Press back', 'Navigate back'\n"
             "  home         -> 'Go to home', 'Press home'\n"
             "  hide_keyboard-> 'Dismiss keyboard', 'Hide keyboard'\n"
@@ -138,8 +156,14 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "- Choose the SINGLE most-specific directive for each step.\n"
             "- Prefer 'swipe_up' / 'swipe_down' / 'swipe_left' / 'swipe_right' over the\n"
             "  generic 'scroll' whenever a direction is implied.\n"
+            "- A store/capture clause never loses to the final action of a compound step;\n"
+            "  split it into its own 'store' sub-goal before the follow-up action.\n"
+            "- A store/capture sub-goal must describe the capture itself. If the user asks to\n"
+            "  check, verify, validate, or confirm a precondition before storing, emit that\n"
+            "  precondition as a separate 'validate' sub-goal immediately before the store.\n"
             "- A compound step that ends in tapping (e.g. 'Scroll to X and tap Y') takes\n"
-            "  the directive of the FINAL action -> 'tap'.\n"
+            "  the directive of the FINAL action -> 'tap', unless it contains a store/capture\n"
+            "  clause that must be split out first.\n"
             "- A compound step that ends in validation (e.g. 'Go to cart and verify total')\n"
             "  takes 'validate'."
         )
@@ -177,6 +201,40 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '      -> {"description": "Validate srp page is loaded",\n'
             '          "directive": "validate"}\n'
             "\n"
+            'GOOD: User says "Capture the verification code as otp_code"\n'
+            '      -> {"description": "Capture the verification code as otp_code",\n'
+            '          "directive": "store"}\n'
+            "\n"
+            'GOOD: User says "If upload completed, capture the confirmation ID as confirmation_id '
+            'and close the dialog"\n'
+            '      -> {"description": "Check whether upload completed",\n'
+            '          "directive": "validate"}\n'
+            '      -> {"description": "If upload completed, capture the confirmation ID as '
+            'confirmation_id",\n'
+            '          "directive": "store"}\n'
+            '      -> {"description": "Close the dialog", "directive": "tap"}\n'
+            "\n"
+            'GOOD: User says "Verify the balance is visible; if it is, store the balance as '
+            'account_balance and open transactions"\n'
+            '      -> {"description": "Verify the balance is visible",\n'
+            '          "directive": "validate"}\n'
+            '      -> {"description": "If the balance is visible, store the balance as '
+            'account_balance",\n'
+            '          "directive": "store"}\n'
+            '      -> {"description": "Open transactions", "directive": "tap"}\n'
+            "\n"
+            'BAD: User says "Capture the verification code as otp_code and continue"\n'
+            '     -> {"description": "Capture the verification code as otp_code and continue",\n'
+            '         "directive": "tap"}\n'
+            "     Reason: the store clause was merged into the follow-up action.\n"
+            "\n"
+            'BAD: User says "Verify the balance is visible; if it is, store the balance as '
+            'account_balance"\n'
+            '     -> {"description": "Verify the balance is visible if it is, store the balance '
+            'as account_balance",\n'
+            '         "directive": "store"}\n'
+            "     Reason: the prerequisite validation was merged into the store command.\n"
+            "\n"
             "BAD: paraphrasing the user's wording is prohibited.\n"
             "BAD: omitting the directive field is prohibited.\n"
             "BAD: inventing tokens outside the directive vocabulary above is prohibited."
@@ -197,7 +255,8 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '      "criterion":   "<observable screen state when the step is complete>",\n'
             '      "directive":   "<one of: tap | type | validate | swipe_up | swipe_down |\n'
             "                                 swipe_left | swipe_right | scroll | wait |\n"
-            '                                 long_press | back | home | hide_keyboard | ask_user>"\n'
+            "                                 store | long_press | back | home |\n"
+            '                                 hide_keyboard | ask_user>"\n'
             "    }\n"
             "  ],\n"
             '  "confidence": 0.9\n'

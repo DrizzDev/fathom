@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import KeyboardObservation, ScreenObservation
@@ -55,6 +56,7 @@ class SuperviseNodeTest(unittest.IsolatedAsyncioTestCase):
         provider.is_cancelled = AsyncMock(return_value=False)
         provider.context.workflow_id = "workflow"
         provider.context.package_name = "app"
+        provider.context.catalog = CommandCatalogProvider().build()
         provider.persistence.persist = MagicMock()
         provider.observer.fallback_observation = AsyncMock(
             return_value=SuperviseNodeTest.__observation()

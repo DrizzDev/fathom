@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional, cast
 
-from fathom.constants import GESTURE_ACTION_TYPES, SPATIAL_ACTION_TYPES, ActionType
+from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
@@ -189,8 +189,8 @@ class SuperviseNode:
         raw = state.get(IntentStateKey.ELEMENTS)
         return raw if isinstance(raw, dict) else None
 
-    @staticmethod
     def __requires_localization_retry(
+        self,
         *,
         step: Step,
         localization: LocalizationResult,
@@ -200,10 +200,11 @@ class SuperviseNode:
         """
 
         action_type = step.action.action_type
+        catalog = self.__provider.context.catalog
 
         return (
-            action_type in SPATIAL_ACTION_TYPES
-            and action_type not in GESTURE_ACTION_TYPES
+            catalog.is_spatial(action_type=action_type)
+            and not catalog.is_gesture(action_type=action_type)
             and localization.status != LocalizationStatus.RESOLVED
         )
 

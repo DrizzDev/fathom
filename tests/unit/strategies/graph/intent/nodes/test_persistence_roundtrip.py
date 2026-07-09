@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+from unittest.mock import MagicMock
 
+from fathom.constants import ActionType
 from fathom.constants.state import IntentStateKey
 from fathom.core.agent.state import AgentState
+from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
+from fathom.schemas.steps import Step, StepGoal, StepResult
 from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
 
@@ -37,7 +41,7 @@ class _StubContext:
         self.agent_state = agent_state
         self.workflow_id = workflow_id
         self.capabilities = capabilities
-        self.replaced_state: AgentState | None = None
+        self.replaced_state: Optional[AgentState] = None
 
     def set_agent_state(self, state: AgentState) -> None:
         """
@@ -65,7 +69,7 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
     """
 
     @staticmethod
-    def __sub_goals() -> list[SubGoal]:
+    def __sub_goals() -> List[SubGoal]:
         """
         Three deterministic sub-goals so the sub-goal-index-only
         restore path can move the index without re-loading the goals.
@@ -166,3 +170,58 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
 
         self.assertIsNone(context.replaced_state)
         self.assertEqual(context.agent_state.current_sub_goal_index, 0)
+
+    def test_enqueue_history_passes_active_goal_context(self) -> None:
+        """
+        History persistence receives compact context for the active sub-goal.
+        """
+
+        state = AgentState(
+            intent="find rated soap",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        state.set_sub_goals(
+            [
+                SubGoal(
+                    index=0,
+                    description="Check whether customer rating is >= 4.2",
+                    directive=ActionType.VALIDATE,
+                )
+            ]
+        )
+        context = _StubContext(agent_state=state)
+        context.intent = "find rated soap"  # type: ignore[attr-defined]
+        context.history = MagicMock()  # type: ignore[attr-defined]
+        context.telemetry = MagicMock()  # type: ignore[attr-defined]
+        helper = GraphStatePersistence(context=context)  # type: ignore[arg-type]
+
+        helper.enqueue_history(
+            step_result=StepResult(
+                step=Step(
+                    action=Action(
+                        action_type=ActionType.SWIPE_UP,
+                        target="product list",
+                        rationale="scroll product list",
+                    ),
+                    screen_hash="pre",
+                    step_number=5,
+                ),
+                success=True,
+                duration=1,
+                screen_changed=True,
+                pre_hash="pre",
+                post_hash="post",
+            ),
+            current_activity="com.meesho.supply",
+            execution_activity="com.meesho.supply",
+        )
+
+        goal = context.history.enqueue_save_step.call_args.kwargs["goal"]  # type: ignore[attr-defined]
+        self.assertEqual(
+            goal,
+            StepGoal(
+                index=0,
+                description="Check whether customer rating is >= 4.2",
+                directive="validate",
+            ),
+        )

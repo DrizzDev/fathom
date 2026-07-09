@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, FrozenSet, List, Optional
+from typing import Any, Callable, Dict, FrozenSet, List
 
 from fathom.constants.tools import ToolName
 
@@ -48,20 +48,6 @@ class ToolRegistry:
             ToolName.VALIDATE_STATE: cls.__validate_state,
         }
 
-    @classmethod
-    def get_export_definitions(
-        cls, *, action_ids: Optional[List[str]] = None
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Returns tool definitions for script export composition.
-
-        Args:
-            action_ids: When provided, constrains action ID fields to only
-                        these values via enum in the tool schema.
-        """
-
-        return {"function_declarations": [cls.__emit_script(action_ids=action_ids)]}
-
     @staticmethod
     def __execute_ui() -> Dict[str, Any]:
         """
@@ -71,18 +57,20 @@ class ToolRegistry:
         return {
             "name": "execute_ui",
             "description": (
-                "Execute a sequence of UI actions on the device to achieve a specific sub-goal "
-                "or the final goal. Use this to interact with the app, including explicit "
-                "validation checks via action_type='validate'. "
+                "Execute one UI action on the device to achieve a specific sub-goal or the final goal. "
+                "Use this to interact with the app, including explicit validation checks via action_type='validate'. "
                 "IMPORTANT: When launching a target app (when a package_name is known), prefer "
                 "signaling app completion via 'goal_completed: true' or 'sub_goal_completed: true' "
                 "rather than emitting an explicit 'tap' action on the app icon. The system will "
                 "normalize app launch intents automatically. "
-                "CRITICAL: For every UI action you MUST provide a concrete, user-facing target "
-                "phrase via 'target_name' or 'script_target' (e.g., 'Search box', "
-                "'Add to cart button', 'the first search result'). NEVER use placeholders like "
-                "'UI Element', 'element', 'button', 'label', 'icon', 'field', or 'text' as the "
-                "only target description."
+                "CRITICAL: For every UI action you MUST provide the script-owned semantic field: "
+                "tap/type use export_target or script_target, scroll/swipe use scroll_target, "
+                "wait uses wait_subject, validate uses validation_subject, and store uses capture. "
+                "For tap/type, target_name is the exact visible execution target; export_target or "
+                "script_target is the stable replay target. Choose the visible UI role and purpose "
+                "from the screen, such as a dropdown, field, row, card, chip, button, icon, tab, or "
+                "menu item. NEVER use placeholders like 'UI Element', 'element', 'button', 'label', "
+                "'icon', 'field', or 'text' as the only target description."
             ),
             "parameters": {
                 "type": "OBJECT",
@@ -110,11 +98,37 @@ class ToolRegistry:
                                     "validate",
                                     "home",
                                     "back",
+                                    "store",
                                 ],
                             },
                             "label_id": {
                                 "type": "STRING",
                                 "description": "The ID of the element from the manifest (e.g. '4'). REQUIRED when the target or scroll container exists in the manifest.",
+                            },
+                            "capture": {
+                                "type": "OBJECT",
+                                "description": (
+                                    "For action_type='store' ONLY. Store an actual value read from "
+                                    "the screen or task context as a named variable. subject names "
+                                    "what the user asked to capture; value is the concrete captured "
+                                    "text. Never use store for agent memory or to ask the user, and "
+                                    "never invent the captured value."
+                                ),
+                                "properties": {
+                                    "name": {
+                                        "type": "STRING",
+                                        "description": "Variable name to store the value under.",
+                                    },
+                                    "subject": {
+                                        "type": "STRING",
+                                        "description": "What the intent asked to capture.",
+                                    },
+                                    "value": {
+                                        "type": "STRING",
+                                        "description": "Concrete value read from the screen or task context.",
+                                    },
+                                },
+                                "required": ["name", "subject", "value"],
                             },
                             "bbox": {
                                 "type": "OBJECT",
@@ -159,7 +173,11 @@ class ToolRegistry:
                             },
                             "wait_duration": {
                                 "type": "NUMBER",
-                                "description": "Duration to wait in seconds (e.g. 2.0, 5.0). Use this for 'wait' actions to specify how long to pause.",
+                                "description": (
+                                    "Optional duration to wait in seconds (e.g. 2.0, 5.0). "
+                                    "For wait actions, wait_subject is the required semantic field; "
+                                    "duration only tunes how long to pause."
+                                ),
                             },
                             # --- Execution signals ---
                             "confidence": {
@@ -170,7 +188,7 @@ class ToolRegistry:
                                 "type": "BOOLEAN",
                                 "description": "Self-correction: Is this action valid given the current screen state?",
                             },
-                            # --- Non-critical metadata ---
+                            # --- Reasoning and conditional execution fields ---
                             "rationale": {
                                 "type": "STRING",
                                 "description": "Why this specific action is being taken.",
@@ -213,18 +231,26 @@ class ToolRegistry:
                             "overlay_detected": {
                                 "type": "BOOLEAN",
                                 "description": (
-                                    "Set true when the screenshot shows an overlay blocking the main UI "
-                                    "(dimmed scrim, modal dialog, bottom sheet, permission prompt, or banner). "
-                                    "This action must dismiss it."
+                                    "Set true only when the screenshot shows an unrelated overlay blocking "
+                                    "the active target (dimmed scrim, modal dialog, permission prompt, "
+                                    "or banner). Do not mark a dialog, menu, action sheet, or bottom sheet "
+                                    "as an overlay when it contains the control, option, value, or "
+                                    "confirmation required by the active step. Dismissal actions must also "
+                                    "set condition to the specific visible overlay/dialog state."
                                 ),
                             },
                             "export_target": {
                                 "type": "STRING",
                                 "description": (
-                                    "The canonical phrase for this action in exported test scripts. "
-                                    "Must be specific and human-readable (e.g., 'Search box', "
-                                    "'the first search result', 'Add to cart button'). "
-                                    "REQUIRED for tap, type, long_press, scroll, swipe, and wait actions. "
+                                    "Canonical phrase for this action in exported test scripts. "
+                                    "REQUIRED for tap and type actions unless script_target is provided. "
+                                    "This is the stable replay target, separate from the exact visible "
+                                    "target_name used for execution. Must be specific and human-readable "
+                                    "by combining the control's screen role and purpose. Use the actual "
+                                    "visible role, such as dropdown, field, row, card, chip, button, icon, "
+                                    "tab, or menu item. For dynamic controls, name the control purpose; "
+                                    "do not copy runtime values such as addresses, user data, ETA text, "
+                                    "cart totals, or content-description sentences. "
                                     "NEVER use generic placeholders like 'element', 'UI Element', "
                                     "'button', 'label', 'icon', 'field', or 'text' alone."
                                 ),
@@ -239,11 +265,12 @@ class ToolRegistry:
                                 "description": (
                                     "When target_type is 'positional' or 'dynamic', the "
                                     "exact natural-language phrase that should appear in "
-                                    "exported scripts (e.g. 'the first search result', "
-                                    "'the promotional banner', 'the selected cart item'). "
+                                    "exported scripts. Use the actual visible role and purpose "
+                                    "when the target is a dropdown, field, row, card, chip, button, "
+                                    "icon, tab, menu item, or ordinal result. "
                                     "Treat this field as REQUIRED whenever target_type is "
                                     "'positional' or 'dynamic'. The phrase MUST be specific "
-                                    "and user-facing, not a generic placeholder."
+                                    "and user-facing, not a generic placeholder or runtime value."
                                 ),
                             },
                             "scroll_target": {
@@ -267,7 +294,12 @@ class ToolRegistry:
                             },
                             "validation_subject": {
                                 "type": "STRING",
-                                "description": "For validate actions: what specifically is being validated (e.g., 'login status', 'banner visibility', 'item alignment'). Be specific about the validation target.",
+                                "description": (
+                                    "REQUIRED for validate actions. The state or subject being asserted "
+                                    "(e.g., 'login screen', 'cart page', 'order confirmation'). Do not use "
+                                    "an incidental visible field as the subject when it is only evidence "
+                                    "for a broader state."
+                                ),
                             },
                             "target_is_generic": {
                                 "type": "BOOLEAN",
@@ -578,85 +610,5 @@ class ToolRegistry:
                     },
                 },
                 "required": ["question", "goal_completed", "sub_goal_completed"],
-            },
-        }
-
-    @staticmethod
-    def __emit_script(
-        action_ids: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Definition for script export output tool.
-        """
-
-        # When action_ids are provided, constrain the schema so Gemini can
-        # only output valid catalog IDs (prevents missing/extra/duplicated IDs).
-        action_id_item: Dict[str, Any] = {"type": "STRING"}
-        if action_ids:
-            action_id_item["enum"] = list(action_ids)
-
-        return {
-            "name": "emit_script",
-            "description": (
-                "Return structured script sections derived only from allowed step action lines. "
-                "Do not paraphrase executable actions. Rendered scripts use IF <condition> on one line "
-                "and the opening { on the following line before indented block body lines."
-            ),
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "conditional_blocks": {
-                        "type": "ARRAY",
-                        "description": "Ordered IF blocks for condition-scoped actions using action IDs.",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "condition": {
-                                    "type": "STRING",
-                                    "description": "Condition text for IF block.",
-                                },
-                                "condition_type": {
-                                    "type": "STRING",
-                                    "enum": ["blocker", "transient", "error", "optional"],
-                                    "description": (
-                                        "Classification of this condition: blocker (popup/permission/consent "
-                                        "that blocks progress), transient (loading/splash/spinner that will pass), "
-                                        "error (error message that may appear), or optional (nice-to-have check)."
-                                    ),
-                                },
-                                "action_ids": {
-                                    "type": "ARRAY",
-                                    "description": "Executable action IDs under this IF block. Must be selected from provided action catalog.",
-                                    "items": action_id_item,
-                                },
-                            },
-                            "required": ["condition", "action_ids"],
-                        },
-                    },
-                    "remaining_action_ids": {
-                        "type": "ARRAY",
-                        "description": "Ordered executable action IDs outside IF blocks. Must be selected from provided action catalog.",
-                        "items": action_id_item,
-                    },
-                    "action_validations": {
-                        "type": "OBJECT",
-                        "description": (
-                            "Optional map of catalog action_id -> intermediate validation line after that action "
-                            "(e.g. list or results visible right after a search or scroll). Each value must start "
-                            "with 'Validate'. Use for mid-flow checks; do not put those in final_validation."
-                        ),
-                        "additionalProperties": {"type": "STRING"},
-                    },
-                    "final_validation": {
-                        "type": "STRING",
-                        "description": (
-                            "Single terminal UI-state line after the last catalog action. Must start with 'Validate'. "
-                            "State only: what screen/page/primary content is visible or displayed. One short clause—"
-                            "no tap/click/type/select/navigate/search instructions (those belong in catalog actions "
-                            "or action_validations). No chained 'and then' procedures."
-                        ),
-                    },
-                },
-                "required": ["remaining_action_ids", "final_validation"],
             },
         }

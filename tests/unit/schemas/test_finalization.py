@@ -17,13 +17,13 @@ class HistoryFinalizationBudgetScriptBoundsTest(unittest.TestCase):
 
     def test_default_script_budget_covers_multi_step_synthesis(self) -> None:
         """
-        Default of 60 seconds covers the operational p99 plus headroom for
-        cancelled-run partial script delivery without holding cancellation indefinitely.
+        Default of 120 seconds gives script finalization room for the quality
+        path plus deterministic fallback without holding cancellation indefinitely.
         """
 
         budget = HistoryFinalizationBudget()
 
-        self.assertEqual(budget.script, 60.0)
+        self.assertEqual(budget.script, 120.0)
 
     def test_default_flush_budget_remains_short(self) -> None:
         """

@@ -7,7 +7,8 @@ from fathom.constants.events import FathomEvent
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.state import IntentStateKey
 from fathom.core.agent.state import AgentState
-from fathom.schemas.steps import StepResult
+from fathom.schemas.steps import StepGoal, StepResult
+from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -122,6 +123,22 @@ class GraphStatePersistence:
             intent=self.__context.intent,
             package_name=current_activity,
             execution_activity=execution_activity,
+            goal=self.__goal(),
+        )
+
+    def __goal(self) -> Optional[StepGoal]:
+        """
+        Return compact active sub-goal context for persisted authoring evidence.
+        """
+
+        sub_goal = self.__context.agent_state.get_current_sub_goal()
+        if not isinstance(sub_goal, SubGoal):
+            return None
+
+        return StepGoal(
+            index=sub_goal.index,
+            description=sub_goal.description,
+            directive=sub_goal.directive.value if sub_goal.directive is not None else None,
         )
 
     def __build_publisher(self, *, step_number: int) -> Callable[[str], Awaitable[None]]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.collaboration import TaskKind
@@ -113,18 +113,6 @@ class ExecuteNode:
         )
 
         await self.__record_step_started(step=step, created=start_time)
-
-        if step.action.memory_updates:
-            logger.info(
-                f"Processing memory updates: {step.action.memory_updates}",
-                extra={
-                    "event": "execute.log",
-                    "component": "graph.intent.execute",
-                    "workflow.id": self.__provider.context.workflow_id,
-                },
-            )
-            for key, value in step.action.memory_updates.items():
-                await self.__provider.context.memory.set(key=key, value=str(value))
 
         if step.action.action_type == ActionType.ASK_USER:
             try:
@@ -283,7 +271,7 @@ class ExecuteNode:
         return result
 
     @staticmethod
-    def __swipe_abort_diagnostic(*, execution_result: ExecutionResult) -> str | None:
+    def __swipe_abort_diagnostic(*, execution_result: ExecutionResult) -> Optional[str]:
         """
         Build one analyzer-facing hint when the swipe coordinator aborted with a typed reason.
         """

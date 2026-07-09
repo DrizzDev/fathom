@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from PIL import Image
 
 from fathom.constants import ActionType
+from fathom.constants.execution import POST_ACTION_OBSERVATION_TIMEOUT_SECONDS
 from fathom.constants.perception import ACTION_REGION_HALF_SIDE, ACTION_REGION_STATIC_HAMMING_FLOOR
+from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.screen import ZERO_HASH
 from fathom.constants.state import IntentStateKey, PlanMetadataKey
 from fathom.constants.storage import StorageBackend
 from fathom.core.perception.hashing import VisualHashEngine
+from fathom.core.services.settlement import ScreenSettlementService
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.artifacts import (
     ScreenArtifact,
@@ -25,10 +28,14 @@ from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import PostActionObservation, ScreenObservation
 from fathom.schemas.results import PlanResult, TraceEmission
 from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenState
+from fathom.schemas.settlement import (
+    PostActionScreen,
+    PreActionScreen,
+    ScreenSettlementEvidence,
+)
 from fathom.schemas.ui import LabeledElement
 from fathom.strategies.graph.intent.nodes.observer import ScreenObserver
 from fathom.strategies.graph.state import IntentGraphState
-from fathom.utils.wait import stability_wait
 
 if TYPE_CHECKING:
     from fathom.core.services.comparator import ScreenComparator
@@ -56,6 +63,12 @@ class PostAction:
         self.__context = context
         self.__observer = observer
         self.__comparator = comparator
+        self.__settlement = ScreenSettlementService(
+            state=observer,
+            device=context.device,
+            comparison=comparator,
+            configuration=context.configuration,
+        )
 
     async def observe(
         self,
@@ -78,7 +91,7 @@ class PostAction:
         telemetry can reference persisted screen URIs.
         """
 
-        await stability_wait(self.__context.configuration)
+        await self.__settlement.pause()
 
         pre_hash = context.pre_screen.visual_hash if context.pre_screen is not None else ZERO_HASH
         trace_emissions = (
@@ -86,12 +99,28 @@ class PostAction:
         )
 
         try:
-            comparison = await self.__compare(
-                package_name=context.package,
-                before_capture=context.capture,
-                before_state=context.pre_screen,
-                trace_emissions=trace_emissions,
+            comparison = await asyncio.wait_for(
+                self.__compare(
+                    context=context,
+                    package_name=context.package,
+                    before_capture=context.capture,
+                    before_state=context.pre_screen,
+                    trace_emissions=trace_emissions,
+                ),
+                timeout=self.__observation_timeout(),
             )
+        except asyncio.TimeoutError as exception:
+            logger.warning(
+                "Post-action observation timed out",
+                extra={
+                    **self.__log_context(),
+                    "event": "observe.post.timeout",
+                    "timeout.seconds": self.__observation_timeout(),
+                    "error.kind": type(exception).__name__,
+                },
+            )
+            await self.__context.telemetry.warning("Observe: Post-action observation timed out")
+            return None, None, pre_hash, context.package, None
         except Exception as exception:
             await self.__context.telemetry.warning(
                 f"Observe: Failed to capture post-screen: {exception}"
@@ -108,6 +137,27 @@ class PostAction:
             post_activity = context.package
 
         return observation, screen_diff, post_hash, post_activity, comparison.artifacts
+
+    def __observation_timeout(self) -> float:
+        """
+        Return the maximum wall-clock seconds for one post-action observation pass.
+        """
+
+        configuration = getattr(self.__context, "configuration", None)
+        device = getattr(configuration, "device", None)
+
+        if device is None:
+            runtime = getattr(self.__context.device, "configuration", None)
+            timeout = getattr(runtime, "command_timeout", None)
+            return float(timeout or POST_ACTION_OBSERVATION_TIMEOUT_SECONDS)
+
+        if device.type == DeviceConnectionType.REMOTE:
+            return float(device.remote.request_timeout)
+
+        if device.platform == DevicePlatform.IOS:
+            return float(device.ios.command_timeout)
+
+        return float(device.android.snapshot_timeout)
 
     @staticmethod
     def effect_from(*, diff: Optional[ScreenDiff]) -> ActionEffect:
@@ -187,6 +237,7 @@ class PostAction:
         self,
         *,
         package_name: str,
+        context: ExecutionContext,
         before_capture: ScreenCapture,
         before_state: Optional[ScreenState],
         trace_emissions: Tuple[TraceEmission, ...],
@@ -300,6 +351,22 @@ class PostAction:
                 "duration.ms": int((time.time() - diff_start) * 1000),
             },
         )
+
+        settled = await self.__settlement.compare(
+            evidence=ScreenSettlementEvidence(
+                execution=context,
+                workflow_id=self.__context.workflow_id,
+                before=PreActionScreen(capture=before_capture, state=before_state),
+                after=PostActionScreen(
+                    diff=screen_diff,
+                    hashes=post_hashes,
+                    capture=post_capture,
+                ),
+            )
+        )
+        screen_diff = settled.diff
+        post_hashes = settled.hashes
+        post_capture = settled.capture
 
         if self.__context.is_cancelled:
             return PostActionObservation(

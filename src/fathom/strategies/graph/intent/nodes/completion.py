@@ -4,13 +4,22 @@ import asyncio
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
+from fathom.constants.capability import CompletionMode
 from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
+from fathom.core.agent.capture import StoreCaptureCompletionPolicy
 from fathom.core.agent.completion import CompletionGate
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
-from fathom.schemas.completion import CompletionEvidence, GateDecision
+from fathom.schemas.completion import (
+    ActionEvidence,
+    ClaimEvidence,
+    CompletionEvidence,
+    GateDecision,
+    ScreenEvidence,
+    ValidationEvidence,
+)
 from fathom.schemas.criterion import CriterionDecision
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.observability import CompletionLogContext
@@ -19,7 +28,7 @@ from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
-from fathom.schemas.vision import ActionKind, action_kind_for
+from fathom.schemas.vision import ActionKind, ActionKindResolver
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -34,7 +43,7 @@ class SubGoalEvaluator:
     screen, optional criterion) and the emitted action kind, which the
     CompletionGate adjudicates per sub-goal kind:
 
-      - ACTION sub-goals require asserted claim AND justified rationale AND
+      - ACTION sub-goals require asserted claim AND explained rationale AND
         a dispatched action that caused screen evolution. The single
         exception is the VALIDATION-kind escape branch: when the planner
         emits a VALIDATE action against an ACTION sub-goal and asserts
@@ -42,8 +51,9 @@ class SubGoalEvaluator:
         VALIDATE is a read action that cannot move the screen; requiring
         screen.evolved for this branch would loop indefinitely whenever
         the world is already past the failed step.
-      - VALIDATION sub-goals short-circuit on an asserted claim; otherwise
-        require any two of justified rationale and screen-verified dispatch.
+      - VALIDATION sub-goals advance only when this turn executed a concrete
+        VALIDATE action with a structured validation subject. Planner claims
+        alone are logged as claims; they do not close validation sub-goals.
 
     The CriterionObserver remains as an additive RCA-grade signal. Its
     verdict is folded into CompletionEvidence.criterion and logged on every
@@ -56,14 +66,18 @@ class SubGoalEvaluator:
         context: GraphContext,
         criterion_observer: CriterionObserver,
         gate: Optional[CompletionGate] = None,
+        capture_policy: Optional[StoreCaptureCompletionPolicy] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, and gate.
+        Bind the evaluator to its graph context, criterion observer, gate, and capture policy.
         """
 
         self.__context = context
         self.__criterion_observer = criterion_observer
         self.__gate = gate if gate is not None else CompletionGate()
+        self.__capture_policy = (
+            capture_policy if capture_policy is not None else StoreCaptureCompletionPolicy()
+        )
 
     async def evaluate(
         self,
@@ -92,57 +106,67 @@ class SubGoalEvaluator:
             return None
 
         active = cast("SubGoal", current)
+        emitted_kind = ActionKindResolver.resolve(action_type=step_result.step.action.action_type)
 
-        criterion_decision = await self.__observe_criterion(
-            active=active,
-            observation=observation,
-            step_result=step_result,
-        )
+        if self.__requires_capture_completion(active=active):
+            decision = self.__capture_policy.evaluate(
+                step_result=step_result,
+                capture_store=self.__context.capture_store,
+            )
+            evidence = self.__capture_evidence(step_result=step_result, decision=decision)
+        else:
+            criterion_decision = await self.__observe_criterion(
+                active=active,
+                observation=observation,
+                step_result=step_result,
+            )
 
-        last_effect = agent_state.get_last_action_effect()
+            last_effect = agent_state.get_last_action_effect()
 
-        directive = agent_state.operator_directive
-        directive_kind = (
-            directive.kind if directive is not None and agent_state.has_active_directive else None
-        )
+            directive = agent_state.operator_directive
+            directive_kind = (
+                directive.kind
+                if directive is not None and agent_state.has_active_directive
+                else None
+            )
 
-        semantic_similarity = await self.__semantic_similarity(
-            sub_goal=active,
-            analysis=analysis,
-        )
+            semantic_similarity = await self.__semantic_similarity(
+                sub_goal=active,
+                analysis=analysis,
+            )
 
-        evidence = self.__context.reasoner.assess_completion(
-            sub_goal=active,
-            analysis=analysis,
-            effect=last_effect,
-            directive_kind=directive_kind,
-            semantic_similarity=semantic_similarity,
-            criterion_decision=criterion_decision,
-            delta_score=agent_state.last_delta_score,
-            screen_changed=step_result.screen_changed,
-            screen_description=step_result.observation or step_result.step.action.target or "",
-        )
-        self.__log_evidence_assessed(
-            active=active,
-            evidence=evidence,
-            effect=last_effect,
-            step_result=step_result,
-        )
+            evidence = self.__context.reasoner.assess_completion(
+                sub_goal=active,
+                analysis=analysis,
+                effect=last_effect,
+                directive_kind=directive_kind,
+                execution_success=step_result.executed,
+                semantic_similarity=semantic_similarity,
+                criterion_decision=criterion_decision,
+                delta_score=agent_state.last_delta_score,
+                screen_changed=step_result.screen_changed,
+                screen_description=step_result.observation or step_result.step.action.target or "",
+            )
+            self.__log_evidence_assessed(
+                active=active,
+                evidence=evidence,
+                effect=last_effect,
+                step_result=step_result,
+            )
 
-        emitted_kind = action_kind_for(step_result.step.action.action_type)
-        decision = self.__gate.adjudicate(
-            evidence=evidence,
-            sub_goal=active,
-            action_kind=emitted_kind,
-        )
-        self.__log_gate_adjudicated(
-            active=active,
-            evidence=evidence,
-            decision=decision,
-            effect=last_effect,
-            step_result=step_result,
-            action_kind=emitted_kind,
-        )
+            decision = self.__gate.adjudicate(
+                evidence=evidence,
+                sub_goal=active,
+                action_kind=emitted_kind,
+            )
+            self.__log_gate_adjudicated(
+                active=active,
+                evidence=evidence,
+                decision=decision,
+                effect=last_effect,
+                step_result=step_result,
+                action_kind=emitted_kind,
+            )
 
         if decision.outcome is GateOutcome.ADVANCE:
             signal = self.__build_storage_signal(
@@ -155,7 +179,7 @@ class SubGoalEvaluator:
                 signal=signal,
                 evidence=evidence,
                 accumulated=accumulated,
-                kind=action_kind_for(step_result.step.action.action_type),
+                kind=emitted_kind,
             )
 
         self.__log_retained(
@@ -229,6 +253,44 @@ class SubGoalEvaluator:
 
         return current is not None and has_sub_goals
 
+    def __requires_capture_completion(self, *, active: SubGoal) -> bool:
+        """
+        Return whether the active directive can only advance through captured evidence.
+        """
+
+        if active.directive is None:
+            return False
+
+        directed = self.__context.catalog.profile(action_type=active.directive).completion
+        return directed is CompletionMode.CAPTURE_VERIFIED
+
+    @staticmethod
+    def __capture_evidence(
+        *, step_result: StepResult, decision: GateDecision
+    ) -> CompletionEvidence:
+        """
+        Build observability-only evidence for a capture turn; the decision itself comes from the policy.
+        """
+
+        request = step_result.step.action.capture
+
+        if decision.outcome is GateOutcome.ADVANCE and request is not None:
+            note = f"capture.verified: stored '{request.name}'"
+
+        elif decision.retain_reason is not None:
+            note = f"capture.retained: {decision.retain_reason.value}"
+
+        else:
+            note = "capture.retained"
+
+        return CompletionEvidence(
+            notes=(note,),
+            screen=ScreenEvidence(evolved=False),
+            claim=ClaimEvidence(asserted=False, explained=False),
+            action=ActionEvidence(dispatched=False, executed=step_result.executed),
+            validation=ValidationEvidence(executed=False),
+        )
+
     async def __semantic_similarity(
         self,
         *,
@@ -239,8 +301,9 @@ class SubGoalEvaluator:
         Cosine similarity between rationale and sub-goal via embedding port + cache; ``None`` on any failure.
         """
 
-        cache = self.__context.embedding_cache
         embedder = self.__context.embedder
+        cache = self.__context.embedding_cache
+
         if cache is None or embedder is None:
             logger.info(
                 "Semantic similarity unavailable; embedder or cache missing",
@@ -286,9 +349,9 @@ class SubGoalEvaluator:
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.error",
+                    "sub_goal.index": sub_goal.index,
                     "error.kind": type(exception).__name__,
                     "error.message": str(exception),
-                    "sub_goal.index": sub_goal.index,
                 },
             )
             return None
@@ -312,8 +375,8 @@ class SubGoalEvaluator:
                 extra={
                     "component": "graph.intent.completion",
                     "event": "completion.semantic_similarity.dimension_mismatch",
-                    "error.message": str(exception),
                     "sub_goal.index": sub_goal.index,
+                    "error.message": str(exception),
                 },
             )
             return None
@@ -323,8 +386,8 @@ class SubGoalEvaluator:
             extra={
                 "component": "graph.intent.completion",
                 "event": "completion.semantic_similarity.resolved",
-                "sub_goal.index": sub_goal.index,
                 "similarity.score": score,
+                "sub_goal.index": sub_goal.index,
                 "rationale.length": len(rationale),
             },
         )
@@ -483,8 +546,9 @@ class SubGoalEvaluator:
                 "sub_goal.kind": active.kind.value,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.justified": evidence.claim.justified,
+                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
+                "validation.executed": evidence.validation.executed,
                 "sub_goal.description": active.description[:80],
                 "event": CompletionEvent.EVIDENCE_ASSESSED.value,
                 "criterion.observed": (
@@ -525,8 +589,9 @@ class SubGoalEvaluator:
                 "gate.outcome": decision.outcome.value,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.justified": evidence.claim.justified,
+                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
+                "validation.executed": evidence.validation.executed,
                 "event": CompletionEvent.GATE_ADJUDICATED.value,
                 "step.screen_changed": step_result.screen_changed,
                 "gate.retain_reason": (
@@ -569,6 +634,9 @@ class SubGoalEvaluator:
             and action_kind is ActionKind.VALIDATION
         ):
             return AdvanceReason.VALIDATION_IMPLICIT_COMPLETION.value
+
+        if sub_goal.kind is SubGoalKind.VALIDATION and evidence.validation.executed:
+            return AdvanceReason.VALIDATION_ACTION.value
 
         return AdvanceReason.STRICT_PATH.value
 

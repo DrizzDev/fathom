@@ -3,7 +3,8 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, Optional
 
-from fathom.constants import SPATIAL_ACTION_TYPES, SWIPE_ACTIONS
+from fathom.constants import SWIPE_ACTIONS
+from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.core.localization.matcher import OcrPhraseMatcher
 from fathom.core.localization.regional import RegionalEvidenceMatcher
@@ -34,6 +35,7 @@ class TargetLocalizationService:
     def __init__(
         self,
         *,
+        catalog: CommandCatalog,
         workflow_id: Optional[str] = None,
         phrase_matcher: Optional[OcrPhraseMatcher] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
@@ -45,6 +47,7 @@ class TargetLocalizationService:
         unit tests and minimal compositions need not wire them explicitly.
         """
 
+        self.__catalog = catalog
         self.__ensemble = ensemble
         self.__workflow_id = workflow_id
         self.__phrase_matcher = phrase_matcher if phrase_matcher is not None else OcrPhraseMatcher()
@@ -71,7 +74,7 @@ class TargetLocalizationService:
 
         _ = image
 
-        if action.action_type not in SPATIAL_ACTION_TYPES:
+        if not self.__catalog.is_spatial(action_type=action.action_type):
             result = LocalizationResult(
                 confidence=1.0,
                 status=LocalizationStatus.RESOLVED,

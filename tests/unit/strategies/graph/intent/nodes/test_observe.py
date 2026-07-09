@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.services.settlement import ScreenSettlementService
+from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.execution import ExecutionContext
+from fathom.schemas.localization import LocalizationResult, LocalizationStatus
+from fathom.schemas.results import ExecutionResult
+from fathom.schemas.screens import ScreenCapture, ScreenDiff, ScreenHashBundle
+from fathom.schemas.settlement import (
+    PostActionScreen,
+    PreActionScreen,
+    ScreenSettlementEvidence,
+)
+from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.observe import ObserveNode
 
 
@@ -57,6 +71,16 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
     Pins gesture step-success handling after post-action effect classification.
     """
 
+    @staticmethod
+    def __node() -> ObserveNode:
+        """
+        Build an ObserveNode whose provider context exposes the real command catalog.
+        """
+
+        provider = MagicMock(name="IntentNodeProvider")
+        provider.context.catalog = CommandCatalogProvider().build()
+        return ObserveNode(provider=provider)
+
     def test_gesture_no_progress_is_not_recorded_as_success(self) -> None:
         """
         A dispatched gesture with a no-progress effect must fail the recorded step.
@@ -68,7 +92,7 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
             phash_distance=0,
         )
 
-        result = ObserveNode._ObserveNode__step_success(  # noqa: SLF001
+        result = self.__node()._ObserveNode__step_success(  # noqa: SLF001
             action_type=ActionType.SWIPE_DOWN,
             action_effect=effect,
             action_execution_kind=ActionExecutionKind.DEVICE,
@@ -88,7 +112,7 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
             phash_distance=0,
         )
 
-        result = ObserveNode._ObserveNode__step_success(  # noqa: SLF001
+        result = self.__node()._ObserveNode__step_success(  # noqa: SLF001
             action_type=ActionType.TAP,
             action_effect=effect,
             action_execution_kind=ActionExecutionKind.DEVICE,
@@ -96,3 +120,161 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
         )
 
         self.assertTrue(result)
+
+
+class ObserveNodeExecutedWiringTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins that OBSERVE sources StepResult.executed from raw ExecutionResult.success, independent of the vetoed step success.
+    """
+
+    @staticmethod
+    def __context() -> ExecutionContext:
+        """
+        Build an execution context for a gesture whose device primitive ran successfully.
+        """
+
+        action = Action(action_type=ActionType.SWIPE_DOWN, rationale="scroll the list")
+        return ExecutionContext(
+            package="app",
+            step=Step(step_number=3, screen_hash="v", action=action),
+            capture=ScreenCapture(width=1080, height=2340, activity="app", image=b"", timestamp=1),
+            localization=LocalizationResult(status=LocalizationStatus.RESOLVED, confidence=1.0),
+            execution_result=ExecutionResult(success=True, duration=10),
+        )
+
+    def __node(self) -> ObserveNode:
+        """
+        Build an ObserveNode whose effects report a no-progress gesture over a successful primitive.
+        """
+
+        provider = MagicMock(name="IntentNodeProvider")
+        provider.workflow_id = "run-test"
+        provider.context.workflow_id = "run-test"
+        provider.context.catalog = CommandCatalogProvider().build()
+        provider.is_cancelled = AsyncMock(return_value=False)
+        provider.persistence.persist = MagicMock()
+        provider.observer.fallback_observation = AsyncMock(return_value=None)
+        provider.effects.observe = AsyncMock(return_value=(None, None, "post", "app", None))
+        provider.effects.changed = MagicMock(return_value=False)
+        provider.effects.log_diff = MagicMock()
+        provider.effects.effect_from = MagicMock(
+            return_value=ActionEffect(
+                status=ActionEffectStatus.NO_PROGRESS,
+                visual_progress=0.0,
+                phash_distance=0,
+            )
+        )
+        return ObserveNode(provider=provider)
+
+    async def test_no_progress_gesture_is_executed_but_step_unsuccessful(self) -> None:
+        """
+        A no-progress gesture yields StepResult.executed=True (raw success) while StepResult.success=False (vetoed).
+        """
+
+        result: Any = await self.__node()(
+            state={IntentStateKey.EXECUTION_CONTEXT: self.__context()},  # type: ignore[arg-type]
+        )
+
+        step_result = result[CommonStateKey.STEP_RESULT]
+        self.assertTrue(step_result.executed)
+        self.assertFalse(step_result.success)
+
+
+class PostActionSettlementTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins delayed settlement recapture for transition-capable actions.
+    """
+
+    @staticmethod
+    def __diff(*, distance: int) -> ScreenDiff:
+        """
+        Build a minimal screen diff with the requested visual distance.
+        """
+
+        return ScreenDiff(
+            phash_distance=distance,
+            xml_hash_changed=False,
+            activity_changed=False,
+            interaction_hash_changed=False,
+        )
+
+    @staticmethod
+    def __capture(*, image: bytes = b"image", activity: str = "app") -> ScreenCapture:
+        """
+        Build a screen capture fixture.
+        """
+
+        return ScreenCapture(
+            image=image,
+            width=1080,
+            height=2340,
+            activity=activity,
+            timestamp=1,
+        )
+
+    def __settlement(
+        self, *, comparator: MagicMock, observer: MagicMock
+    ) -> ScreenSettlementService:
+        """
+        Build the settlement service with a screenshot-only recapture path.
+        """
+
+        device = MagicMock(name="Device")
+        device.capture_screen = AsyncMock(return_value=b"settled")
+        device.get_current_package = AsyncMock(return_value="app")
+        configuration = SimpleNamespace(
+            engine=SimpleNamespace(stability_wait=0, transition_grace_period=0)
+        )
+
+        return ScreenSettlementService(
+            device=device,
+            state=observer,
+            comparison=comparator,
+            configuration=configuration,
+        )
+
+    async def test_no_progress_navigation_recaptures_settled_screen(self) -> None:
+        """
+        A successful no-progress tap gets one delayed screenshot recapture and returns settled progress.
+        """
+
+        comparator = MagicMock()
+        comparator.compare.return_value = self.__diff(distance=24)
+        observer = MagicMock()
+        observer.resolve_capture_hashes.return_value = ScreenHashBundle(
+            visual_hash="ffffffffffffffff",
+            xml_hash="0",
+            interaction_hash="0",
+        )
+        observer.build_screen_state.return_value = None
+        action = Action(action_type=ActionType.TAP, rationale="open cart")
+        execution = ExecutionContext(
+            package="app",
+            step=Step(step_number=1, screen_hash="0", action=action),
+            capture=self.__capture(),
+            localization=LocalizationResult(status=LocalizationStatus.RESOLVED, confidence=1.0),
+            execution_result=ExecutionResult(success=True, duration=1),
+        )
+
+        result = await self.__settlement(
+            comparator=comparator,
+            observer=observer,
+        ).compare(
+            evidence=ScreenSettlementEvidence(
+                execution=execution,
+                before=PreActionScreen(capture=self.__capture()),
+                after=PostActionScreen(
+                    capture=self.__capture(),
+                    hashes=ScreenHashBundle(
+                        visual_hash="0000000000000000",
+                        xml_hash="0",
+                        interaction_hash="0",
+                    ),
+                    diff=self.__diff(distance=0),
+                ),
+            )
+        )
+
+        self.assertEqual(result.capture.image, b"settled")
+        self.assertEqual(result.hashes.visual_hash, "ffffffffffffffff")
+        self.assertEqual(result.diff.phash_distance, 24)

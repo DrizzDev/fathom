@@ -46,6 +46,7 @@ from fathom.schemas.conversation.summary import (
     ScriptOverview,
     SummaryView,
 )
+from fathom.schemas.conversation.title import TitleContext, TitlePolicy
 from fathom.schemas.conversation.turns import (
     ConversationTurn,
     FunctionCallPart,
@@ -122,6 +123,8 @@ __all__ = [
     "ThreadMetadataView",
     "ThreadTitleMetadataView",
     "ThreadView",
+    "TitleContext",
+    "TitlePolicy",
     "TimelineQuery",
     "TimelineView",
     "TurnPart",

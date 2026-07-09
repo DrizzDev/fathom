@@ -26,7 +26,7 @@ from fathom.schemas.actions import Action
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.loop import LoopEvidence, LoopReason, LoopTurn
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.vision import action_kind_from_token
+from fathom.schemas.vision import ActionKindResolver
 
 logger = getLogger(__name__)
 
@@ -976,8 +976,8 @@ class LoopDetector(BaseModel):
                 LoopTurn(
                     action_type=action_token,
                     effect_status=effect_status,
-                    action_kind=action_kind_from_token(action_token),
                     screen_hash_prefix=hashes[index][:8] if hashes[index] else "",
+                    action_kind=ActionKindResolver.resolve_token(token=action_token),
                 )
             )
 

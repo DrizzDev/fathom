@@ -10,7 +10,9 @@ from fathom.adapters.storage.local import LocalStorage
 from fathom.base.paths import SharedPathManager
 from fathom.constants.events import FathomEvent
 from fathom.constants.interaction import SwipeSpeed
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.exceptions import WorkflowCancelledError
+from fathom.interfaces.authoring import AuthoringPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -267,7 +269,7 @@ class DeterministicDecomposer:
     Deterministic decomposer that avoids an LLM call.
     """
 
-    async def decompose(self, *, intent: str) -> list[Any]:
+    async def decompose(self, *, intent: str) -> List[Any]:
         """
         Return no sub-goals.
         """
@@ -360,6 +362,7 @@ class IntentStrategyHarnessBuilder:
         tmp_path: Path,
         memory: MemoryPort,
         configuration: FathomConfiguration,
+        authoring: Optional[AuthoringPort] = None,
     ) -> IntentStrategyHarness:
         """
         Build an IntentStrategy harness for cancellation finalization tests.
@@ -367,7 +370,9 @@ class IntentStrategyHarnessBuilder:
 
         telemetry = RecordingTelemetry()
         intent = "Cancel after collecting a partial script"
-        path_manager = SharedPathManager(settings=FathomSettings(assets_path=tmp_path / "assets"))
+        path_manager = SharedPathManager(
+            settings=FathomSettings.model_validate({"assets_path": tmp_path / "assets"})
+        )
 
         strategy = IntentStrategy(
             llm=llm,
@@ -381,6 +386,7 @@ class IntentStrategyHarnessBuilder:
             use_xml=False,
             telemetry=telemetry,
             signal=NoopSignal(),
+            catalog=CommandCatalogProvider().build(),
             path_manager=path_manager,
             package_name="com.example",
             configuration=configuration,
@@ -390,6 +396,7 @@ class IntentStrategyHarnessBuilder:
             perception=DeterministicPerceptionPort(),
             summarizer=DeterministicSummarizationPort(),
             storage=LocalStorage(path_manager=path_manager),
+            authoring=authoring,
             checkpoint_store=SqliteCheckpointStore(
                 policy=SqliteCheckpointPolicy(),
                 directory=path_manager.get_checkpoint_directory(),

@@ -7,7 +7,9 @@ import pytest
 from fathom.constants.tools import ToolName, TurnMode
 from fathom.core.agent.tools.registry import DEFAULT_TOOL_POLICIES
 from fathom.core.agent.tools.scope import ToolScope
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.services.decomposer import IntentDecomposer
+from fathom.core.services.directive import DirectivePolicy
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
@@ -75,7 +77,9 @@ class TestLiveToolScope:
         Quick-sample subset of the corpus runs end-to-end against the live decomposer.
         """
 
-        sub_goals = await IntentDecomposer(llm=llm).decompose(intent=intent)
+        sub_goals = await IntentDecomposer(
+            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+        ).decompose(intent=intent)
         assert sub_goals, f"decomposer returned no sub-goals for intent: {intent!r}"
 
         for sub_goal in sub_goals:
@@ -105,7 +109,9 @@ class TestLiveToolScopeFullCorpus:
         Every corpus intent's decomposition must obey the framework contract end-to-end.
         """
 
-        sub_goals = await IntentDecomposer(llm=llm).decompose(intent=intent)
+        sub_goals = await IntentDecomposer(
+            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+        ).decompose(intent=intent)
         assert sub_goals, f"decomposer returned no sub-goals for intent: {intent!r}"
 
         for sub_goal in sub_goals:

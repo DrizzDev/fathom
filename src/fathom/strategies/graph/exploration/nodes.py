@@ -9,7 +9,11 @@ from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
 from fathom.constants.state import ExplorationStateKey as EKey
+from fathom.core.agent.action import ActionBuilder
+from fathom.core.agent.command import CommandGate
+from fathom.core.services.settlement import ScreenSettlementService
 from fathom.schemas.actions import Action
+from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.tools import ToolPolicyContext
@@ -22,7 +26,6 @@ from fathom.strategies.graph.exploration.state import (
     get_step_result,
     is_content_exhausted,
 )
-from fathom.utils.wait import stability_wait
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,8 @@ class ExplorationNodeProvider:
         """
 
         self.__context = context
+        self.__action_builder = ActionBuilder()
+        self.__command_gate = CommandGate(catalog=context.catalog)
 
     async def ground(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -127,6 +132,7 @@ class ExplorationNodeProvider:
             context_manager=self.__context.context_manager,
             visual_hash=capture.state.visual_hash if capture.state is not None else "",
         )
+        analysis = self.__materialize_command(analysis=analysis)
 
         if (
             analysis.is_goal_complete
@@ -144,6 +150,18 @@ class ExplorationNodeProvider:
         result[EKey.ACTION] = analysis.action if not exhausted else None
 
         return cast("ExplorationGraphState", result)
+
+    def __materialize_command(self, *, analysis: AnalysisResult) -> AnalysisResult:
+        """
+        Build the executable action for a parsed exploration command.
+        """
+
+        if analysis.tool_response is None or analysis.tool_response.command is None:
+            return analysis
+
+        accepted = self.__command_gate.validate(command=analysis.tool_response.command)
+        action = self.__action_builder.build(command=accepted)
+        return analysis.model_copy(update={"action": action})
 
     async def execute(self, state: ExplorationGraphState) -> ExplorationGraphState:
         """
@@ -185,8 +203,7 @@ class ExplorationNodeProvider:
             session_id=self.__context.workflow_id,
         )
 
-        # Post-action stability wait with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
+        await ScreenSettlementService.pause_for(configuration=self.__context.configuration)
 
         duration = time.time() - start_time
 
@@ -196,6 +213,8 @@ class ExplorationNodeProvider:
             screen_changed=True,
             duration=int(duration * 1000),
             success=execution_result.success,
+            executed=execution_result.success,
+            capture=execution_result.capture,
             pre_hash=screen_state.visual_hash if screen_state else "0",
         )
 
@@ -297,8 +316,7 @@ class ExplorationNodeProvider:
             package_name=self.__context.package_name,
         )
 
-        # Wait for stability with hard cap for consistency.
-        await stability_wait(self.__context.configuration)
+        await ScreenSettlementService.pause_for(configuration=self.__context.configuration)
 
         # Update state with remaining navigation
         result = cast("Dict[str, Any]", dict(state))

@@ -2,22 +2,41 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-import logging
-from typing import Optional, Sequence
+from logging import getLogger
+from typing import FrozenSet, Optional, Sequence, Tuple
 
+from fathom.adapters.dialect.drizz.factory import DrizzDialectFactory
+from fathom.adapters.evidence.history import HistoryEvidenceSource
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
+from fathom.adapters.script.refresher import BaselineRefresher
+from fathom.authoring.adapters.artifacts import FileAuthoringArtifactProvider
+from fathom.authoring.adapters.store import FileAuthoringDraftStore
+from fathom.authoring.agent import AuthoringAgent
+from fathom.authoring.application import (
+    AuthoringRequestBuilder,
+    AuthoringReviewer,
+    AuthoringRunner,
+    StepAuthoringScheduler,
+)
+from fathom.authoring.evidence import AuthoringEvidenceBuilder
 from fathom.base.paths import SharedPathManager
 from fathom.constants.platform import DevicePlatform
 from fathom.constants.tools import TurnMode
+from fathom.core.agent.action import ActionBuilder
+from fathom.core.agent.command import CommandGate
+from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.agent.state import AgentState
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.artifact.pipeline import ArtifactPipeline
+from fathom.core.capability.catalog import CommandCatalog, CommandCatalogProvider
+from fathom.core.capture.store import CaptureStore
 from fathom.core.context.manager import ContextManager
+from fathom.core.dialect.policy import Policy
 from fathom.core.embedding.cache import EmbeddingCache
 from fathom.core.localization import EnsembleLocalizerService
 from fathom.core.perception.localization import TargetLocalizationService
@@ -27,8 +46,14 @@ from fathom.core.services.abort import AbortDetectorFactory
 from fathom.core.services.action import ActionExecutor
 from fathom.core.services.artifacts import ArtifactCatalog
 from fathom.core.services.audit import AuditService
+from fathom.core.services.authoring import AuthoringService
 from fathom.core.services.comparator import ScreenComparator
-from fathom.core.services.exporter import ScriptExporter
+from fathom.core.services.generation.assembler import EvidenceAssembler
+from fathom.core.services.generation.baseline import BaselineScriptService
+from fathom.core.services.generation.classifier import LauncherClassifier
+from fathom.core.services.generation.distiller import Distiller
+from fathom.core.services.generation.normalizer import RunTraceNormalizer
+from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
@@ -39,8 +64,11 @@ from fathom.core.services.telemetry import PhaseAnnouncer
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
+from fathom.interfaces.authoring import AuthoringDraftStore, AuthoringPort
 from fathom.interfaces.device import DevicePort
+from fathom.interfaces.dialect import Dialect
 from fathom.interfaces.embedding import EmbeddingPort
+from fathom.interfaces.evidence import EvidenceSource
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -66,7 +94,7 @@ from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.tools import ToolPolicyContext, ToolScopeMatrixExpansion
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class GraphContext:
@@ -121,6 +149,7 @@ class GraphContext:
         realignment: Optional[RealignmentPolicy] = None,
         context_manager: Optional[ContextManager] = None,
         action_executor: Optional[ActionExecutor] = None,
+        authoring: Optional[AuthoringPort] = None,
         pixel_overlay: Optional[OverlayDetectorPort] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
@@ -136,12 +165,16 @@ class GraphContext:
         self.__intent = intent
         self.__device = device
         self.__perception_port = perception
+
         self.__embedder = embedder
-        self.__embedding_cache = (
-            embedding_cache
-            if embedding_cache is not None
-            else (EmbeddingCache(embedder=embedder) if embedder is not None else None)
-        )
+        self.__embedding_cache: Optional[EmbeddingCache]
+
+        if embedding_cache is not None:
+            self.__embedding_cache = embedding_cache
+        else:
+            self.__embedding_cache = (
+                EmbeddingCache(embedder=embedder) if embedder is not None else None
+            )
 
         self.__llm = llm
         self.__memory = memory
@@ -182,7 +215,7 @@ class GraphContext:
         self.__tool_scope = ToolScope(policies=DEFAULT_TOOL_POLICIES)
         self.__log_tool_scope_matrix()
 
-        self.__reasoner = reasoner or Reasoner(intent=intent)
+        self.__reasoner = reasoner or Reasoner(intent=intent, opener_policy=OpenerSignalPolicy())
         self.__agent_state = agent_state or AgentState(
             intent=intent,
             max_steps=max_steps,
@@ -206,8 +239,8 @@ class GraphContext:
             storage=storage,
             perception=perception,
             session_id=workflow_id,
-            hierarchy_signature_builder=HierarchySignatureBuilder(),
             pipeline=artifact_pipeline,
+            hierarchy_signature_builder=HierarchySignatureBuilder(),
         )
 
         # GCC Context Manager with optional summarizer
@@ -223,42 +256,96 @@ class GraphContext:
             telemetry=telemetry,
             session_id=workflow_id,
             auditor=self.__auditor,
-            use_cache=configuration.llm.use_cache,
-            capabilities=self.__capabilities,
             tool_scope=self.__tool_scope,
+            capabilities=self.__capabilities,
+            use_cache=configuration.llm.use_cache,
         )
 
+        self.__capture_store = CaptureStore()
+        self.__catalog = CommandCatalogProvider().build()
         self.__action_executor = action_executor or ActionExecutor(
             device=device,
             storage=storage,
             telemetry=telemetry,
+            catalog=self.__catalog,
             path_manager=path_manager,
             pipeline=artifact_pipeline,
+            capture_store=self.__capture_store,
         )
 
         self.__comparator = comparator or ScreenComparator()
         self.__hierarchy = hierarchy or HierarchyService(
             storage=storage,
-            configuration=perception_configuration,
             pipeline=artifact_pipeline,
+            configuration=perception_configuration,
         )
         self.__planner = planner or StepPlanner(
             vision_tool=self.__vision,
             tool_scope=self.__tool_scope,
+            action_builder=ActionBuilder(),
             escalation_policy=configuration.intent.escalation,
+            command_gate=CommandGate(catalog=self.__catalog),
+        )
+
+        dialect = DrizzDialectFactory().create()
+        self.__dialect = dialect
+        execution_evidence = HistoryEvidenceSource(
+            distiller=Distiller(),
+            path_manager=path_manager,
+            assembler=EvidenceAssembler(),
+            normalizer=RunTraceNormalizer(classifier=LauncherClassifier()),
+        )
+        self.__evidence = execution_evidence
+        self.__authoring_evidence_builder = AuthoringEvidenceBuilder()
+
+        refresher = BaselineRefresher(
+            source=execution_evidence,
+            path_manager=path_manager,
+            baseline=BaselineScriptService(
+                policy=Policy(),
+                dialect=dialect,
+                generator=DeterministicFlowGenerator(),
+            ),
+        )
+
+        self.__authoring_runner = AuthoringRunner(
+            agent=AuthoringAgent(),
+            configuration=configuration.authoring,
+        )
+        self.__authoring = authoring or AuthoringService(
+            llm=llm,
+            reviewer=AuthoringReviewer(policy=Policy(), dialect=dialect),
+            requests=AuthoringRequestBuilder(
+                artifacts=FileAuthoringArtifactProvider(
+                    configuration=configuration.authoring.artifacts
+                )
+            ),
+            use_cache=configuration.llm.use_cache,
+            attempts=configuration.authoring.attempts,
+        )
+        self.__authoring_drafts = FileAuthoringDraftStore(path_manager=path_manager)
+        authoring_scheduler = StepAuthoringScheduler(
+            author=self.__authoring,
+            source=execution_evidence,
+            runner=self.__authoring_runner,
+            drafts=self.__authoring_drafts,
+            builder=self.__authoring_evidence_builder,
         )
 
         self.__history = history or HistoryService(
             storage=storage,
-            workflow_id=workflow_id,
+            refresher=refresher,
+            execution_id=execution_id,
             package_name=package_name,
             path_manager=path_manager,
-            exporter=ScriptExporter(llm=llm, use_cache=configuration.llm.use_cache),
             pipeline=artifact_pipeline,
+            authoring=authoring_scheduler,
         )
+
         self.__trace = trace or TraceService(path_manager=path_manager)
         self.__resolution = resolution or ReferenceResolutionService(
             ledger=memory,
+            catalog=self.__catalog,
             workflow_id=workflow_id,
         )
         self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
@@ -269,15 +356,16 @@ class GraphContext:
         self.__ensemble = ensemble or EnsembleLocalizerService(workflow_id=workflow_id)
 
         self.__screen_observer = screen_observer or ScreenObservationService(
-            configuration=perception_configuration,
+            device=device,
             ocr=self.__ocr,
             icons=self.__icons,
-            device=device,
             workflow_id=workflow_id,
-            pixel_overlay=self.__pixel_overlay,
             pipeline=artifact_pipeline,
+            pixel_overlay=self.__pixel_overlay,
+            configuration=perception_configuration,
         )
         self.__target_localizer = target_localizer or TargetLocalizationService(
+            catalog=self.__catalog,
             workflow_id=workflow_id,
             ensemble=self.__ensemble,
         )
@@ -286,10 +374,7 @@ class GraphContext:
 
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
-        self.__event_emitter = RuntimeEventEmitter(
-            journal=self.__journal,
-            workflow_id=workflow_id,
-        )
+        self.__event_emitter = RuntimeEventEmitter(journal=self.__journal, workflow_id=workflow_id)
 
     @staticmethod
     def __resolve_supports_back(*, device: DevicePort) -> bool:
@@ -331,12 +416,12 @@ class GraphContext:
         )
 
     @staticmethod
-    def __mode_subsets() -> Sequence[frozenset[TurnMode]]:
+    def __mode_subsets() -> Sequence[FrozenSet[TurnMode]]:
         """
         Enumerate every active mode-set combination supported by :class:`TurnMode`.
         """
 
-        modes = tuple(TurnMode)
+        modes: Tuple[TurnMode, ...] = tuple(TurnMode.__members__.values())
 
         return tuple(
             frozenset(combo)
@@ -344,7 +429,7 @@ class GraphContext:
             for combo in itertools.combinations(modes, size)
         )
 
-    def __expansion(self, *, modes: frozenset[TurnMode], hitl: bool) -> ToolScopeMatrixExpansion:
+    def __expansion(self, *, modes: FrozenSet[TurnMode], hitl: bool) -> ToolScopeMatrixExpansion:
         """
         Resolve one matrix entry for the given mode set and HITL capability.
         """
@@ -357,8 +442,8 @@ class GraphContext:
             context=ToolPolicyContext(capabilities=capabilities, modes=modes),
         )
         return ToolScopeMatrixExpansion(
-            modes=modes,
             hitl=hitl,
+            modes=modes,
             tools_allowed=result.names,
         )
 
@@ -680,6 +765,22 @@ class GraphContext:
         return self.__action_executor
 
     @property
+    def catalog(self) -> CommandCatalog:
+        """
+        Returns the shared command capability catalog.
+        """
+
+        return self.__catalog
+
+    @property
+    def capture_store(self) -> CaptureStore:
+        """
+        Returns the run-owned capture store shared with the action executor.
+        """
+
+        return self.__capture_store
+
+    @property
     def reasoner(self) -> Reasoner:
         """
         Returns the Reasoner instance.
@@ -735,6 +836,54 @@ class GraphContext:
         """
 
         return self.__history
+
+    @property
+    def authoring_runner(self) -> AuthoringRunner:
+        """
+        Returns the script authoring runner.
+        """
+
+        return self.__authoring_runner
+
+    @property
+    def authoring(self) -> AuthoringPort:
+        """
+        Returns the authoring port used by the authoring runner to produce scripts.
+        """
+
+        return self.__authoring
+
+    @property
+    def dialect(self) -> Dialect:
+        """
+        Returns the script dialect configured for generation and authoring.
+        """
+
+        return self.__dialect
+
+    @property
+    def authoring_drafts(self) -> AuthoringDraftStore:
+        """
+        Returns the authoring draft store used by final run authoring.
+        """
+
+        return self.__authoring_drafts
+
+    @property
+    def evidence(self) -> EvidenceSource:
+        """
+        Returns the execution evidence source used by script authoring.
+        """
+
+        return self.__evidence
+
+    @property
+    def authoring_evidence_builder(self) -> AuthoringEvidenceBuilder:
+        """
+        Returns the builder that derives authoring task evidence from execution evidence.
+        """
+
+        return self.__authoring_evidence_builder
 
     @property
     def trace(self) -> TraceService:

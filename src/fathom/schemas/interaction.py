@@ -42,6 +42,7 @@ from fathom.constants.conversation import (
     SCRIPT_LIST_DEFAULT_LIMIT,
     SUMMARY_MESSAGE_LIMIT,
     SUMMARY_SCRIPT_LIMIT,
+    THREAD_TITLE_MAX_LENGTH,
     THREAD_TITLE_PREFIX_MAX_LENGTH,
     TIMELINE_DEFAULT_LIMIT,
     TIMELINE_MAX_LIMIT,
@@ -292,7 +293,11 @@ class Thread(BaseModel):
 
     identity: Identity = Field(description="Tenant-scoped thread identity.")
     creator: Optional[str] = Field(default=None, description="Actor that created the thread.")
-    title: Optional[str] = Field(default=None, description="Optional user-facing thread title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="Optional user-facing thread title.",
+    )
 
     state: ThreadState = Field(description="Current thread lifecycle state.")
     digest: Optional[str] = Field(default=None, description="Rolling long-context digest.")
@@ -506,7 +511,11 @@ class Script(BaseModel):
         default=None, description="Optional task identifier that produced the script."
     )
     artifact: Optional[str] = Field(default=None, description="Export artifact for this script.")
-    title: Optional[str] = Field(default=None, description="User-facing script title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="User-facing script title.",
+    )
     format: ScriptFormat = Field(
         default=ScriptFormat.TEXT_PLAIN, description="Script content format."
     )
@@ -735,7 +744,11 @@ class CreateThread(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     identity: Identity = Field(description="Identity for the new thread.")
-    title: Optional[str] = Field(default=None, description="Optional user-facing thread title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="Optional user-facing thread title.",
+    )
     state: ThreadState = Field(default=ThreadState.ACTIVE, description="Initial thread state.")
     creator: Optional[str] = Field(default=None, description="Actor creating the thread.")
     created: datetime = Field(
@@ -947,7 +960,11 @@ class SaveScript(BaseModel):
         default=None, description="Optional task identifier that produced the script."
     )
     artifact: Optional[str] = Field(default=None, description="Export artifact for the content.")
-    title: Optional[str] = Field(default=None, description="User-facing script title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="User-facing script title.",
+    )
     format: ScriptFormat = Field(
         default=ScriptFormat.TEXT_PLAIN, description="Script content format."
     )
@@ -1287,17 +1304,18 @@ class SoftDeletedPurgeOutcome(BaseModel):
 
 class SetThreadTitle(BaseModel):
     """
-    Request to set a thread title only when the existing title is null.
-
-    Idempotent: a non-null title is left unchanged. Used by the host to
-    auto-fill a conversation's title from the first run's intent.
+    Request to set or replace a thread title.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     tenant: str = Field(description="Tenant that owns the thread.")
     thread: str = Field(description="Thread identifier to update.")
-    title: str = Field(min_length=1, description="Title to set when null.")
+    title: str = Field(
+        min_length=1,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="Title to persist for the thread.",
+    )
     metadata: Metadata = Field(
         default_factory=Metadata,
         description="Metadata describing how the title was produced.",

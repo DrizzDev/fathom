@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
+from fathom.constants.retries import RetryKind
 from fathom.constants.state import (
     TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
@@ -14,13 +15,16 @@ from fathom.constants.state import (
     PlanMetadataKey,
     VerifyMode,
 )
+from fathom.constants.tools import StateNamespace
 from fathom.core.agent.state import AgentState
+from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.results import AnalysisResult
+from fathom.schemas.results import AnalysisResult, PlanResult, ToolErrorFeedback
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.tools import StateUpdate
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
 from tests.builders.agent import AgentFixtures
 
@@ -45,7 +49,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
     def __provider(
         *,
         agent_state: AgentState,
-        planner: Mock | None = None,
+        planner: Optional[Mock] = None,
         cancelled: bool = False,
         max_steps: int = 10,
     ) -> SimpleNamespace:
@@ -69,6 +73,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
         )
@@ -168,6 +173,101 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[CommonStateKey.COMPLETION_REASON], CompletionReason.MAX_STEPS.value)
         self.assertEqual(agent_state.consecutive_complete_deferrals, 0)
 
+    async def test_state_change_only_plan_routes_to_ground_without_step(self) -> None:
+        """
+        A non-command tool response writes state but never creates a planned step.
+        """
+
+        agent_state = AgentState(
+            intent="remember selected price",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            return_value=PlanResult(
+                step=None,
+                is_complete=False,
+                should_retry=True,
+                reason="Remember selected price",
+                updates=(
+                    StateUpdate(
+                        namespace=StateNamespace.MEMORY,
+                        key="item_price",
+                        value="94",
+                    ),
+                ),
+            )
+        )
+        provider = self.__provider(agent_state=agent_state, planner=planner)
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+
+        result = await node.run(
+            state={
+                CommonStateKey.CAPTURE: ScreenCapture(
+                    width=100,
+                    height=200,
+                    activity="app",
+                    image=b"png",
+                    timestamp=1,
+                )
+            }
+        )
+
+        provider.context.memory.set.assert_awaited_once_with(key="item_price", value="94")
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+
+    async def test_tool_schema_validation_exhaustion_routes_to_retry_not_failed(
+        self,
+    ) -> None:
+        """
+        Exhausted tool-schema retries consume planner budget instead of marking the run failed.
+        """
+
+        agent_state = AgentState(
+            intent="search product",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
+        )
+        planner = Mock()
+        planner.plan_step = AsyncMock(
+            side_effect=ToolValidationError(
+                ToolErrorFeedback(
+                    tool_name="execute_ui",
+                    tool_call_id=None,
+                    error_kind="validation",
+                    message=(
+                        "execute_ui arguments validation failed at action: "
+                        "validation_subject is required for action_type='validate'."
+                    ),
+                )
+            )
+        )
+        provider = self.__provider(agent_state=agent_state, planner=planner)
+        node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
+        state: Dict[Any, Any] = {
+            CommonStateKey.CAPTURE: ScreenCapture(
+                width=100,
+                height=200,
+                activity="app",
+                image=b"png",
+                timestamp=1,
+            )
+        }
+
+        result = await node.run(state=state)
+
+        self.assertFalse(result[CommonStateKey.IS_COMPLETE])
+        self.assertTrue(result[IntentStateKey.SHOULD_RETRY])
+        self.assertIsNone(result[IntentStateKey.PLANNED_STEP])
+        self.assertEqual(agent_state.retries.planner.count, 1)
+        attempt = agent_state.last_retry_attempt
+        assert attempt is not None
+        self.assertEqual(attempt.kind, RetryKind.LLM_FEEDBACK)
+        diagnostic = result[CommonStateKey.FAILURE_DIAGNOSTIC]
+        assert isinstance(diagnostic, str)
+        self.assertIn("validation_subject", diagnostic)
+
 
 class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
     """
@@ -212,6 +312,7 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
         )
@@ -278,6 +379,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
         )
@@ -351,6 +453,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
         )
@@ -413,6 +516,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                         use_xml=True,
                         reasoner=Mock(),
                         metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                        memory=SimpleNamespace(set=AsyncMock()),
                         telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
                     ),
                 )
@@ -486,6 +590,7 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
                 planner=planner,
                 workflow_id="run-test",
                 agent_state=agent_state,
+                memory=SimpleNamespace(set=AsyncMock()),
                 context_manager=AgentFixtures.context_manager(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
@@ -548,6 +653,7 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
+                memory=SimpleNamespace(set=AsyncMock()),
                 context_manager=AgentFixtures.context_manager(),
                 device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(100, 200))),
                 signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),

@@ -4,6 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
+from fathom.constants.authoring import AuthoringMode
 from fathom.constants.llm import (
     DEFAULT_PRIORITY_FAILURE_THRESHOLD,
     DEFAULT_PRIORITY_LATENCY_THRESHOLD,
@@ -21,8 +22,14 @@ from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_USE_CACHE,
 )
 from fathom.constants.storage import StorageBackend
+from fathom.schemas.authoring import (
+    AuthoringConfiguration,
+    RunConfiguration,
+    StepAuthoringConfiguration,
+)
 from fathom.schemas.configuration import (
     InferenceConfiguration,
+    LLMConfiguration,
     PostgresInteractionConfiguration,
     PriorityInferenceConfiguration,
     QualifierConfiguration,
@@ -45,6 +52,50 @@ class InferenceConfigurationContractTest(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             InferenceConfiguration(model="gemini-2.5-flash-lite")  # type: ignore[call-arg]
+
+
+class LLMConfigurationDefaultsTest(unittest.TestCase):
+    """
+    LLMConfiguration owns the shared runtime model defaults.
+    """
+
+    def test_default_timeout_is_thirty_seconds(self) -> None:
+        """
+        The shared Gemini per-attempt timeout must stay bounded for script and planner calls.
+        """
+
+        configuration = LLMConfiguration()
+
+        self.assertEqual(configuration.timeout, 30.0)
+
+
+class AuthoringConfigurationTest(unittest.TestCase):
+    """
+    Authoring configuration keeps step and run switches nested and typed.
+    """
+
+    def test_defaults_enable_run_and_async_step_authoring(self) -> None:
+        """
+        Fathom should attempt final run authoring and background per-step authoring by default.
+        """
+
+        configuration = AuthoringConfiguration()
+
+        self.assertTrue(configuration.run.enabled)
+        self.assertIs(configuration.step.mode, AuthoringMode.ASYNC)
+
+    def test_nested_overrides_are_preserved(self) -> None:
+        """
+        Callers can configure run and step authoring independently.
+        """
+
+        configuration = AuthoringConfiguration(
+            run=RunConfiguration(enabled=False),
+            step=StepAuthoringConfiguration(mode=AuthoringMode.ASYNC),
+        )
+
+        self.assertFalse(configuration.run.enabled)
+        self.assertIs(configuration.step.mode, AuthoringMode.ASYNC)
 
 
 class QualifierConfigurationDefaultsTest(unittest.TestCase):
@@ -109,11 +160,52 @@ class QualifierConfigurationEvolveTest(unittest.TestCase):
         configuration = QualifierConfiguration.evolve(model="gemini-3.5-flash")
 
         self.assertEqual(configuration.inference.model, "gemini-3.5-flash")
-        self.assertEqual(configuration.inference.temperature, DEFAULT_QUALIFIER_TEMPERATURE)
-        self.assertEqual(configuration.inference.use_cache, DEFAULT_QUALIFIER_USE_CACHE)
-        self.assertEqual(configuration.inference.thinking_level, DEFAULT_QUALIFIER_THINKING_LEVEL)
         self.assertEqual(configuration.inference.timeout, DEFAULT_QUALIFIER_TIMEOUT)
+        self.assertEqual(configuration.inference.use_cache, DEFAULT_QUALIFIER_USE_CACHE)
+        self.assertEqual(configuration.inference.temperature, DEFAULT_QUALIFIER_TEMPERATURE)
         self.assertEqual(configuration.inference.max_retries, DEFAULT_QUALIFIER_MAX_RETRIES)
+        self.assertEqual(configuration.inference.thinking_level, DEFAULT_QUALIFIER_THINKING_LEVEL)
+
+    def test_evolve_overrides_multiple_fields(self) -> None:
+        """
+        Naming several fields must override exactly those; others stay default.
+        """
+
+        configuration = QualifierConfiguration.evolve(
+            timeout=8.0,
+            max_retries=4,
+            model="gemini-2.5-flash",
+        )
+
+        self.assertEqual(configuration.inference.model, "gemini-2.5-flash")
+        self.assertEqual(configuration.inference.timeout, 8.0)
+        self.assertEqual(configuration.inference.max_retries, 4)
+        self.assertEqual(configuration.inference.use_cache, DEFAULT_QUALIFIER_USE_CACHE)
+        self.assertEqual(configuration.inference.temperature, DEFAULT_QUALIFIER_TEMPERATURE)
+        self.assertEqual(configuration.inference.thinking_level, DEFAULT_QUALIFIER_THINKING_LEVEL)
+
+    def test_evolve_with_no_overrides_matches_default_construction(self) -> None:
+        """
+        Calling evolve() with no kwargs must produce the same configuration as
+        the no-arg constructor. Degenerate case but valuable as a contract pin.
+        """
+
+        default = QualifierConfiguration()
+        evolved = QualifierConfiguration.evolve()
+
+        self.assertEqual(evolved, default)
+
+    def test_evolve_does_not_mutate_the_default(self) -> None:
+        """
+        evolve() must return a new instance; subsequent calls must still get
+        the original qualifier-tuned defaults from default_factory.
+        """
+
+        QualifierConfiguration.evolve(model="gemini-3.5-flash", timeout=30.0)
+
+        fresh_default = QualifierConfiguration().inference
+        self.assertEqual(fresh_default.model, DEFAULT_QUALIFIER_MODEL)
+        self.assertEqual(fresh_default.timeout, DEFAULT_QUALIFIER_TIMEOUT)
 
     def test_evolve_rejects_unknown_inference_fields(self) -> None:
         """
@@ -121,7 +213,7 @@ class QualifierConfigurationEvolveTest(unittest.TestCase):
         """
 
         with self.assertRaises(ValidationError):
-            QualifierConfiguration.evolve(modle="gemini-3.5-flash")  # type: ignore[call-arg]
+            QualifierConfiguration.evolve(modle="gemini-3.5-flash")
 
 
 class StorageConfigurationDefaultBackendsTest(unittest.TestCase):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import FrozenSet
+from typing import Dict, FrozenSet
 
-from fathom.constants.events import FathomEvent
+from fathom.constants.events import FathomEvent, StepEvent
 
 # Re-export execution constants
 from fathom.constants.execution import (
@@ -20,6 +20,7 @@ from fathom.constants.execution import (
     ExecutionPhase,
     SignalType,
 )
+from fathom.constants.flow import ScrollDirection
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform, IOSAutomationBackend
 from fathom.constants.run import ExecutionMode, SignalAdapterType, TargetKind
 from fathom.constants.scope import ContextScope
@@ -67,6 +68,8 @@ class ActionType(StrEnum):
     LONG_PRESS = "long_press"
     SAVE_MEMORY = "save_memory"
     RETRIEVE_MEMORY = "retrieve_memory"
+
+    STORE = "store"
 
     INFER = "infer"
     UNKNOWN = "unknown"
@@ -118,6 +121,15 @@ GESTURE_ACTION_TYPES: FrozenSet[ActionType] = frozenset(
         ActionType.SWIPE_RIGHT,
     }
 )
+
+GESTURE_SCROLL_DIRECTION: Dict[ActionType, ScrollDirection] = {
+    ActionType.SWIPE: ScrollDirection.DOWN,
+    ActionType.SCROLL: ScrollDirection.DOWN,
+    ActionType.SWIPE_UP: ScrollDirection.DOWN,
+    ActionType.SWIPE_DOWN: ScrollDirection.UP,
+    ActionType.SWIPE_LEFT: ScrollDirection.RIGHT,
+    ActionType.SWIPE_RIGHT: ScrollDirection.LEFT,
+}
 
 # Action types that, when planned during a sub-goal check, indicate the agent is
 # actively executing a next-phase task — used to infer opener sub-goal completion.
@@ -195,6 +207,7 @@ __all__ = [
     "SignalType",
     "TargetKind",
     "FathomEvent",
+    "StepEvent",
     "ContextScope",
     "ExecutionMode",
     "DRAIN_TIMEOUT",
@@ -213,6 +226,7 @@ __all__ = [
     "DEVICE_ACTION_TYPES",
     "SPATIAL_ACTION_TYPES",
     "GESTURE_ACTION_TYPES",
+    "GESTURE_SCROLL_DIRECTION",
     "DeviceConnectionType",
     "IOSAutomationBackend",
     "ACTION_EXECUTED_TYPES",

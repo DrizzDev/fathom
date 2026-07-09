@@ -5,6 +5,7 @@ from typing import Tuple
 
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
@@ -72,7 +73,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         The model may name a runtime observation identifier such as cv_1.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         element = self.__element(
             identifier="cv_1",
             bounds=Bounds(
@@ -107,7 +108,9 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         wrong-label allegations can be answered from logs alone.
         """
 
-        service = TargetLocalizationService(workflow_id="wf-localization")
+        service = TargetLocalizationService(
+            catalog=CommandCatalogProvider().build(), workflow_id="wf-localization"
+        )
 
         element = self.__element(
             identifier="body_text",
@@ -170,7 +173,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         Model bounds with no perception overlap dispatch and tag the result ``MODEL``.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         element = self.__element(
             identifier="cv_1",
             bounds=Bounds(
@@ -214,7 +217,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         Free viewport gestures do not require element localization.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
 
         action = Action(
             target="page",
@@ -237,7 +240,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         GENERIC_CONTAINER upstream snap outcome bypasses identifier match and lands on bbox.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         element = self.__element(
             identifier="13",
             bounds=Bounds(
@@ -283,7 +286,7 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         Without a GENERIC_CONTAINER signal the identifier-match stage resolves matching labels.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         element = self.__element(
             identifier="13",
             bounds=Bounds(
@@ -419,7 +422,7 @@ class FragmentedOcrTargetResolutionTest(unittest.IsolatedAsyncioTestCase):
         A target that is a prefix of the OCR phrase resolves via regional evidence.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         with self.assertLogs("fathom.core.perception.localization", level="INFO") as captured:
             result = await service.localize(
                 image=b"",
@@ -455,7 +458,7 @@ class FragmentedOcrTargetResolutionTest(unittest.IsolatedAsyncioTestCase):
         A target carrying every word of the OCR phrase resolves at the OCR stage.
         """
 
-        service = TargetLocalizationService()
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
         with self.assertLogs("fathom.core.perception.localization", level="INFO") as captured:
             result = await service.localize(
                 image=b"",

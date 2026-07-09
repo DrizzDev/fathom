@@ -142,7 +142,7 @@ class ToolValidationError(VisionError):
 
     def __init__(self, feedback: ToolErrorFeedback) -> None:
         # Use the feedback message directly so callers see a concise, model-ready description of what went wrong.
-        super().__init__(message=feedback.message, retryable=False)
+        super().__init__(message=feedback.message, retryable=True)
         self.feedback = feedback
 
 
@@ -271,6 +271,18 @@ class WorkflowTimeoutError(WorkflowError):
 class ScriptExportError(FathomError):
     """
     Script export failed.
+    """
+
+
+class LanguageComplianceError(FathomError):
+    """
+    A generated flow or rendered script violated a dialect compliance gate.
+    """
+
+
+class LanguageParseError(FathomError):
+    """
+    Rendered script text could not be parsed into a syntax tree.
     """
 
 

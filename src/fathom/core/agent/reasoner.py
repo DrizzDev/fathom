@@ -6,8 +6,8 @@ from typing import List, Optional, Set, Tuple
 
 from fathom.constants import (
     ACTION_EXECUTED_TYPES,
-    NEXT_PHASE_ACTION_TYPES,
     ActionType,
+    StepEvent,
 )
 from fathom.constants.agent import DirectiveKind
 from fathom.constants.reasoning import (
@@ -22,6 +22,8 @@ from fathom.constants.reasoning import (
     RATIONALE_KEYWORD_MATCH_THRESHOLD,
     RATIONALE_MIN_SIMILARITY_FLOOR,
 )
+from fathom.core.agent.opener import OpenerSignalPolicy
+from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.actions import Action
 from fathom.schemas.completion import (
     ActionEvidence,
@@ -29,6 +31,7 @@ from fathom.schemas.completion import (
     CompletionEvidence,
     CriterionEvidence,
     ScreenEvidence,
+    ValidationEvidence,
 )
 from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
@@ -44,11 +47,12 @@ class Reasoner:
     High-speed intent reasoning engine that derives completion signals from LLM output.
     """
 
-    def __init__(self, intent: str) -> None:
+    def __init__(self, intent: str, *, opener_policy: OpenerSignalPolicy) -> None:
         """
-        Initialize with the full intent string used for semantic alignment checks.
+        Initialize with the intent string for alignment checks and the opener-completion policy.
         """
         self.__intent = intent.lower()
+        self.__opener_policy = opener_policy
 
     def analyze_completion(
         self,
@@ -69,6 +73,7 @@ class Reasoner:
         """
 
         evidence_list: List[str] = []
+        action = self.__require_action(analysis=analysis)
 
         # Determine what we're checking completion for
         target_goal = (current_sub_goal or self.__intent).lower()
@@ -77,7 +82,7 @@ class Reasoner:
         logger.info(
             f"[Reasoner] Checking {goal_type} completion: '{target_goal}' | "
             f"llm_complete={analysis.is_goal_complete} | "
-            f"action_type={analysis.action.action_type}"
+            f"action_type={action.action_type}"
         )
 
         # 1. Primary Signal: LLM Flag (Zero Cost - already computed)
@@ -85,7 +90,7 @@ class Reasoner:
             evidence_list.append(f"LLM explicitly flagged {goal_type} completion")
 
         # 2. Secondary Signal: Action Type (Zero Cost)
-        if analysis.action.action_type == ActionType.COMPLETE:
+        if action.action_type == ActionType.COMPLETE:
             evidence_list.append(f"Agent recommended COMPLETE action for {goal_type}")
 
         # 3. Tertiary Signal: Fast Fuzzy Match
@@ -98,7 +103,7 @@ class Reasoner:
             evidence_list.append(f"Context alignment score: {similarity:.2f}")
 
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
-        action_indicates_complete = analysis.action.action_type == ActionType.COMPLETE
+        action_indicates_complete = action.action_type == ActionType.COMPLETE
 
         # 4. Additional Signal for Sub-Goals: Action Execution on Non-Opening Tasks
         # If we're checking a sub-goal like "Open X" and the LLM is DOING something
@@ -106,7 +111,7 @@ class Reasoner:
         action_suggests_next_phase = False
         if (
             current_sub_goal
-            and analysis.action.action_type in NEXT_PHASE_ACTION_TYPES
+            and self.__opener_policy.advanced(action_type=action.action_type)
             and any(word in target_goal for word in OPENER_GOAL_WORDS)
         ):
             # LLM is actively performing actions. If the current sub-goal is an opener
@@ -117,7 +122,7 @@ class Reasoner:
             # More flexible keyword matching - check for partial matches
             if any(keyword in reasoning_lower for keyword in NEXT_PHASE_KEYWORDS):
                 evidence_list.append(
-                    f"LLM performing next-phase action ({analysis.action.action_type.value})"
+                    f"LLM performing next-phase action ({action.action_type.value})"
                 )
                 action_suggests_next_phase = True
 
@@ -132,10 +137,10 @@ class Reasoner:
         llm_confidence = 0.0
 
         if analysis.is_goal_complete:
-            llm_confidence = max(llm_confidence, analysis.action.confidence)
+            llm_confidence = max(llm_confidence, action.confidence)
 
         if action_indicates_complete:
-            llm_confidence = max(llm_confidence, analysis.action.confidence)
+            llm_confidence = max(llm_confidence, action.confidence)
 
         if keyword_match:
             llm_confidence = max(llm_confidence, similarity)
@@ -177,6 +182,7 @@ class Reasoner:
         """
 
         evidence: List[str] = []
+        action = self.__require_action(analysis=analysis)
         target = sub_goal_description.lower()
 
         # Flag 1: model explicitly raised the completion flag via tool output
@@ -184,7 +190,7 @@ class Reasoner:
         if flagged_complete := (
             analysis.is_sub_goal_complete
             or analysis.is_goal_complete
-            or analysis.action.action_type == ActionType.COMPLETE
+            or action.action_type == ActionType.COMPLETE
         ):
             evidence.append("Model flagged sub-goal completion via tool output")
 
@@ -201,10 +207,10 @@ class Reasoner:
             evidence.append(rationale_evidence)
 
         # Flag 3: an action that actually ran (planning-only actions excluded).
-        action_executed = analysis.action.action_type in ACTION_EXECUTED_TYPES
+        action_executed = action.action_type in ACTION_EXECUTED_TYPES
 
         if action_executed:
-            evidence.append(f"Action executed: {analysis.action.action_type.value}")
+            evidence.append(f"Action executed: {action.action_type.value}")
 
         # Flag 4: post-action screen change exceeded the meaningful-delta floor.
         # Magnitude path rejects animation noise; boolean path is the fallback.
@@ -256,6 +262,7 @@ class Reasoner:
         *,
         sub_goal: SubGoal,
         screen_changed: bool,
+        execution_success: bool,
         analysis: AnalysisResult,
         delta_score: Optional[float] = None,
         effect: Optional[ActionEffect] = None,
@@ -270,12 +277,13 @@ class Reasoner:
         """
 
         notes: List[str] = []
+        action = self.__require_action(analysis=analysis)
         target = sub_goal.description.lower()
 
         asserted = (
             analysis.is_sub_goal_complete
             or analysis.is_goal_complete
-            or analysis.action.action_type == ActionType.COMPLETE
+            or action.action_type == ActionType.COMPLETE
         )
         if asserted:
             notes.append("claim.asserted: model flagged completion via tool output")
@@ -284,13 +292,15 @@ class Reasoner:
         explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
 
         if directive_aborts:
-            justified = True
+            explained = True
             rationale_similarity = 1.0
-            notes.append("claim.justified.via_operator_directive")
-            rationale_note: Optional[str] = "Rationale verified via operator directive (HITL)"
+            notes.append("claim.explained.via_operator_directive")
+            rationale_note: Optional[str] = (
+                "Completion reason provided by operator directive (HITL)"
+            )
         elif asserted and explicit_reason:
-            justified = True
-            rationale_note = f"Rationale verified via model reason: '{explicit_reason}'"
+            explained = True
+            rationale_note = f"Completion reason provided by model: '{explicit_reason}'"
             rationale_similarity = (
                 semantic_similarity
                 if semantic_similarity is not None
@@ -300,27 +310,25 @@ class Reasoner:
                     f"{analysis.reasoning} {screen_description or ''}".lower(),
                 ).ratio()
             )
-            notes.append("claim.justified.via_explicit_reason")
+            notes.append("claim.explained.via_explicit_reason")
         elif (
             asserted
             and semantic_similarity is not None
             and semantic_similarity >= LATERAL_CREDIT_SIMILARITY_THRESHOLD
         ):
-            justified = True
-            rationale_note = (
-                f"Rationale verified via embedding similarity (cosine={semantic_similarity:.2f})"
-            )
+            explained = True
+            rationale_note = f"Completion reason aligned by embedding similarity (cosine={semantic_similarity:.2f})"
             rationale_similarity = semantic_similarity
-            notes.append("claim.justified.via_embedding_similarity")
+            notes.append("claim.explained.via_embedding_similarity")
         else:
-            justified, rationale_note, _, rationale_similarity = self.__verify_rationale(
+            explained, rationale_note, _, rationale_similarity = self.__verify_rationale(
                 target=target,
                 analysis=analysis,
                 flagged_complete=asserted,
                 screen_description=screen_description,
             )
-        if justified and rationale_note is not None:
-            notes.append(f"claim.justified: {rationale_note}")
+        if explained and rationale_note is not None:
+            notes.append(f"claim.explained: {rationale_note}")
 
         if asserted and rationale_similarity < LATERAL_CREDIT_SIMILARITY_THRESHOLD:
             logger.info(
@@ -328,9 +336,9 @@ class Reasoner:
                 extra={
                     "component": "reasoner",
                     "event": "completion.lateral_credit.observed",
-                    "claim.justified": justified,
+                    "claim.explained": explained,
                     "sub_goal.index": sub_goal.index,
-                    "action.type": analysis.action.action_type.value,
+                    "action.type": action.action_type.value,
                     "sub_goal.description": sub_goal.description[:120],
                     "rationale.similarity": round(rationale_similarity, 3),
                     "rationale.threshold": LATERAL_CREDIT_SIMILARITY_THRESHOLD,
@@ -343,9 +351,9 @@ class Reasoner:
                 },
             )
 
-        dispatched = analysis.action.action_type in ACTION_EXECUTED_TYPES
+        dispatched = action.action_type in ACTION_EXECUTED_TYPES
         if dispatched:
-            notes.append(f"action.dispatched: {analysis.action.action_type.value}")
+            notes.append(f"action.dispatched: {action.action_type.value}")
 
         evolved, screen_note = self.__verify_screen_change(
             effect=effect,
@@ -375,8 +383,28 @@ class Reasoner:
             notes=tuple(notes),
             criterion=criterion_evidence,
             screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(dispatched=dispatched),
-            claim=ClaimEvidence(asserted=asserted, justified=justified),
+            action=ActionEvidence(
+                dispatched=dispatched,
+                executed=execution_success,
+            ),
+            validation=ValidationEvidence(
+                executed=self.__validation_executed(
+                    action=action, execution_success=execution_success
+                )
+            ),
+            claim=ClaimEvidence(asserted=asserted, explained=explained),
+        )
+
+    @staticmethod
+    def __validation_executed(*, action: Action, execution_success: bool) -> bool:
+        """
+        Return whether this turn recorded a validation-family examination.
+        """
+
+        return (
+            execution_success
+            and action.event_type == StepEvent.VALIDATION
+            and bool((action.validation_subject or "").strip())
         )
 
     @staticmethod
@@ -388,8 +416,8 @@ class Reasoner:
         screen_description: Optional[str],
     ) -> Tuple[bool, Optional[str], bool, float]:
         """
-        Decide rationale verification.
-        Returns ``(verified, evidence, keyword_match, similarity)``.
+        Decide whether a claim carried a reason-like signal.
+        Returns ``(present, evidence, keyword_match, similarity)``.
         """
 
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
@@ -402,7 +430,7 @@ class Reasoner:
         if flagged_complete and explicit_reason:
             return (
                 True,
-                f"Rationale verified via model reason: '{explicit_reason}'",
+                f"Completion reason provided by model: '{explicit_reason}'",
                 keyword_match,
                 similarity,
             )
@@ -410,7 +438,8 @@ class Reasoner:
         if keyword_match or (similarity >= RATIONALE_MIN_SIMILARITY_FLOOR and keywords_found):
             return (
                 True,
-                f"Rationale verified via heuristic (similarity={similarity:.2f})",
+                f"Completion reason inferred by legacy rationale matcher "
+                f"(similarity={similarity:.2f})",
                 keyword_match,
                 similarity,
             )
@@ -438,7 +467,7 @@ class Reasoner:
         screen_changed: bool,
         delta_score: Optional[float],
         effect: Optional[ActionEffect] = None,
-    ) -> tuple[bool, str]:
+    ) -> Tuple[bool, str]:
         """
         Return (verified, evidence) for the screen-change verification; NO_PROGRESS effect short-circuits to false.
         Magnitude path takes precedence over the boolean fallback when neither veto fires.
@@ -467,14 +496,26 @@ class Reasoner:
         """
 
         confidence = 0.0
+        action = Reasoner.__require_action(analysis=analysis)
 
         if analysis.is_sub_goal_complete or analysis.is_goal_complete:
-            confidence = max(confidence, analysis.action.confidence)
+            confidence = max(confidence, action.confidence)
 
         if keyword_match:
             confidence = max(confidence, similarity)
 
         return confidence
+
+    @staticmethod
+    def __require_action(*, analysis: AnalysisResult) -> Action:
+        """
+        Return the executable action or fail on an invalid reasoner call.
+        """
+
+        if analysis.action is None:
+            raise InvariantViolation("Reasoner requires an executable action analysis.")
+
+        return analysis.action
 
     def should_accept_action(
         self,

@@ -4,7 +4,8 @@ import logging
 import unittest
 from typing import Optional
 
-from fathom.constants import ActionType
+from fathom.constants import ActionType, StepEvent
+from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.reasoner import Reasoner
 from fathom.schemas.actions import Action
 from fathom.schemas.criterion import (
@@ -28,7 +29,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         Build a Reasoner with a representative intent string.
         """
 
-        return Reasoner(intent=intent)
+        return Reasoner(intent=intent, opener_policy=OpenerSignalPolicy())
 
     @staticmethod
     def __sub_goal(
@@ -49,6 +50,8 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         is_goal_complete: bool = False,
         action_type: ActionType = ActionType.TAP,
         reasoning: str = "Submit tapped; new screen visible.",
+        validation_subject: Optional[str] = None,
+        event_type: Optional[StepEvent] = None,
         subgoal_completion_reason: Optional[str] = None,
     ) -> AnalysisResult:
         """
@@ -58,9 +61,11 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         return AnalysisResult(
             action=Action(
                 action_type=action_type,
+                event_type=event_type,
                 target="t",
                 rationale="r",
                 confidence=1.0,
+                validation_subject=validation_subject,
             ),
             reasoning=reasoning,
             screen_description="post-action screen",
@@ -90,6 +95,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(is_sub_goal_complete=True),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -103,6 +109,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(is_goal_complete=True),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -116,6 +123,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(action_type=ActionType.COMPLETE),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -129,6 +137,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -136,12 +145,13 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertFalse(evidence.claim.asserted)
 
-    def test_claim_justified_when_explicit_reason_present(self) -> None:
+    def test_claim_explained_when_explicit_explained(self) -> None:
         """
-        Explicit subgoal_completion_reason with asserted claim → claim.justified=True.
+        Explicit subgoal_completion_reason with asserted claim → claim.explained=True.
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(
                 is_sub_goal_complete=True,
                 subgoal_completion_reason="New screen shows confirmation toast.",
@@ -150,7 +160,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
             screen_changed=True,
         )
 
-        self.assertTrue(evidence.claim.justified)
+        self.assertTrue(evidence.claim.explained)
 
     def test_action_dispatched_for_tap_action(self) -> None:
         """
@@ -158,12 +168,98 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(action_type=ActionType.TAP),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
         )
 
         self.assertTrue(evidence.action.dispatched)
+
+    def test_validation_evidence_requires_executed_validate_subject(self) -> None:
+        """
+        A validation-family action produces validation evidence only when it executed and names a subject.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.VALIDATE,
+                event_type=StepEvent.VALIDATION,
+                validation_subject="cart items are visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
+        )
+
+        self.assertTrue(evidence.validation.executed)
+
+    def test_validation_evidence_accepts_complete_from_validation_family(self) -> None:
+        """
+        A verify_goal COMPLETE action remains terminal while counting as validation evidence.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.COMPLETE,
+                event_type=StepEvent.VALIDATION,
+                validation_subject="home screen is visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
+        )
+
+        self.assertTrue(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_non_validate_action(self) -> None:
+        """
+        A tap on a validation sub-goal is not validation evidence.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(action_type=ActionType.TAP),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=True,
+        )
+
+        self.assertFalse(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_subject_without_validation_event(self) -> None:
+        """
+        A normal action cannot become validation evidence by carrying a subject string.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.TAP,
+                validation_subject="home screen is visible",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=True,
+        )
+
+        self.assertFalse(evidence.validation.executed)
+
+    def test_validation_evidence_rejects_validation_event_without_subject(self) -> None:
+        """
+        A validation-family action still needs assertion content.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            execution_success=True,
+            analysis=self.__analysis(
+                action_type=ActionType.COMPLETE,
+                event_type=StepEvent.VALIDATION,
+                validation_subject="",
+            ),
+            sub_goal=self.__sub_goal(kind=SubGoalKind.VALIDATION),
+            screen_changed=False,
+        )
+
+        self.assertFalse(evidence.validation.executed)
 
     def test_action_dispatched_for_directional_swipe_actions(self) -> None:
         """
@@ -178,12 +274,43 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         ):
             with self.subTest(action_type=action_type):
                 evidence = self.__reasoner().assess_completion(
+                    execution_success=True,
                     analysis=self.__analysis(action_type=action_type),
                     sub_goal=self.__sub_goal(),
                     screen_changed=True,
                 )
 
                 self.assertTrue(evidence.action.dispatched)
+
+    def test_failed_command_is_dispatched_but_not_executed(self) -> None:
+        """
+        A TAP the device reported as failed stays dispatched (a real type) but executed=False.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(action_type=ActionType.TAP),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            execution_success=False,
+        )
+
+        self.assertTrue(evidence.action.dispatched)
+        self.assertFalse(evidence.action.executed)
+
+    def test_successful_back_is_executed_but_not_dispatched(self) -> None:
+        """
+        A BACK that ran successfully is executed=True even though BACK is not a dispatched type today.
+        """
+
+        evidence = self.__reasoner().assess_completion(
+            analysis=self.__analysis(action_type=ActionType.BACK),
+            sub_goal=self.__sub_goal(),
+            screen_changed=True,
+            execution_success=True,
+        )
+
+        self.assertFalse(evidence.action.dispatched)
+        self.assertTrue(evidence.action.executed)
 
     def test_opening_sub_goal_completes_for_next_phase_actions(self) -> None:
         """
@@ -219,6 +346,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=False,
@@ -233,6 +361,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=False,
@@ -247,6 +376,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -263,6 +393,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -279,6 +410,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -304,6 +436,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -318,6 +451,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -333,6 +467,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -347,6 +482,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
@@ -355,16 +491,17 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
 
         self.assertTrue(evidence.screen.evolved)
 
-    def test_dispatched_tap_with_justified_claim_and_screen_change_produces_all_action_signals(
+    def test_dispatched_tap_with_explained_claim_and_screen_change_produces_all_action_signals(
         self,
     ) -> None:
         """
-        A dispatched TAP with a justified completion claim and an evolved
+        A dispatched TAP with a explained completion claim and an evolved
         screen yields all four ACTION-level evidence signals regardless of
         criterion verdict.
         """
 
         evidence = self.__reasoner().assess_completion(
+            execution_success=True,
             analysis=self.__analysis(
                 is_sub_goal_complete=True,
                 subgoal_completion_reason="Home screen reached with Dwarka location.",
@@ -378,7 +515,7 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
         )
 
         self.assertTrue(evidence.claim.asserted)
-        self.assertTrue(evidence.claim.justified)
+        self.assertTrue(evidence.claim.explained)
         self.assertTrue(evidence.action.dispatched)
         self.assertTrue(evidence.screen.evolved)
         assert evidence.criterion is not None
@@ -398,7 +535,10 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
         Build a reasoner with a representative intent string.
         """
 
-        return Reasoner(intent="open meesho and find Jars & containers")
+        return Reasoner(
+            intent="open meesho and find Jars & containers",
+            opener_policy=OpenerSignalPolicy(),
+        )
 
     @staticmethod
     def __sub_goal(*, description: str) -> SubGoal:
@@ -453,6 +593,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,
@@ -481,6 +622,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,
@@ -509,6 +651,7 @@ class ReasonerLateralCreditObservedTest(unittest.TestCase):
 
         with self.assertLogs("fathom.core.agent.reasoner", level=logging.INFO) as captured:
             self.__reasoner().assess_completion(
+                execution_success=True,
                 analysis=analysis,
                 sub_goal=sub_goal,
                 screen_changed=True,

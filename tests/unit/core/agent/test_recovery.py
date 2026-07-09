@@ -8,7 +8,7 @@ from fathom.core.agent.recovery import RecoveryGate
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.loop import LoopEvidence, LoopReason, LoopTurn
 from fathom.schemas.recovery import RecoveryDecisionKind, RecoveryReason
-from fathom.schemas.vision import ActionKind, action_kind_for
+from fathom.schemas.vision import ActionKind, ActionKindResolver
 
 
 class RecoveryGateTest(unittest.TestCase):
@@ -59,7 +59,7 @@ class RecoveryGateTest(unittest.TestCase):
     def test_swipe_no_progress_blocks_blind_back_recovery(self) -> None:
         """
         Every swipe/scroll action type with NO_PROGRESS must classify as active and force REPLAN end-to-end.
-        Exercises the real ActionType -> action_kind_for chain so a future kind regression cannot pass silently.
+        Exercises the real ActionType -> ActionKindResolver chain so a future kind regression cannot pass silently.
         """
 
         for action_type in (
@@ -72,7 +72,7 @@ class RecoveryGateTest(unittest.TestCase):
             with self.subTest(action_type=action_type):
                 evidence = self.__evidence(
                     turn=LoopTurn(
-                        action_kind=action_kind_for(action_type),
+                        action_kind=ActionKindResolver.resolve(action_type=action_type),
                         action_type=action_type.value,
                         effect_status=ActionEffectStatus.NO_PROGRESS,
                     )
@@ -94,7 +94,7 @@ class RecoveryGateTest(unittest.TestCase):
             with self.subTest(status=status):
                 evidence = self.__evidence(
                     turn=LoopTurn(
-                        action_kind=action_kind_for(ActionType.SWIPE_LEFT),
+                        action_kind=ActionKindResolver.resolve(action_type=ActionType.SWIPE_LEFT),
                         action_type=ActionType.SWIPE_LEFT.value,
                         effect_status=status,
                     )

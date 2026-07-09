@@ -24,6 +24,13 @@ class IntentNodeProviderCancellationTest(unittest.IsolatedAsyncioTestCase):
             cancel=Mock(),
             llm=Mock(),
             abort_detector=Mock(),
+            device=SimpleNamespace(
+                capture_screen=AsyncMock(return_value=b"screen"),
+                get_current_package=AsyncMock(return_value="app"),
+            ),
+            configuration=SimpleNamespace(
+                engine=SimpleNamespace(stability_wait=0, transition_grace_period=0)
+            ),
         )
         provider = IntentNodeProvider(
             context=context,  # type: ignore[arg-type]
@@ -44,6 +51,13 @@ class IntentNodeProviderCancellationTest(unittest.IsolatedAsyncioTestCase):
             cancel=Mock(),
             llm=Mock(),
             abort_detector=Mock(),
+            device=SimpleNamespace(
+                capture_screen=AsyncMock(return_value=b"screen"),
+                get_current_package=AsyncMock(return_value="app"),
+            ),
+            configuration=SimpleNamespace(
+                engine=SimpleNamespace(stability_wait=0, transition_grace_period=0)
+            ),
         )
         provider = IntentNodeProvider(
             context=context,  # type: ignore[arg-type]

@@ -26,7 +26,6 @@ from fathom.constants.collaboration import (
     ArtifactBackend,
     TaskCode,
 )
-from fathom.constants.finalization import FinalizationPhase
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.screen import (
     MEMORY_SUMMARY_HASH_PREVIEW_LENGTH,
@@ -37,12 +36,15 @@ from fathom.constants.screen import (
 )
 from fathom.constants.state import CompletionReason
 from fathom.conversation.identity import InteractionIdentity
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.capture.store import CaptureStore
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.context.manager import ContextManager
 from fathom.core.exceptions import IdentityError, InteractionError
 from fathom.core.execution.engine import ExecutionEngine
 from fathom.core.services.artifacts import ArtifactCatalog
 from fathom.core.services.conversation import ConversationService, Ports
+from fathom.core.services.conversation.title import TitleComposer
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
@@ -169,15 +171,16 @@ class FathomRunner:
 
         self.__qualifier = qualifier
         self.__interaction = interaction
+        self.__config = config or FathomConfiguration()
 
         self.__runtime_configuration = runtime_configuration
+
         self.__recorder = self.__recorder_for(interaction=interaction)
 
         self.__path_manager = path_manager
 
         self.__artifact_catalog = ArtifactCatalog(path_manager=path_manager)
 
-        self.__config = config or FathomConfiguration()
         self.__realignment = realignment or RealignmentPolicy()
 
         self.__owned_resources: List[LLMPort] = list(owned_resources or [])
@@ -187,6 +190,8 @@ class FathomRunner:
         )
 
         # Wire core components
+        self.__catalog = CommandCatalogProvider().build()
+        self.__capture_store = CaptureStore()
         self.__engine = ExecutionEngine(
             llm=llm,
             device=device,
@@ -196,6 +201,8 @@ class FathomRunner:
             telemetry=telemetry,
             perception=perception,
             path_manager=path_manager,
+            catalog=self.__catalog,
+            capture_store=self.__capture_store,
         )
         self.__context_manager: Optional[ContextManager] = None
 
@@ -369,6 +376,7 @@ class FathomRunner:
 
         if self.__recorder is not None:
             self.__recorder.health.reset()
+
             handle = await self.__recorder.record_run_started(
                 run=Run(
                     tenant=tenant,
@@ -422,6 +430,7 @@ class FathomRunner:
             memory=self.__memory,
             signal=self.__signal,
             storage=self.__storage,
+            catalog=self.__catalog,
             workflow_id=workflow_id,
             execution_id=execution_id,
             recorder=self.__recorder,
@@ -457,7 +466,7 @@ class FathomRunner:
             # Bound memory summary so a stuck store read cannot block result delivery.
             raw_memory_summary = await AbandonablePhase(
                 workflow_id=workflow_id,
-                phase=FinalizationPhase.MEMORY_SUMMARY,
+                phase="fathom.runner.memory.summary",
                 timeout=self.__config.intent.finalization.runtime.memory_summary,
             ).execute(awaitable=self.__get_memory_summary())
 
@@ -915,6 +924,12 @@ class FathomRunner:
             except Exception as exception:
                 logger.warning(f"[FathomRunner] context_manager shutdown failed: {exception}")
 
+        if self.__recorder is not None:
+            try:
+                await self.__recorder.drain_background_tasks()
+            except Exception as exception:
+                logger.warning(f"[FathomRunner] recorder drain failed: {exception}")
+
         # 2. LLM — delete cached content, close clients
         try:
             await self.__llm.cleanup()
@@ -1306,6 +1321,7 @@ class FathomRunner:
                 signer=NoopSigner(),
                 ports=self.__ports(interaction=interaction),
             ),
+            title=TitleComposer(llm=self.__llm),
         )
 
     def __ports(self, *, interaction: InteractionPort) -> Ports:

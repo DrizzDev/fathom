@@ -6,6 +6,7 @@ import datetime
 from logging import getLogger
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+from uuid import uuid4
 
 from pydantic import ValidationError
 from rich.console import Console
@@ -67,11 +68,11 @@ class CLIPrincipalResolver:
         """
 
         return Principal(
+            agent=DEFAULT_AGENT_ID,
+            conversation=command_input.conversation,
             tenant=self.__tenant(command_input=command_input),
             operator=self.__operator(command_input=command_input),
             workspace=self.__workspace(command_input=command_input),
-            agent=DEFAULT_AGENT_ID,
-            conversation=command_input.conversation,
         )
 
     def resolve_explore(
@@ -89,11 +90,11 @@ class CLIPrincipalResolver:
         """
 
         return Principal(
+            agent=DEFAULT_AGENT_ID,
+            conversation=f"exploration:{session_id}",
             tenant=self.__tenant(command_input=command_input),
             operator=self.__operator(command_input=command_input),
             workspace=self.__workspace(command_input=command_input),
-            agent=DEFAULT_AGENT_ID,
-            conversation=f"exploration:{session_id}",
         )
 
     def __tenant(self, *, command_input: LocalCommandInput) -> str:
@@ -133,14 +134,15 @@ class CommandApplication:
     def __init__(
         self,
         *,
-        local_device_resolver: LocalDeviceConfigurationResolverPort | None = None,
+        local_device_resolver: Optional[LocalDeviceConfigurationResolverPort] = None,
     ) -> None:
         """
         Initialize command application parser.
         """
 
-        self.__local_device_resolver = local_device_resolver or LocalDeviceConfigurationResolver()
         self.__principal_resolver: Optional[CLIPrincipalResolver] = None
+        self.__local_device_resolver = local_device_resolver or LocalDeviceConfigurationResolver()
+
         self.__parser = self.__build_parser()
 
     def __ensure_principal_resolver(self, *, settings: FathomSettings) -> CLIPrincipalResolver:
@@ -150,6 +152,7 @@ class CommandApplication:
 
         if self.__principal_resolver is None:
             self.__principal_resolver = CLIPrincipalResolver(settings=settings)
+
         return self.__principal_resolver
 
     def __build_parser(self) -> argparse.ArgumentParser:
@@ -158,12 +161,14 @@ class CommandApplication:
         """
 
         parser = argparse.ArgumentParser(
-            description="Fathom: AI-powered mobile automation agent",
             allow_abbrev=False,
+            description="Fathom: AI-powered mobile automation agent",
         )
         subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
         self.__configure_run_parser(subparsers=subparsers)
         self.__configure_explore_parser(subparsers=subparsers)
+
         return parser
 
     def __configure_run_parser(
@@ -288,7 +293,7 @@ class CommandApplication:
         run_parser.add_argument(
             "--conversation",
             type=str,
-            required=True,
+            default=str(uuid4()),
             help="Conversation thread id (required)",
         )
         run_parser.add_argument(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final
+from typing import Final, FrozenSet
 
 
 class ToolName(StrEnum):
@@ -29,6 +29,24 @@ class TurnMode(StrEnum):
     VERIFY = "verify"
 
 
-BASE_TOOLS: Final[frozenset[ToolName]] = frozenset(
+class StateNamespace(StrEnum):
+    """
+    Runtime state namespace a model-tool response may update.
+    """
+
+    MEMORY = "MEMORY"
+
+
+class DiagnosticSeverity(StrEnum):
+    """
+    Severity for diagnostics returned by model tools.
+    """
+
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+
+BASE_TOOLS: Final[FrozenSet[ToolName]] = frozenset(
     {ToolName.EXECUTE_UI, ToolName.STORE_MEMORY, ToolName.RECALL_MEMORY}
 )

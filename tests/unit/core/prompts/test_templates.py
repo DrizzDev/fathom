@@ -142,3 +142,14 @@ class ToolGuidanceTest(unittest.TestCase):
 
         self.assertIn("EXACT visible text", guidance)
         self.assertIn("Do NOT append interaction-kind suffixes", guidance)
+
+    def test_task_relevant_surfaces_are_not_forced_to_dismiss(self) -> None:
+        """
+        Guidance must not treat every sheet/menu/dialog as an unrelated blocker.
+        """
+
+        guidance = build_tool_guidance(tools=self.__autonomous_tools())
+
+        self.assertIn("contains the needed control or option", guidance)
+        self.assertIn("interact inside it instead", guidance)
+        self.assertNotIn("bottom tray with options), dismiss it first", guidance)

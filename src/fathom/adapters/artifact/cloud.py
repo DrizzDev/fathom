@@ -116,6 +116,8 @@ class CloudSink(ArtifactSinkPort):
             "step_number": metadata.step_number,
             "package_name": metadata.package_name,
             "category": ArtifactCategory.for_(kind=metadata.kind),
+            "partial": metadata.partial,
+            "review_reason": metadata.review_reason,
         }
 
     def __log_context(self) -> Dict[str, Any]:

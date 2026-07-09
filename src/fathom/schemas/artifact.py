@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Final, Literal, Mapping, Tuple, Union
+from typing import Annotated, Final, Literal, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -330,6 +330,12 @@ class ScriptPayload(BaseModel):
         description="Discriminator value routing the record to the passthrough renderer.",
     )
     content: str = Field(min_length=1, description="Final automation script source.")
+    partial: bool = Field(
+        default=False, description="True when the run did not complete and the script needs review."
+    )
+    review_reason: Optional[str] = Field(
+        default=None, description="Why the script is partial and needs review, when it is."
+    )
 
 
 ArtifactPayload = Annotated[
@@ -370,6 +376,12 @@ class ArtifactMetadata(BaseModel):
         min_length=1,
         description="Canonical filename used by every storage backend for this artifact.",
     )
+    partial: bool = Field(
+        default=False, description="True when the artifact reflects an incomplete run."
+    )
+    review_reason: Optional[str] = Field(
+        default=None, description="Why the artifact needs review, when it does."
+    )
 
 
 class ArtifactRecord(BaseModel):
@@ -394,6 +406,8 @@ class ArtifactRecord(BaseModel):
         Project this record onto its sink-facing identity slice with the resolved filename.
         """
 
+        review = self.payload if isinstance(self.payload, ScriptPayload) else None
+
         return ArtifactMetadata(
             created=self.created,
             kind=self.payload.kind,
@@ -401,6 +415,8 @@ class ArtifactRecord(BaseModel):
             step_number=self.step_number,
             package_name=self.package_name,
             filename=filename,
+            partial=review.partial if review else False,
+            review_reason=review.review_reason if review else None,
         )
 
 

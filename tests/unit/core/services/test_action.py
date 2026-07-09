@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, Mock, patch
 from fathom.constants import ActionType
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.observation import KeyboardVisibility
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.capture.store import CaptureStore
 from fathom.core.services.action import ActionExecutor
 from fathom.interfaces.device import DevicePort
 from fathom.schemas.actions import (
@@ -286,6 +288,8 @@ class ActionExecutorTypeTest(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(),
             path_manager=Mock(),
             pipeline=pipeline,
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
 
     @staticmethod
@@ -765,6 +769,8 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
             device=device,
             telemetry=Mock(),
             path_manager=Mock(),
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
 
         result = await executor.act(
@@ -803,6 +809,8 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
             device=device,
             telemetry=Mock(),
             path_manager=Mock(),
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
         step = Step(
             metadata={},
@@ -842,6 +850,8 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
             device=device,
             telemetry=Mock(),
             path_manager=Mock(),
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
         step = Step(
             metadata={},
@@ -891,6 +901,8 @@ class ActionExecutorScrollRetryTest(unittest.IsolatedAsyncioTestCase):
             device=device,
             telemetry=Mock(),
             path_manager=Mock(),
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
         step = Step(
             metadata={},
@@ -969,6 +981,8 @@ class ActionExecutorBackUnsupportedTest(unittest.IsolatedAsyncioTestCase):
             telemetry=Mock(),
             path_manager=Mock(),
             pipeline=None,
+            catalog=CommandCatalogProvider().build(),
+            capture_store=CaptureStore(),
         )
 
     @staticmethod

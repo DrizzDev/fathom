@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Dict, Optional
+from types import MappingProxyType
+from typing import Any, Dict, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,74 +11,73 @@ from fathom.constants import ActionType
 
 class ActionKind(StrEnum):
     """
-    Functional categorisation of an action, derived from its :class:`ActionType`.
+    Functional categorization of an action, derived from its :class:`ActionType`.
 
     Used to interpret loop-detector turns and to annotate past-action entries
     in the vision prompt so the model can distinguish "screen did not change
-    after a validate" (expected) from "screen did not change after a tap" (a
-    real signal of being stuck).
+    after a validate" (expected) from "screen did not change after a tap" (a real signal of being stuck).
     """
 
-    NAVIGATION = "navigation"
     INPUT = "input"
-    VALIDATION = "validation"
-    OBSERVATION = "observation"
-    ESCALATION = "escalation"
-    TERMINAL = "terminal"
     UNKNOWN = "unknown"
+    TERMINAL = "terminal"
+    NAVIGATION = "navigation"
+    VALIDATION = "validation"
+    ESCALATION = "escalation"
+    OBSERVATION = "observation"
 
 
-__ACTION_KIND_BY_TYPE: dict[ActionType, ActionKind] = {
-    ActionType.TAP: ActionKind.NAVIGATION,
-    ActionType.BACK: ActionKind.NAVIGATION,
-    ActionType.HOME: ActionKind.NAVIGATION,
-    ActionType.LONG_PRESS: ActionKind.NAVIGATION,
-    ActionType.SWIPE: ActionKind.NAVIGATION,
-    ActionType.SWIPE_UP: ActionKind.NAVIGATION,
-    ActionType.SWIPE_DOWN: ActionKind.NAVIGATION,
-    ActionType.SWIPE_LEFT: ActionKind.NAVIGATION,
-    ActionType.SWIPE_RIGHT: ActionKind.NAVIGATION,
-    ActionType.SCROLL: ActionKind.NAVIGATION,
-    ActionType.HIDE_KEYBOARD: ActionKind.NAVIGATION,
-    ActionType.TYPE: ActionKind.INPUT,
-    ActionType.TEXT: ActionKind.INPUT,
-    ActionType.VALIDATE: ActionKind.VALIDATION,
-    ActionType.WAIT: ActionKind.OBSERVATION,
-    ActionType.ASK_USER: ActionKind.ESCALATION,
-    ActionType.COMPLETE: ActionKind.TERMINAL,
-    ActionType.SAVE_MEMORY: ActionKind.OBSERVATION,
-    ActionType.RETRIEVE_MEMORY: ActionKind.OBSERVATION,
-    ActionType.INFER: ActionKind.OBSERVATION,
-    ActionType.UNKNOWN: ActionKind.UNKNOWN,
-}
+ACTION_KIND_BY_TYPE: Mapping[ActionType, ActionKind] = MappingProxyType(
+    {
+        ActionType.TYPE: ActionKind.INPUT,
+        ActionType.TEXT: ActionKind.INPUT,
+        ActionType.UNKNOWN: ActionKind.UNKNOWN,
+        ActionType.TAP: ActionKind.NAVIGATION,
+        ActionType.BACK: ActionKind.NAVIGATION,
+        ActionType.HOME: ActionKind.NAVIGATION,
+        ActionType.SWIPE: ActionKind.NAVIGATION,
+        ActionType.SCROLL: ActionKind.NAVIGATION,
+        ActionType.SWIPE_UP: ActionKind.NAVIGATION,
+        ActionType.SWIPE_DOWN: ActionKind.NAVIGATION,
+        ActionType.SWIPE_LEFT: ActionKind.NAVIGATION,
+        ActionType.LONG_PRESS: ActionKind.NAVIGATION,
+        ActionType.SWIPE_RIGHT: ActionKind.NAVIGATION,
+        ActionType.HIDE_KEYBOARD: ActionKind.NAVIGATION,
+        ActionType.COMPLETE: ActionKind.TERMINAL,
+        ActionType.VALIDATE: ActionKind.VALIDATION,
+        ActionType.ASK_USER: ActionKind.ESCALATION,
+        ActionType.WAIT: ActionKind.OBSERVATION,
+        ActionType.STORE: ActionKind.OBSERVATION,
+        ActionType.INFER: ActionKind.OBSERVATION,
+        ActionType.SAVE_MEMORY: ActionKind.OBSERVATION,
+        ActionType.RETRIEVE_MEMORY: ActionKind.OBSERVATION,
+    }
+)
 
 
-def action_kind_for(action_type: ActionType) -> ActionKind:
+class ActionKindResolver:
     """
-    Map a concrete :class:`ActionType` to its functional :class:`ActionKind`.
-
-    Unknown types fall back to :attr:`ActionKind.UNKNOWN`. The mapping is
-    intentionally exhaustive at construction so additions to ``ActionType``
-    will surface as a missing key here rather than as a silent miscategorisation.
-    """
-
-    return __ACTION_KIND_BY_TYPE.get(action_type, ActionKind.UNKNOWN)
-
-
-def action_kind_from_token(token: str) -> ActionKind:
-    """
-    Map a raw action-type token (e.g. from a stored history dict) to a kind.
-
-    Tolerant by design: unknown tokens map to :attr:`ActionKind.UNKNOWN` instead
-    of raising, so legacy or partially-typed history payloads do not break the
-    vision prompt or the HITL policy.
+    Resolves raw and typed actions into functional action categories.
     """
 
-    try:
-        return action_kind_for(ActionType(token.lower()))
+    @staticmethod
+    def resolve(*, action_type: ActionType) -> ActionKind:
+        """
+        Resolve a concrete action type to its functional kind.
+        """
 
-    except ValueError:
-        return ActionKind.UNKNOWN
+        return ACTION_KIND_BY_TYPE.get(action_type, ActionKind.UNKNOWN)
+
+    @staticmethod
+    def resolve_token(*, token: str) -> ActionKind:
+        """
+        Resolve a raw action-type token to its functional kind.
+        """
+
+        try:
+            return ActionKindResolver.resolve(action_type=ActionType(token.lower()))
+        except ValueError:
+            return ActionKind.UNKNOWN
 
 
 class PastActionEntry(BaseModel):
@@ -123,7 +123,8 @@ class PastActionEntry(BaseModel):
         """
 
         action_token = str(entry.get("action") or entry.get("action_type") or "unknown")
-        kind = action_kind_from_token(action_token)
+
+        kind = ActionKindResolver.resolve_token(token=action_token)
         expects_change = kind in (ActionKind.NAVIGATION, ActionKind.INPUT)
 
         sub_goal_index_raw = entry.get("sub_goal_index")

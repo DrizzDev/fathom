@@ -22,7 +22,7 @@ from fathom.constants.collaboration import (
     TaskKind,
     TaskState,
 )
-from fathom.constants.conversation import THREAD_TITLE_MAX_LENGTH
+from fathom.constants.conversation import THREAD_TITLE_INPUT_MAX_LENGTH, THREAD_TITLE_MAX_LENGTH
 from fathom.schemas.conversation.base import (
     ConversationSchema,
     ThreadMetadataScope,
@@ -79,7 +79,7 @@ class ThreadCreate(WorkspaceMetadataScope):
     id: str = Field(description="Stable conversation thread identifier.")
     title: Optional[str] = Field(
         default=None,
-        max_length=THREAD_TITLE_MAX_LENGTH,
+        max_length=THREAD_TITLE_INPUT_MAX_LENGTH,
         description="User-facing thread title.",
     )
     creator: Optional[ActorInput] = Field(default=None, description="Optional thread creator.")
@@ -228,7 +228,11 @@ class ScriptSave(ThreadMetadataScope):
     task: Optional[str] = Field(default=None, description="Task that produced the script.")
     artifact: Optional[str] = Field(default=None, description="Export artifact identifier.")
 
-    title: Optional[str] = Field(default=None, description="User-facing script title.")
+    title: Optional[str] = Field(
+        default=None,
+        max_length=THREAD_TITLE_MAX_LENGTH,
+        description="User-facing script title.",
+    )
     format: ScriptFormat = Field(
         default=ScriptFormat.TEXT_PLAIN, description="Script content format."
     )

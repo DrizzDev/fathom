@@ -320,8 +320,9 @@ class VisionService:
         # rejected tool call as a prior model turn, followed by a user turn explaining
         # exactly why it was rejected. This creates a genuine feedback loop where the
         # model can reason about its mistake and correct course.
-        max_validation_retries = 1
+        max_validation_retries = 2
         analysis: Optional[AnalysisResult] = None
+
         response = None
         duration = 0.0
         parse_duration = 0.0
@@ -391,7 +392,21 @@ class VisionService:
                     ]
                     continue
 
-                # Non-validation errors or exhausted retries propagate as before.
+                if isinstance(exception, ToolValidationError):
+                    feedback = getattr(exception, "feedback", None)
+                    message = getattr(feedback, "message", str(exception))
+                    logger.error(
+                        "Tool validation retries exhausted",
+                        extra={
+                            "component": "core.services.vision",
+                            "event": "planner.schema_retry.exhausted",
+                            "tool.name": getattr(feedback, "tool_name", "unknown"),
+                            "tool.error.message": message,
+                            "attempt.count": max_validation_retries + 1,
+                        },
+                    )
+
+                # Non-validation errors or exhausted retries propagate to the graph boundary.
                 raise
 
         if analysis is None or response is None:

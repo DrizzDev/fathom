@@ -10,7 +10,6 @@ import time
 from logging import INFO, WARNING, Logger, getLogger
 from typing import Any, Awaitable, Dict, Generic, Optional, TypeVar
 
-from fathom.constants.finalization import FinalizationPhase
 from fathom.core.exceptions import FinalizationTimeoutError
 
 _RESULT = TypeVar("_RESULT")
@@ -23,9 +22,7 @@ class _PhaseLogger:
     Internal helper that emits structured phase boundary log records with correlation fields.
     """
 
-    def __init__(
-        self, *, phase: FinalizationPhase, timeout: float, workflow_id: Optional[str]
-    ) -> None:
+    def __init__(self, *, phase: str, timeout: float, workflow_id: Optional[str]) -> None:
         """
         Bind phase identity and correlation fields for downstream log emission.
         """
@@ -47,12 +44,12 @@ class _PhaseLogger:
         Emit one structured log record for a phase boundary transition.
         """
 
-        event = f"{self.__phase.value}.{suffix}"
+        event = f"{self.__phase}.{suffix}"
 
         extra: Dict[str, Any] = {
             "event": event,
+            "phase": self.__phase,
             "timeout": self.__timeout,
-            "phase": self.__phase.value,
         }
         if self.__workflow_id is not None:
             extra["workflow.id"] = self.__workflow_id
@@ -64,7 +61,7 @@ class _PhaseLogger:
             extra["exception.message"] = str(exception)
             extra["exception.type"] = type(exception).__name__
 
-        sink.log(level, "phase=%s event=%s", self.__phase.value, event, extra=extra)
+        sink.log(level, "phase=%s event=%s", self.__phase, event, extra=extra)
 
 
 class BoundedPhase(Generic[_RESULT]):
@@ -75,8 +72,8 @@ class BoundedPhase(Generic[_RESULT]):
     def __init__(
         self,
         *,
+        phase: str,
         timeout: float,
-        phase: FinalizationPhase,
         workflow_id: Optional[str] = None,
     ) -> None:
         """
@@ -105,9 +102,7 @@ class BoundedPhase(Generic[_RESULT]):
                 duration=time.perf_counter() - started_at,
             )
             raise FinalizationTimeoutError(
-                timeout=self.__timeout,
-                phase=self.__phase.value,
-                workflow_id=self.__workflow_id,
+                phase=self.__phase, timeout=self.__timeout, workflow_id=self.__workflow_id
             ) from exception
         except asyncio.CancelledError:
             raise
@@ -136,7 +131,7 @@ class AbandonablePhase:
     def __init__(
         self,
         *,
-        phase: FinalizationPhase,
+        phase: str,
         timeout: float,
         workflow_id: Optional[str] = None,
     ) -> None:
@@ -147,7 +142,7 @@ class AbandonablePhase:
         self.__phase = phase
         self.__timeout = timeout
         self.__workflow_id = workflow_id
-        self.__log = _PhaseLogger(phase=phase, timeout=timeout, workflow_id=workflow_id)
+        self.__log = _PhaseLogger(phase=phase, timeout=timeout, workflow_id=self.__workflow_id)
 
     async def execute(self, *, awaitable: Awaitable[Any]) -> Optional[Any]:
         """
@@ -158,10 +153,10 @@ class AbandonablePhase:
         started_at = time.perf_counter()
         task: asyncio.Task[Any] = asyncio.create_task(
             self.__coerce(awaitable=awaitable),
-            name=self.__phase.value,
+            name=self.__phase,
         )
         try:
-            done, pending = await asyncio.wait({task}, timeout=self.__timeout)
+            _, pending = await asyncio.wait({task}, timeout=self.__timeout)
         except asyncio.CancelledError:
             task.cancel()
             raise
@@ -169,31 +164,27 @@ class AbandonablePhase:
             task.cancel()
             task.add_done_callback(self.__on_abandoned_settled)
             self.__log.emit(
-                suffix="abandoned",
-                level=WARNING,
-                duration=time.perf_counter() - started_at,
+                level=WARNING, suffix="abandoned", duration=time.perf_counter() - started_at
             )
             return None
         try:
             result = task.result()
         except asyncio.CancelledError:
             self.__log.emit(
-                suffix="abandoned",
-                level=WARNING,
-                duration=time.perf_counter() - started_at,
+                level=WARNING, suffix="abandoned", duration=time.perf_counter() - started_at
             )
             return None
         except Exception as exception:
             self.__log.emit(
-                suffix="failed",
                 level=WARNING,
-                duration=time.perf_counter() - started_at,
+                suffix="failed",
                 exception=exception,
+                duration=time.perf_counter() - started_at,
             )
             return None
         self.__log.emit(
-            suffix="completed",
             level=INFO,
+            suffix="completed",
             duration=time.perf_counter() - started_at,
         )
         return result
@@ -215,19 +206,21 @@ class AbandonablePhase:
             if task.cancelled():
                 self.__log.emit(suffix="cancel_settled", level=WARNING)
                 return
+
             exception = task.exception()
             if exception is not None:
                 self.__log.emit(suffix="settled_with_error", level=WARNING, exception=exception)
                 return
+
             self.__log.emit(suffix="settled_after_abandon", level=INFO)
         except BaseException as callback_exception:
             with contextlib.suppress(BaseException):
                 logger.error(
                     "phase=%s event=callback_error",
-                    self.__phase.value,
+                    self.__phase,
                     extra={
-                        "event": f"{self.__phase.value}.callback_error",
-                        "phase": self.__phase.value,
+                        "event": f"{self.__phase}.callback_error",
+                        "phase": self.__phase,
                         "exception.type": type(callback_exception).__name__,
                         "exception.message": str(callback_exception),
                     },

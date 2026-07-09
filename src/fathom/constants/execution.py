@@ -36,6 +36,7 @@ MAX_STABILITY_WAIT_MS = 1500
 # Hard upper-bound for LLM-requested action waits.
 # Stored as milliseconds to keep all timing constants consistent.
 MAX_ACTION_WAIT_MS = 10_000
+POST_ACTION_OBSERVATION_TIMEOUT_SECONDS = 30.0
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 2

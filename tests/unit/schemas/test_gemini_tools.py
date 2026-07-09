@@ -1,10 +1,207 @@
 from __future__ import annotations
 
 import unittest
+from typing import Dict
 
 from pydantic import ValidationError
 
 from fathom.schemas.gemini_tools import ExecuteAction
+
+
+class ExecuteActionStoreTest(unittest.TestCase):
+    """
+    Pins STORE capture enforcement: store requires a capture; capture is rejected elsewhere.
+    """
+
+    def test_store_capture_with_value_is_accepted(self) -> None:
+        """
+        A STORE with name, subject, and value parses into a CaptureRequest.
+        """
+
+        action = ExecuteAction.model_validate(
+            {
+                "action_type": "store",
+                "confidence": 0.9,
+                "capture": {"name": "abc", "subject": "price of soap", "value": "₹86"},
+            }
+        )
+
+        assert action.capture is not None
+        self.assertEqual(action.capture.value, "₹86")
+
+    def test_store_capture_without_label_id_is_accepted(self) -> None:
+        """
+        STORE does not require XML or manifest grounding.
+        """
+
+        action = ExecuteAction.model_validate(
+            {
+                "action_type": "store",
+                "confidence": 0.9,
+                "capture": {
+                    "name": "abc",
+                    "subject": "price of the product",
+                    "value": "₹499",
+                },
+            }
+        )
+
+        assert action.capture is not None
+        self.assertEqual(action.capture.value, "₹499")
+
+    def test_store_without_capture_is_rejected(self) -> None:
+        """
+        A STORE action without a capture request is rejected.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate({"action_type": "store", "confidence": 0.9})
+
+    def test_store_capture_without_value_is_rejected(self) -> None:
+        """
+        A STORE capture must carry the concrete captured value.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "store",
+                    "confidence": 0.9,
+                    "capture": {"name": "abc", "subject": "price"},
+                }
+            )
+
+    def test_store_capture_blank_value_is_rejected(self) -> None:
+        """
+        Whitespace is not a captured value.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "store",
+                    "confidence": 0.9,
+                    "capture": {"name": "abc", "subject": "price", "value": "   "},
+                }
+            )
+
+    def test_store_capture_missing_name_is_rejected(self) -> None:
+        """
+        A capture request must carry a non-empty name.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "store",
+                    "confidence": 0.9,
+                    "capture": {"subject": "xyz", "value": "₹86"},
+                }
+            )
+
+    def test_capture_on_non_store_action_is_rejected(self) -> None:
+        """
+        Capture is only valid for store; a tap carrying a capture is rejected.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "tap",
+                    "confidence": 0.9,
+                    "capture": {"name": "abc", "subject": "xyz", "value": "₹86"},
+                }
+            )
+
+
+class ExecuteActionValidationTest(unittest.TestCase):
+    """
+    Pins validate action subject requirements.
+    """
+
+    def test_validate_without_validation_subject_is_rejected(self) -> None:
+        """
+        A validate action must carry a structured assertion subject.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "validate",
+                    "confidence": 0.9,
+                    "target_name": "Phone Number",
+                    "export_target": "Phone Number input field",
+                }
+            )
+
+    def test_validate_with_validation_subject_is_accepted(self) -> None:
+        """
+        A validate action may carry visible anchor targets plus the assertion subject.
+        """
+
+        action = ExecuteAction.model_validate(
+            {
+                "action_type": "validate",
+                "confidence": 0.9,
+                "target_name": "Phone Number",
+                "export_target": "Phone Number input field",
+                "validation_subject": "Login screen",
+            }
+        )
+
+        self.assertEqual(action.validation_subject, "Login screen")
+
+
+class ExecuteActionReplayTargetTest(unittest.TestCase):
+    """
+    Pins replay target requirements for executable tap and type commands.
+    """
+
+    def test_tap_without_export_or_script_target_is_rejected(self) -> None:
+        """
+        Tap must carry a stable replay phrase separate from the execution target.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "tap",
+                    "confidence": 0.9,
+                    "target_name": "Selected address is Manhattan",
+                }
+            )
+
+    def test_tap_accepts_dynamic_script_target(self) -> None:
+        """
+        Dynamic controls can keep exact target text while supplying a replay target.
+        """
+
+        action = ExecuteAction.model_validate(
+            {
+                "action_type": "tap",
+                "confidence": 0.9,
+                "target_name": "Selected address is Manhattan",
+                "target_type": "dynamic",
+                "script_target": "delivery address bar",
+            }
+        )
+
+        self.assertEqual(action.script_target, "delivery address bar")
+
+    def test_type_requires_replay_target(self) -> None:
+        """
+        Type must identify the field replay should use.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                {
+                    "action_type": "type",
+                    "confidence": 0.9,
+                    "target_name": "Search an area or address",
+                    "text": "HSR",
+                }
+            )
 
 
 class ExecuteActionConditionalWaitTest(unittest.TestCase):
@@ -13,12 +210,12 @@ class ExecuteActionConditionalWaitTest(unittest.TestCase):
     """
 
     @staticmethod
-    def __payload(**overrides: object) -> dict[str, object]:
+    def __payload(**overrides: object) -> Dict[str, object]:
         """
         Build a baseline ExecuteAction payload callers can override per assertion.
         """
 
-        baseline: dict[str, object] = {
+        baseline: Dict[str, object] = {
             "confidence": 0.9,
             "action_type": "wait",
             "wait_subject": "Main menu",
@@ -84,19 +281,35 @@ class ExecuteActionConditionalWaitTest(unittest.TestCase):
                 },
             )
 
-    def test_overlay_detected_branch_unchanged(self) -> None:
+    def test_overlay_detected_without_condition_is_rejected(self) -> None:
         """
-        overlay_detected still emits the canonical 'Overlay is visible' default.
+        overlay_detected must not invent a generic branch condition.
+        """
+
+        with self.assertRaises(ValidationError):
+            ExecuteAction.model_validate(
+                self.__payload(
+                    action_type="tap",
+                    target_name="Dismiss",
+                    overlay_detected=True,
+                ),
+            )
+
+    def test_overlay_detected_with_explicit_condition_sets_blocker_type(self) -> None:
+        """
+        overlay_detected may default the condition type, but never the condition text.
         """
 
         action = ExecuteAction.model_validate(
             self.__payload(
                 action_type="tap",
                 target_name="Dismiss",
+                export_target="Dismiss button",
+                condition="Account chooser dialog is visible",
                 overlay_detected=True,
             ),
         )
 
         self.assertTrue(action.is_conditional)
         self.assertEqual(action.conditional_type, "blocker")
-        self.assertEqual(action.condition, "Overlay is visible")
+        self.assertEqual(action.condition, "Account chooser dialog is visible")

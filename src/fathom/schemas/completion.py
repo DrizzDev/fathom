@@ -42,10 +42,10 @@ class ClaimEvidence(BaseModel):
             "or when the planned action_type is the dedicated completion action."
         ),
     )
-    justified: bool = Field(
+    explained: bool = Field(
         description=(
-            "True when the LLM supplied a justification consistent with the asserted "
-            "claim, or when a rationale heuristic finds the claim defensible."
+            "True when the LLM/operator supplied a completion reason, or when the "
+            "legacy rationale matcher found a reason-like phrase. This is not screen proof."
         ),
     )
 
@@ -61,6 +61,13 @@ class ActionEvidence(BaseModel):
         description=(
             "True when the planned action is a real dispatch-able action that reached "
             "the device adapter (not a no-op or planning-only directive)."
+        ),
+    )
+    executed: bool = Field(
+        description=(
+            "True when the command primitive ran without an executor/device/control error, "
+            "sourced from the runtime ExecutionResult.success (distinct from screen change and "
+            "sub-goal completion)."
         ),
     )
 
@@ -80,6 +87,19 @@ class ScreenEvidence(BaseModel):
     )
 
 
+class ValidationEvidence(BaseModel):
+    """
+    Evidence that a validate command executed on this turn.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    executed: bool = Field(
+        default=False,
+        description="True when this turn executed a validate command with a structured subject.",
+    )
+
+
 class CriterionEvidence(BaseModel):
     """
     Optional evidence from the typed-criterion observer.
@@ -90,8 +110,7 @@ class CriterionEvidence(BaseModel):
     observed: bool = Field(
         description=(
             "True when the sub-goal's typed criterion text is observable on the "
-            "current screen. Provided as an additive RCA signal; never gates the "
-            "completion decision on its own."
+            "current screen. Provided as an additive RCA signal; never gates the completion decision on its own."
         ),
     )
 
@@ -111,6 +130,10 @@ class CompletionEvidence(BaseModel):
     )
     screen: ScreenEvidence = Field(
         description="Evidence about the screen transition observed across this turn.",
+    )
+    validation: ValidationEvidence = Field(
+        default_factory=ValidationEvidence,
+        description="Evidence that this turn executed a concrete validate command.",
     )
     criterion: Optional[CriterionEvidence] = Field(
         default=None,

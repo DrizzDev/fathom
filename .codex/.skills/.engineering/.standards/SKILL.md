@@ -60,6 +60,8 @@ Formats:
 - Private Method: `__snake_case`
 - Protected / Internal: `_snake_case`
 - Constant: `UPPER_SNAKE_CASE`
+- Enum member name: `UPPER_SNAKE_CASE`
+- Enum member value: `UPPER_SNAKE_CASE` for internal/semantic enums (the value mirrors the member name). The only exception is an enum whose values form an external or rendered protocol vocabulary — tokens emitted verbatim into rendered output, an external API/tool contract, or a persisted wire format — which keep their literal protocol form.
 - Module: `snake_case`
 
 ## 4. Imports

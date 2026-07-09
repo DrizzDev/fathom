@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.resolution import ResolveStatus
@@ -24,7 +25,9 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
 
         ledger = Mock()
         ledger.get = AsyncMock(return_value=None)
-        return ReferenceResolutionService(ledger=ledger, workflow_id=workflow_id)
+        return ReferenceResolutionService(
+            ledger=ledger, catalog=CommandCatalogProvider().build(), workflow_id=workflow_id
+        )
 
     @staticmethod
     def __build_action(
@@ -552,7 +555,9 @@ class ReferenceResolutionSnapEvaluatedTest(unittest.IsolatedAsyncioTestCase):
 
         ledger = Mock()
         ledger.get = AsyncMock(return_value=None)
-        return ReferenceResolutionService(ledger=ledger, workflow_id="wf-snap")
+        return ReferenceResolutionService(
+            ledger=ledger, catalog=CommandCatalogProvider().build(), workflow_id="wf-snap"
+        )
 
     async def test_event_emitted_for_resolved_spatial_action(self) -> None:
         """
