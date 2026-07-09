@@ -26,6 +26,7 @@ class EvidenceAssembler:
     """
 
     __LAUNCH = "launch"
+
     def __init__(self, *, target_builder: Optional[TargetEvidenceBuilder] = None) -> None:
         """
         Bind collaborators used to assemble evidence.
