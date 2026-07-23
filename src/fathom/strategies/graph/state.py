@@ -45,6 +45,9 @@ class IntentGraphState(TypedDict, total=False):
     ANALYSIS_DURATION: float
     EXECUTION_DURATION: float
     GROUNDING_DURATION: float
+    OBSERVE_DURATION: float
+    SUPERVISE_DURATION: float
+    STEP_STARTED_AT: float
 
     # Post-action activity captured in EXECUTE, consumed in RECORD
     POST_ACTIVITY: Optional[str]

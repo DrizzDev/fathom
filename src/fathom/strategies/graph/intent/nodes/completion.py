@@ -130,10 +130,15 @@ class SubGoalEvaluator:
                 else None
             )
 
-            semantic_similarity = await self.__semantic_similarity(
-                sub_goal=active,
-                analysis=analysis,
-            )
+            # Option 2: replaced the embedding round-trip (Gemini text-embedding-004,
+            # ~11.7s/step, no priority-tier support) with a self-reported alignment
+            # score emitted by the same ANALYZE tool call — zero added latency.
+            # Kept __semantic_similarity below (unused) in case we need to roll back.
+            # semantic_similarity = await self.__semantic_similarity(
+            #     sub_goal=active,
+            #     analysis=analysis,
+            # )
+            semantic_similarity = analysis.subgoal_alignment_score
 
             evidence = self.__context.reasoner.assess_completion(
                 sub_goal=active,
@@ -291,6 +296,9 @@ class SubGoalEvaluator:
             validation=ValidationEvidence(executed=False),
         )
 
+    # NOTE: currently unused — evaluate() reads analysis.subgoal_alignment_score
+    # (self-reported by the ANALYZE tool call) instead of calling this. Retained,
+    # not deleted, in case we need to roll back to the embedding-based approach.
     async def __semantic_similarity(
         self,
         *,

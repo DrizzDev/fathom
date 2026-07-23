@@ -17,6 +17,7 @@ from typing import (
 
 from pydantic import JsonValue
 
+from fathom.adapters.interaction.noop import NoopInteraction
 from fathom.adapters.signing.noop import NoopSigner
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
@@ -1312,7 +1313,7 @@ class FathomRunner:
         Build the optional conversation recorder from the interaction port.
         """
 
-        if interaction is None:
+        if interaction is None or isinstance(interaction, NoopInteraction):
             return None
 
         return ConversationRecorder(

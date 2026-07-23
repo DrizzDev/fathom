@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 from fathom.constants import ActionExecutionKind, ActionType
@@ -52,6 +53,8 @@ class ObserveNode:
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
+
+        observe_start = time.time()
 
         if await self.__provider.is_cancelled():
             return self.__cancelled_result()
@@ -174,6 +177,7 @@ class ObserveNode:
         result_dict: Dict[Any, Any] = {
             CommonStateKey.STEP_RESULT: step_result,
             CommonStateKey.EXECUTION_DURATION: context.duration / 1000.0,
+            CommonStateKey.OBSERVE_DURATION: time.time() - observe_start,
             CommonStateKey.SCREEN_OBSERVATION: next_observation,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
             IntentStateKey.POST_ACTIVITY: post_activity,

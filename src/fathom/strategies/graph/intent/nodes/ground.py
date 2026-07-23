@@ -307,6 +307,7 @@ class GroundNode:
                     IntentStateKey.SHOULD_RETRY: False,
                     CommonStateKey.SCREEN_STATE: screen_state,
                     CommonStateKey.GROUNDING_DURATION: duration,
+                    CommonStateKey.STEP_STARTED_AT: start_time,
                     CommonStateKey.IS_NEW_SCREEN: is_new_screen,
                     CommonStateKey.SCREEN_OBSERVATION: screen_observation,
                 },

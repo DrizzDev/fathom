@@ -65,6 +65,10 @@ class AnalysisResult(BaseModel):
         default=None,
         description="List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). For multi-condition verifications.",
     )
+    subgoal_alignment_score: Optional[float] = Field(
+        default=None,
+        description="Model self-reported confidence (0.0-1.0) that the completion rationale semantically matches the active sub-goal. Populated by the planner tool call; consumed by SubGoalEvaluator in place of the embedding-based cosine similarity.",
+    )
     memories: int = Field(
         default=0, description="Number of historical experiences retrieved for this state"
     )

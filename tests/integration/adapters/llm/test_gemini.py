@@ -133,7 +133,7 @@ class GeminiPriorityIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         configuration = LLMConfiguration(
             credentials="/fake/credentials.json",
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             max_retries=0,
             use_cache=False,
         )
@@ -180,7 +180,7 @@ class GeminiPriorityIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         configuration = LLMConfiguration(
             credentials="/fake/credentials.json",
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             max_retries=2,
             retry_delay=0.0,
             rate_limit_backoff=0.0,

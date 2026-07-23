@@ -68,7 +68,7 @@ class LiveLlmConfigurationFactory:
             api_key=api_key,
             project_id=project_id,
             credentials=credentials,
-            model=os.getenv("FATHOM_LIVE_LLM_MODEL", "gemini-3-flash-preview"),
+            model=os.getenv("FATHOM_LIVE_LLM_MODEL", "gemini-3.5-flash"),
             location=os.getenv("FATHOM_LIVE_LLM_LOCATION", "global"),
             use_cache=False,
             max_retries=int(os.getenv("FATHOM_LIVE_LLM_MAX_RETRIES", "1")),

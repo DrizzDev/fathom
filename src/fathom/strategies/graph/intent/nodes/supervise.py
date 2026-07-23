@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Optional, cast
 
 from fathom.constants import ActionType
@@ -49,6 +50,8 @@ class SuperviseNode:
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
+
+        supervise_start = time.time()
 
         if await self.__provider.is_cancelled():
             logger.warning(
@@ -105,6 +108,7 @@ class SuperviseNode:
                 state=state,
                 step=planned_step,
                 capture=screen_capture,
+                duration=time.time() - supervise_start,
                 localization=LocalizationResult(
                     status=LocalizationStatus.UNRESOLVED,
                     bounds=None,
@@ -175,6 +179,7 @@ class SuperviseNode:
             state=state,
             capture=screen_capture,
             localization=localization,
+            duration=time.time() - supervise_start,
         )
 
     @staticmethod
@@ -275,6 +280,7 @@ class SuperviseNode:
         step: Step,
         capture: ScreenCapture,
         state: IntentGraphState,
+        duration: float,
         localization: LocalizationResult,
     ) -> IntentGraphState:
         """
@@ -303,6 +309,7 @@ class SuperviseNode:
             {
                 IntentStateKey.PLANNED_STEP: step,
                 CommonStateKey.SCREEN_OBSERVATION: observation,
+                CommonStateKey.SUPERVISE_DURATION: duration,
                 IntentStateKey.EXECUTION_CONTEXT: execution_context,
             },
         )

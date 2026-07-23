@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Final, List, Optional, Tuple, cast
 
@@ -33,7 +34,7 @@ from fathom.schemas.recording import (
 )
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.steps import StepResult
+from fathom.schemas.steps import StepRecord, StepResult
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
@@ -69,6 +70,8 @@ class RecordNode:
 
         ERROR BOUNDARY: Wraps recording in try/except to handle storage/telemetry failures gracefully.
         """
+
+        record_start = time.time()
 
         logger.info(
             "Starting record node",
@@ -132,6 +135,11 @@ class RecordNode:
             return result
 
         step_result: StepResult = recorded_step
+
+        record: Optional[StepRecord] = None
+        grounding_duration = analysis_duration = execution_duration = observe_duration = 0.0
+        supervise_duration = 0.0
+        step_started_at: Optional[float] = None
 
         # ERROR BOUNDARY: Wrap recording logic
         try:
@@ -218,39 +226,24 @@ class RecordNode:
                 if isinstance(execution_duration_raw, (int, float, str))
                 else 0.0
             )
-
-            total_duration = int(
-                (grounding_duration + analysis_duration + execution_duration) * 1000
+            observe_duration_raw = state.get(CommonStateKey.OBSERVE_DURATION) or 0.0
+            observe_duration = (
+                float(observe_duration_raw)
+                if isinstance(observe_duration_raw, (int, float, str))
+                else 0.0
             )
-            plan_metrics: Dict[str, Any] = {}
-            plan_raw = state.get(IntentStateKey.PLAN)
-            if isinstance(plan_raw, PlanResult):
-                plan_metrics = dict(plan_raw.metrics or {})
+            supervise_duration_raw = state.get(CommonStateKey.SUPERVISE_DURATION) or 0.0
+            supervise_duration = (
+                float(supervise_duration_raw)
+                if isinstance(supervise_duration_raw, (int, float, str))
+                else 0.0
+            )
 
-            artifacts_payload = (
-                step_result.artifacts.model_dump(mode="json")
-                if step_result.artifacts is not None
+            step_started_at_raw = state.get(CommonStateKey.STEP_STARTED_AT)
+            step_started_at = (
+                float(step_started_at_raw)
+                if isinstance(step_started_at_raw, (int, float))
                 else None
-            )
-
-            await self.__provider.context.telemetry.info(
-                f"Step {step_result.step.step_number + 1} completed",
-                type=FathomEvent.STEP_COMPLETED,
-                success=record.success,
-                duration=total_duration,
-                artifacts=artifacts_payload,
-                rationale=record.rationale,
-                observation=record.observation,
-                action_type=record.action_type,
-                step=step_result.step.step_number + 1,
-                action_description=record.action_description,
-                target=record.natural_language_target or record.target,
-                analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
-                analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
-                analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
-                analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
-                analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
-                analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
             )
 
             # Console audit logging for rich step visualization
@@ -354,6 +347,18 @@ class RecordNode:
                         CommonStateKey.COMPLETION_REASON: completion_reason,
                     },
                 )
+                await self.__emit_step_completed(
+                    state=state,
+                    step_result=step_result,
+                    record=record,
+                    grounding_duration=grounding_duration,
+                    analysis_duration=analysis_duration,
+                    execution_duration=execution_duration,
+                    observe_duration=observe_duration,
+                    supervise_duration=supervise_duration,
+                    record_start=record_start,
+                    step_started_at=step_started_at,
+                )
                 self.__provider.persistence.persist(result=result)
                 return result
 
@@ -377,6 +382,18 @@ class RecordNode:
                 observation=screen_observation,
             )
             if subgoal_result is not None:
+                await self.__emit_step_completed(
+                    state=state,
+                    step_result=step_result,
+                    record=record,
+                    grounding_duration=grounding_duration,
+                    analysis_duration=analysis_duration,
+                    execution_duration=execution_duration,
+                    observe_duration=observe_duration,
+                    supervise_duration=supervise_duration,
+                    record_start=record_start,
+                    step_started_at=step_started_at,
+                )
                 self.__provider.persistence.persist(result=subgoal_result)
                 return subgoal_result
 
@@ -404,6 +421,18 @@ class RecordNode:
                     IntentStateKey.STEP_RESULTS: accumulated_step_results,
                 },
             )
+            await self.__emit_step_completed(
+                state=state,
+                step_result=step_result,
+                record=record,
+                grounding_duration=grounding_duration,
+                analysis_duration=analysis_duration,
+                execution_duration=execution_duration,
+                observe_duration=observe_duration,
+                supervise_duration=supervise_duration,
+                record_start=record_start,
+                step_started_at=step_started_at,
+            )
             self.__provider.persistence.persist(result=result)
             return result
 
@@ -429,6 +458,22 @@ class RecordNode:
                 display_error,
                 step=self.__provider.context.agent_state.step_count,
             )
+            if record is not None:
+                try:
+                    await self.__emit_step_completed(
+                        state=state,
+                        step_result=step_result,
+                        record=record,
+                        grounding_duration=grounding_duration,
+                        analysis_duration=analysis_duration,
+                        execution_duration=execution_duration,
+                        observe_duration=observe_duration,
+                        supervise_duration=supervise_duration,
+                        record_start=record_start,
+                        step_started_at=step_started_at,
+                    )
+                except Exception:
+                    logger.exception("Failed to emit STEP_COMPLETED after recording failure")
             existing_step_results = cast(
                 "List[StepResult]", state.get(IntentStateKey.STEP_RESULTS) or []
             )
@@ -448,6 +493,71 @@ class RecordNode:
             )
             self.__provider.persistence.persist(result=result)
             return result
+
+    async def __emit_step_completed(
+        self,
+        *,
+        state: IntentGraphState,
+        step_result: StepResult,
+        record: StepRecord,
+        grounding_duration: float,
+        analysis_duration: float,
+        execution_duration: float,
+        observe_duration: float,
+        supervise_duration: float,
+        record_start: float,
+        step_started_at: Optional[float],
+    ) -> None:
+        """
+        Emit STEP_COMPLETED telemetry with the step's final timing breakdown.
+        """
+
+        plan_metrics: Dict[str, Any] = {}
+        plan_raw = state.get(IntentStateKey.PLAN)
+        if isinstance(plan_raw, PlanResult):
+            plan_metrics = dict(plan_raw.metrics or {})
+
+        artifacts_payload = (
+            step_result.artifacts.model_dump(mode="json")
+            if step_result.artifacts is not None
+            else None
+        )
+
+        record_duration_ms = int((time.time() - record_start) * 1000)
+
+        if step_started_at is not None:
+            total_duration = int((time.time() - step_started_at) * 1000)
+        else:
+            total_duration = (
+                int((grounding_duration + analysis_duration + execution_duration) * 1000)
+                + record_duration_ms
+            )
+
+        await self.__provider.context.telemetry.info(
+            f"Step {step_result.step.step_number + 1} completed",
+            type=FathomEvent.STEP_COMPLETED,
+            success=record.success,
+            duration=total_duration,
+            grounding_ms=int(grounding_duration * 1000),
+            analysis_ms=int(analysis_duration * 1000),
+            execution_ms=int(execution_duration * 1000),
+            observe_ms=int(observe_duration * 1000),
+            supervise_ms=int(supervise_duration * 1000),
+            record_ms=record_duration_ms,
+            artifacts=artifacts_payload,
+            rationale=record.rationale,
+            observation=record.observation,
+            action_type=record.action_type,
+            step=step_result.step.step_number + 1,
+            action_description=record.action_description,
+            target=record.natural_language_target or record.target,
+            analysis_llm_ms=float(plan_metrics.get("llm_analysis_ms", 0.0) or 0.0),
+            analysis_parse_ms=float(plan_metrics.get("parse_ms", 0.0) or 0.0),
+            analysis_payload_ms=float(plan_metrics.get("payload_ms", 0.0) or 0.0),
+            analysis_manifest_ms=float(plan_metrics.get("manifest_ms", 0.0) or 0.0),
+            analysis_tool_scope_ms=float(plan_metrics.get("tool_scope_ms", 0.0) or 0.0),
+            analysis_total_ms=float(plan_metrics.get("analyze_ms", 0.0) or 0.0),
+        )
 
     async def __record_step_finished(self, *, result: StepResult, state: IntentGraphState) -> None:
         """

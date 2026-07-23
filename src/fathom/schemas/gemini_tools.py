@@ -94,6 +94,15 @@ class GeminiCompletionFlags(BaseModel):
     subgoal_completion_reason: Optional[str] = None
     completion_criteria_met: Optional[Any] = None
     content_exhausted: bool = False
+    subgoal_alignment_score: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Self-assessed confidence (0.0-1.0) that subgoal_completion_reason actually "
+            "matches the active sub-goal, not just that some action happened."
+        ),
+    )
 
 
 class VerifyGoalArgs(GeminiCompletionFlags):

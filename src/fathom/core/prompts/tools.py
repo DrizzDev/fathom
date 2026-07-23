@@ -357,6 +357,10 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "Explicit reason why the sub-goal is complete (e.g., 'Item added to cart', 'User authenticated'). Required when sub_goal_completed=true.",
                     },
+                    "subgoal_alignment_score": {
+                        "type": "NUMBER",
+                        "description": "Self-assessed confidence (0.0-1.0) that subgoal_completion_reason actually satisfies the active sub-goal's description, not just that some action happened. Be honest — a low score correctly keeps the sub-goal open instead of advancing prematurely. Required when sub_goal_completed=true.",
+                    },
                     "completion_criteria_met": {
                         "type": "ARRAY",
                         "description": "List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). Use for multi-condition completions.",
@@ -458,6 +462,10 @@ class ToolRegistry:
                         "type": "BOOLEAN",
                         "description": "True if the current sub-goal is complete.",
                     },
+                    "subgoal_alignment_score": {
+                        "type": "NUMBER",
+                        "description": "Self-assessed confidence (0.0-1.0) that this validation actually satisfies the active sub-goal's description, not just that some condition was checked. Be honest — a low score correctly keeps the sub-goal open instead of advancing prematurely. Required when sub_goal_completed=true.",
+                    },
                 },
                 "required": [
                     "assistant_message",
@@ -501,6 +509,10 @@ class ToolRegistry:
                     "subgoal_completion_reason": {
                         "type": "STRING",
                         "description": "Explicit reason why the sub-goal is complete (e.g., 'Product page rendered after tapping result'). Required when sub_goal_completed=true.",
+                    },
+                    "subgoal_alignment_score": {
+                        "type": "NUMBER",
+                        "description": "Self-assessed confidence (0.0-1.0) that subgoal_completion_reason actually satisfies the active sub-goal's description, not just that some action happened. Be honest — a low score correctly keeps the sub-goal open instead of advancing prematurely. Required when sub_goal_completed=true.",
                     },
                     "completion_criteria_met": {
                         "type": "ARRAY",

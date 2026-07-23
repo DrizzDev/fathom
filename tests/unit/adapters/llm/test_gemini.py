@@ -238,7 +238,7 @@ class GeminiLLMTest(unittest.TestCase):
 
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             thinking_level="minimal",
         )
 
@@ -277,7 +277,7 @@ class GeminiLLMTest(unittest.TestCase):
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
             credentials="/fake/credentials.json",
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
         )
 
         config = gemini._GeminiLLM__get_generation_configuration(
@@ -303,7 +303,7 @@ class GeminiLLMTest(unittest.TestCase):
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
             credentials="/fake/credentials.json",
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
         )
 
         config = gemini._GeminiLLM__get_generation_configuration(
@@ -320,7 +320,7 @@ class GeminiLLMTest(unittest.TestCase):
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
             api_key="api-key",
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
         )
 
         config = gemini._GeminiLLM__get_generation_configuration(
@@ -375,7 +375,7 @@ class GeminiStructuredOutputTest(unittest.TestCase):
 
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             thinking_level="low",
         )
         return gemini
@@ -410,7 +410,7 @@ class GeminiStructuredOutputTest(unittest.TestCase):
         """
 
         gemini = object.__new__(GeminiLLM)
-        gemini._GeminiLLM__configuration = LLMConfiguration(model="gemini-3-flash-preview")
+        gemini._GeminiLLM__configuration = LLMConfiguration(model="gemini-3.5-flash")
         gemini._GeminiLLM__client = object()
         gemini._GeminiLLM__cache = None
 
