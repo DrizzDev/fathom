@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from logging import getLogger
 from typing import Optional
@@ -13,7 +14,7 @@ logger = getLogger(__name__)
 
 class OracleRecorder:
     """
-    Shadow-reads the active criterion against the settled screen and returns the verdict without consuming it live.
+    Shadow-reads the active criterion against the settled screen off the critical path; adds no step latency.
     """
 
     def __init__(self, *, oracle: Optional[OraclePort] = None) -> None:
@@ -23,20 +24,45 @@ class OracleRecorder:
 
         self.__oracle = oracle
 
-    async def read(
+    def observe(
         self,
         *,
         turn: int,
         workflow_id: str,
         image: Optional[bytes],
         criterion: Optional[str],
-    ) -> Optional[Verdict]:
+    ) -> None:
         """
-        Read the criterion against the settled screen and return the verdict; never raise, never consume live.
+        Fire one off-critical-path oracle reading; the step never waits on it.
         """
 
         if (oracle := self.__oracle) is None or not criterion or not image:
-            return None
+            return
+
+        asyncio.create_task(
+            self.__read(
+                turn=turn,
+                image=image,
+                oracle=oracle,
+                criterion=criterion,
+                workflow_id=workflow_id,
+            ),
+            name="oracle.trial.reader",
+        )
+
+    @classmethod
+    async def __read(
+        cls,
+        *,
+        turn: int,
+        image: bytes,
+        criterion: str,
+        workflow_id: str,
+        oracle: OraclePort,
+    ) -> None:
+        """
+        Read the verdict and log it; never raise, never consume live.
+        """
 
         start = time.time()
 
@@ -54,12 +80,11 @@ class OracleRecorder:
                     "exception.message": str(exception),
                 },
             )
-            return None
+            return
 
-        self.__log(
+        cls.__log(
             turn=turn, workflow_id=workflow_id, criterion=criterion, verdict=verdict, start=start
         )
-        return verdict
 
     @staticmethod
     def __log(

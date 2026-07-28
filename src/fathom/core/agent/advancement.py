@@ -8,7 +8,6 @@ from fathom.constants.completion import GateOutcome, RetainReason
 from fathom.constants.turn.advancement import AdvanceKind, AdvanceThreshold
 from fathom.constants.turn.oracle import OracleThreshold
 from fathom.constants.turn.stall import StallState
-from fathom.core.agent.completion import OutcomeEvidencePolicy
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.services.directive import DirectivePolicy
 from fathom.schemas.advancement import Advancement, RetainHistory
@@ -264,7 +263,7 @@ class AdvancementPolicy:
 
 class AdvancementTrial:
     """
-    Adjudicator-seam adapter that runs the advancement policy as the trial decider.
+    Replays recorded tapes through the advancement policy and projects onto the gate-decision seam.
     """
 
     def __init__(
@@ -274,11 +273,10 @@ class AdvancementTrial:
         policy: Optional[AdvancementPolicy] = None,
     ) -> None:
         """
-        Bind the task projection and the policy under trial.
+        Bind the task projection and the policy under replay.
         """
 
         self.__streaks: Dict[int, int] = {}
-        self.__wordlist = OutcomeEvidencePolicy()
         self.__projection = DirectivePolicy(catalog=catalog)
         self.__policy = policy if policy is not None else AdvancementPolicy()
 
@@ -295,7 +293,6 @@ class AdvancementTrial:
         """
 
         task = self.__projection.project(sub_goal=sub_goal)
-        self.__tripwire(sub_goal=sub_goal, task=task)
 
         decision = self.__policy.decide(
             task=task,
@@ -305,29 +302,6 @@ class AdvancementTrial:
         self.__track(index=sub_goal.index, decision=decision)
 
         return self.__gate(decision=decision)
-
-    def __tripwire(self, *, sub_goal: SubGoal, task: Task) -> None:
-        """
-        Log word-list vs typed-proof disagreement so the legacy heuristic retires on measured evidence.
-        """
-
-        listed = self.__wordlist.needs_proof(sub_goal=sub_goal)
-        typed = task.completion is CompletionMode.OUTCOME_VERIFIED
-
-        if listed == typed:
-            return
-
-        logger.info(
-            "Durable-proof tripwire disagreement",
-            extra={
-                "event": "proof.tripwire",
-                "task.index": sub_goal.index,
-                "proof.wordlist": listed,
-                "proof.typed": typed,
-                "proof.declared": sub_goal.proof.value if sub_goal.proof is not None else None,
-                "task.completion": task.completion.value,
-            },
-        )
 
     @classmethod
     def __turn(

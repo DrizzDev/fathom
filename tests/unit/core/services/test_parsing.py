@@ -6,17 +6,14 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
 from fathom.constants import ActionType, StepEvent
-from fathom.constants.completion import GateOutcome
 from fathom.constants.tools import StateNamespace
 from fathom.constants.turn.validation import ValidationSource
-from fathom.core.agent.completion import CompletionGate
 from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.reasoner import Reasoner
 from fathom.core.exceptions import ToolValidationError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.schemas.results import GenerateResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
-from fathom.schemas.vision import ActionKindResolver
 
 
 class _Call(BaseModel):
@@ -622,16 +619,10 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
             sub_goal=sub_goal,
             screen_changed=False,
         )
-        decision = CompletionGate().adjudicate(
-            sub_goal=sub_goal,
-            action_kind=ActionKindResolver.resolve(action_type=result.action.action_type),
-            evidence=evidence,
-        )
 
         self.assertEqual(result.action.action_type, ActionType.COMPLETE)
         self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertTrue(evidence.validation.executed)
-        self.assertEqual(decision.outcome, GateOutcome.ADVANCE)
 
 
 class ToolResponseParserBoundaryTest(unittest.TestCase):

@@ -26,7 +26,6 @@ from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.criterion import Verdict
 from fathom.schemas.directive import OperatorDirective
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
@@ -109,9 +108,6 @@ class AgentState:
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
 
-        # Shadow oracle verdict for the current turn; refreshed every OBSERVE, never drives live decisions.
-        self.__last_verdict: Optional[Verdict] = None
-
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
         # vision.analyze() call can pass them as conversation_history.
@@ -130,6 +126,11 @@ class AgentState:
         # router deferred to GROUND. Bounded retry prevents the planner
         # from looping on a "complete" verdict the runtime cannot honour.
         self.__consecutive_complete_deferrals: int = 0
+
+        # Consecutive turns the advancement policy retained the active
+        # sub-goal. Checkpoint-durable so the retain backstop survives a
+        # resume; reset the moment the sub-goal advances.
+        self.__subgoal_retain_streak: int = 0
 
         # VERIFY does not emit recorded steps. Persist one explicit
         # no-progress verification streak so repeated rejection on the same recorded-step epoch can be bounded cleanly.
@@ -705,6 +706,29 @@ class AgentState:
         self.__consecutive_complete_deferrals = 0
 
     @property
+    def subgoal_retain_streak(self) -> int:
+        """
+        Consecutive turns the advancement policy retained the active sub-goal.
+        """
+
+        return self.__subgoal_retain_streak
+
+    def record_subgoal_retain(self) -> int:
+        """
+        Increment and return the active sub-goal's consecutive-retain streak.
+        """
+
+        self.__subgoal_retain_streak += 1
+        return self.__subgoal_retain_streak
+
+    def reset_subgoal_retain(self) -> None:
+        """
+        Zero the retain streak once the sub-goal advances or the run escalates.
+        """
+
+        self.__subgoal_retain_streak = 0
+
+    @property
     def verification_loop(self) -> Optional[VerificationLoopState]:
         """
         Current same-screen verifier-rejection streak, when one is active.
@@ -866,6 +890,7 @@ class AgentState:
         # Sub-goal advanced -> any in-flight complete-deferral streak is now
         # stale; the next planner verdict starts from a clean slate.
         self.__consecutive_complete_deferrals = 0
+        self.__subgoal_retain_streak = 0
 
         logger.info(
             "[AgentState] Sub-goal marked complete",
@@ -1115,20 +1140,6 @@ class AgentState:
         """
 
         return self.__runtime.effects.last_effect()
-
-    def record_verdict(self, *, verdict: Optional[Verdict]) -> None:
-        """
-        Store this turn's shadow oracle verdict (or None); refreshed every OBSERVE so it never goes stale.
-        """
-
-        self.__last_verdict = verdict
-
-    def get_last_verdict(self) -> Optional[Verdict]:
-        """
-        Return the current turn's shadow oracle verdict, or None when the oracle is disabled or unread.
-        """
-
-        return self.__last_verdict
 
     def build_loop_observation(self) -> Optional[LoopObservation]:
         """

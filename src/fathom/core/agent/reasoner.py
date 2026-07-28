@@ -9,12 +9,10 @@ from fathom.constants import (
     ActionType,
     StepEvent,
 )
-from fathom.constants.agent import DirectiveKind
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
     COMPLETION_KEYWORDS,
-    LATERAL_CREDIT_SIMILARITY_THRESHOLD,
     NEXT_PHASE_KEYWORDS,
     OPENER_GOAL_WORDS,
     RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
@@ -260,18 +258,15 @@ class Reasoner:
         analysis: AnalysisResult,
         effect: Optional[ActionEffect] = None,
         screen_description: Optional[str] = None,
-        semantic_similarity: Optional[float] = None,
-        directive_kind: Optional[DirectiveKind] = None,
         criterion_decision: Optional[CriterionDecision] = None,
     ) -> CompletionEvidence:
         """
-        Assemble this turn's typed CompletionEvidence bundle for the gate to adjudicate.
-        NO_PROGRESS effect vetoes screen.evolved so animation noise alone cannot satisfy the gate.
+        Assemble this turn's typed completion signals for the advancement policy.
+        NO_PROGRESS effect vetoes screen.evolved so animation noise alone cannot satisfy the policy.
         """
 
         notes: List[str] = []
         action = self.__require_action(analysis=analysis)
-        target = sub_goal.description.lower()
 
         asserted = (
             analysis.is_sub_goal_complete
@@ -280,69 +275,6 @@ class Reasoner:
         )
         if asserted:
             notes.append("claim.asserted: model flagged completion via tool output")
-
-        directive_aborts = directive_kind is DirectiveKind.ABORT
-        explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
-
-        if directive_aborts:
-            explained = True
-            rationale_similarity = 1.0
-            notes.append("claim.explained.via_operator_directive")
-            rationale_note: Optional[str] = (
-                "Completion reason provided by operator directive (HITL)"
-            )
-        elif asserted and explicit_reason:
-            explained = True
-            rationale_note = f"Completion reason provided by model: '{explicit_reason}'"
-            rationale_similarity = (
-                semantic_similarity
-                if semantic_similarity is not None
-                else SequenceMatcher(
-                    None,
-                    target,
-                    f"{analysis.reasoning} {screen_description or ''}".lower(),
-                ).ratio()
-            )
-            notes.append("claim.explained.via_explicit_reason")
-        elif (
-            asserted
-            and semantic_similarity is not None
-            and semantic_similarity >= LATERAL_CREDIT_SIMILARITY_THRESHOLD
-        ):
-            explained = True
-            rationale_note = f"Completion reason aligned by embedding similarity (cosine={semantic_similarity:.2f})"
-            rationale_similarity = semantic_similarity
-            notes.append("claim.explained.via_embedding_similarity")
-        else:
-            explained, rationale_note, _, rationale_similarity = self.__verify_rationale(
-                target=target,
-                analysis=analysis,
-                flagged_complete=asserted,
-                screen_description=screen_description,
-            )
-        if explained and rationale_note is not None:
-            notes.append(f"claim.explained: {rationale_note}")
-
-        if asserted and rationale_similarity < LATERAL_CREDIT_SIMILARITY_THRESHOLD:
-            logger.info(
-                "Completion claim observed with weak rationale alignment to active sub-goal",
-                extra={
-                    "component": "reasoner",
-                    "event": "completion.lateral_credit.observed",
-                    "claim.explained": explained,
-                    "sub_goal.index": sub_goal.index,
-                    "action.type": action.action_type.value,
-                    "sub_goal.description": sub_goal.description[:120],
-                    "rationale.similarity": round(rationale_similarity, 3),
-                    "rationale.threshold": LATERAL_CREDIT_SIMILARITY_THRESHOLD,
-                    "model.goal_completion_reason": (
-                        (analysis.goal_completion_reason or "")[:240] or None
-                    ),
-                    "model.subgoal_completion_reason": (
-                        (analysis.subgoal_completion_reason or "")[:240] or None
-                    ),
-                },
-            )
 
         dispatched = action.action_type in ACTION_EXECUTED_TYPES
         if dispatched:
@@ -384,7 +316,7 @@ class Reasoner:
                     action=action, execution_success=execution_success
                 )
             ),
-            claim=ClaimEvidence(asserted=asserted, explained=explained),
+            claim=ClaimEvidence(asserted=asserted),
         )
 
     @staticmethod

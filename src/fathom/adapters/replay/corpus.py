@@ -119,10 +119,7 @@ class Corpus:
         dispatched = bool(turn.get("dispatched"))
 
         return CompletionEvidence(
-            claim=ClaimEvidence(
-                asserted=bool(turn.get("claim")),
-                explained=bool(turn.get("explained")),
-            ),
+            claim=ClaimEvidence(asserted=bool(turn.get("claim"))),
             screen=ScreenEvidence(evolved=bool(turn.get("evolved"))),
             action=ActionEvidence(dispatched=dispatched, executed=dispatched),
         )

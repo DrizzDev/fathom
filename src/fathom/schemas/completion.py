@@ -42,12 +42,6 @@ class ClaimEvidence(BaseModel):
             "or when the planned action_type is the dedicated completion action."
         ),
     )
-    explained: bool = Field(
-        description=(
-            "True when the LLM/operator supplied a completion reason, or when the "
-            "legacy rationale matcher found a reason-like phrase. This is not screen proof."
-        ),
-    )
 
 
 class ActionEvidence(BaseModel):

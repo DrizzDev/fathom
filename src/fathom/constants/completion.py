@@ -1,21 +1,6 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Final, FrozenSet
-
-DURABLE_OUTCOME_TERMS: Final[FrozenSet[str]] = frozenset(
-    {
-        "add",
-        "added",
-        "adding",
-        "capture",
-        "captured",
-        "save",
-        "saved",
-        "store",
-        "stored",
-    }
-)
 
 
 class VerifyEvidenceDimension(StrEnum):

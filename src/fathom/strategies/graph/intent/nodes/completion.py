@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
 from fathom.constants.capability import CompletionMode
-from fathom.constants.completion import AdvanceReason, GateOutcome
+from fathom.constants.completion import GateOutcome
 from fathom.constants.observability import CompletionEvent
-from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
-from fathom.core.agent.advancement import AdvancementTrial
+from fathom.constants.state import (
+    CommonStateKey,
+    CompletionReason,
+    IntentStateKey,
+    PlanMetadataKey,
+    VerifyMode,
+)
+from fathom.constants.turn.advancement import AdvanceKind
+from fathom.core.agent.advancement import AdvancementPolicy
 from fathom.core.agent.capture import StoreCaptureCompletionPolicy
-from fathom.core.agent.completion import CompletionGate
 from fathom.core.agent.stall import StallPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
-from fathom.core.services.shadow import ShadowRecorder
+from fathom.core.services.directive import DirectivePolicy
+from fathom.schemas.advancement import Advancement, RetainHistory
 from fathom.schemas.binding import Binding
 from fathom.schemas.completion import (
     ActionEvidence,
@@ -31,7 +37,7 @@ from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.steps import StepResult
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.turn import TurnEvidence
 from fathom.schemas.vision import ActionKind, ActionKindResolver
 from fathom.strategies.graph.context import GraphContext
@@ -44,25 +50,21 @@ class SubGoalEvaluator:
     """
     Decide whether the executed step satisfies the active sub-goal.
 
-    Each turn produces a typed CompletionEvidence bundle (claim, action,
-    screen, optional criterion) and the emitted action kind, which the
-    CompletionGate adjudicates per sub-goal kind:
+    Each turn assembles the typed TurnEvidence for the sub-goal (claim,
+    action, binding, effect, validation, verdict, stall) and the
+    AdvancementPolicy adjudicates it against the sub-goal's projected
+    completion mode:
 
-      - ACTION sub-goals require asserted claim AND explained rationale AND
-        a dispatched action that caused screen evolution. The single
-        exception is the VALIDATION-kind escape branch: when the planner
-        emits a VALIDATE action against an ACTION sub-goal and asserts
-        completion, the gate advances on (asserted AND dispatched) alone.
-        VALIDATE is a read action that cannot move the screen; requiring
-        screen.evolved for this branch would loop indefinitely whenever
-        the world is already past the failed step.
-      - VALIDATION sub-goals advance only when this turn executed a concrete
-        VALIDATE action with a structured validation subject. Planner claims
-        alone are logged as claims; they do not close validation sub-goals.
+      - Observed satisfaction (the vision verdict, or a canonical
+        validation) advances; a model claim only advances when the effect
+        corroborates it, and never against an observed refutation.
+      - Consecutive retention is bounded by the policy backstop: once the
+        retain streak is exhausted the turn escalates, terminating the run
+        instead of looping.
 
-    The CriterionObserver remains as an additive RCA-grade signal. Its
-    verdict is folded into CompletionEvidence.criterion and logged on every
-    decision, but it never vetoes an otherwise-conclusive gate outcome.
+    Capture sub-goals are decided upstream by the StoreCaptureCompletionPolicy
+    and never reach the advancement policy. The CriterionObserver stays as an
+    additive RCA-grade signal, logged on every decision but never gating.
     """
 
     def __init__(
@@ -70,35 +72,32 @@ class SubGoalEvaluator:
         *,
         context: GraphContext,
         criterion_observer: CriterionObserver,
-        gate: Optional[CompletionGate] = None,
-        shadow: Optional[ShadowRecorder] = None,
+        policy: Optional[AdvancementPolicy] = None,
         capture_policy: Optional[StoreCaptureCompletionPolicy] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, gate, capture policy, and shadow recorder.
+        Bind the evaluator to its graph context, criterion observer, advancement policy, and capture policy.
         """
 
         self.__context = context
         self.__criterion_observer = criterion_observer
-        self.__gate = gate if gate is not None else CompletionGate()
+        self.__policy = policy if policy is not None else AdvancementPolicy()
         self.__capture_policy = (
             capture_policy if capture_policy is not None else StoreCaptureCompletionPolicy()
         )
 
         self.__stall = StallPolicy()
-        self.__shadow: Optional[ShadowRecorder] = shadow
+        self.__projection: Optional[DirectivePolicy] = None
 
-    def __recorder(self) -> ShadowRecorder:
+    def __projector(self) -> DirectivePolicy:
         """
-        Return the shadow recorder, building the advancement trial lazily against the live context.
+        Build the task projection lazily against the live catalog.
         """
 
-        if self.__shadow is None:
-            self.__shadow = ShadowRecorder(
-                trial=AdvancementTrial(catalog=self.__context.catalog),
-            )
+        if self.__projection is None:
+            self.__projection = DirectivePolicy(catalog=self.__context.catalog)
 
-        return self.__shadow
+        return self.__projection
 
     async def evaluate(
         self,
@@ -132,11 +131,12 @@ class SubGoalEvaluator:
         emitted_kind = ActionKindResolver.resolve(action_type=step_result.step.action.action_type)
 
         if self.__requires_capture_completion(active=active):
-            decision = self.__capture_policy.evaluate(
+            gate_decision = self.__capture_policy.evaluate(
                 step_result=step_result,
                 capture_store=self.__context.capture_store,
             )
-            evidence = self.__capture_evidence(step_result=step_result, decision=decision)
+            evidence = self.__capture_evidence(step_result=step_result, decision=gate_decision)
+            advancement = self.__from_capture(decision=gate_decision)
         else:
             criterion_decision = await self.__observe_criterion(
                 active=active,
@@ -146,25 +146,11 @@ class SubGoalEvaluator:
 
             last_effect = agent_state.get_last_action_effect()
 
-            directive = agent_state.operator_directive
-            directive_kind = (
-                directive.kind
-                if directive is not None and agent_state.has_active_directive
-                else None
-            )
-
-            semantic_similarity = await self.__semantic_similarity(
-                sub_goal=active,
-                analysis=analysis,
-            )
-
             evidence = self.__context.reasoner.assess_completion(
                 sub_goal=active,
                 analysis=analysis,
                 effect=last_effect,
-                directive_kind=directive_kind,
                 execution_success=step_result.executed,
-                semantic_similarity=semantic_similarity,
                 criterion_decision=criterion_decision,
                 screen_changed=step_result.screen_changed,
                 screen_description=step_result.observation or step_result.step.action.target or "",
@@ -176,38 +162,29 @@ class SubGoalEvaluator:
                 step_result=step_result,
             )
 
-            decision = self.__gate.adjudicate(
-                evidence=evidence,
-                sub_goal=active,
-                action_kind=emitted_kind,
+            turn = TurnEvidence(
+                effect=reading,
+                binding=binding,
+                claim=evidence.claim,
+                action=evidence.action,
+                validation=analysis.validation,
+                stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
             )
-            self.__recorder().observe(
-                sub_goal=active,
-                evidence=evidence,
-                decision=decision,
-                action_kind=emitted_kind,
-                turn=step_result.step.step_number,
-                workflow_id=self.__context.workflow_id,
-                measured=TurnEvidence(
-                    effect=reading,
-                    binding=binding,
-                    claim=evidence.claim,
-                    action=evidence.action,
-                    verdict=agent_state.get_last_verdict(),
-                    validation=analysis.validation,
-                    stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
-                ),
+            advancement = self.__policy.decide(
+                task=self.__projector().project(sub_goal=active),
+                evidence=turn,
+                history=RetainHistory(consecutive=agent_state.subgoal_retain_streak),
             )
-            self.__log_gate_adjudicated(
+            self.__reconcile_streak(advancement=advancement)
+            self.__log_adjudicated(
                 active=active,
                 evidence=evidence,
-                decision=decision,
+                advancement=advancement,
                 effect=last_effect,
                 step_result=step_result,
-                action_kind=emitted_kind,
             )
 
-        if decision.outcome is GateOutcome.ADVANCE:
+        if advancement.kind in (AdvanceKind.ADVANCE, AdvanceKind.SATISFIED_PRIOR):
             signal = self.__build_storage_signal(
                 active=active,
                 analysis=analysis,
@@ -221,10 +198,17 @@ class SubGoalEvaluator:
                 accumulated=accumulated,
             )
 
+        if advancement.kind in (AdvanceKind.ESCALATE, AdvanceKind.UNSATISFIABLE):
+            return self.__escalate(
+                active=active,
+                advancement=advancement,
+                accumulated=accumulated,
+            )
+
         self.__log_retained(
             active=active,
             evidence=evidence,
-            decision=decision,
+            advancement=advancement,
             step_result=step_result,
         )
         return None
@@ -324,112 +308,76 @@ class SubGoalEvaluator:
         return CompletionEvidence(
             notes=(note,),
             screen=ScreenEvidence(evolved=False),
-            claim=ClaimEvidence(asserted=False, explained=False),
+            claim=ClaimEvidence(asserted=False),
             action=ActionEvidence(dispatched=False, executed=step_result.executed),
             validation=ValidationEvidence(executed=False),
         )
 
-    async def __semantic_similarity(
+    @staticmethod
+    def __from_capture(*, decision: GateDecision) -> Advancement:
+        """
+        Project a capture-policy gate decision onto the shared advancement vocabulary.
+        """
+
+        if decision.outcome is GateOutcome.ADVANCE:
+            return Advancement(kind=AdvanceKind.ADVANCE)
+
+        return Advancement(kind=AdvanceKind.RETAIN, reason=decision.retain_reason)
+
+    def __reconcile_streak(self, *, advancement: Advancement) -> None:
+        """
+        Persist the active sub-goal's retain streak so the backstop survives a checkpoint resume.
+        """
+
+        if advancement.kind is AdvanceKind.RETAIN:
+            self.__context.agent_state.record_subgoal_retain()
+            return
+
+        self.__context.agent_state.reset_subgoal_retain()
+
+    def __escalate(
         self,
         *,
-        sub_goal: SubGoal,
-        analysis: AnalysisResult,
-    ) -> Optional[float]:
+        active: SubGoal,
+        advancement: Advancement,
+        accumulated: List[StepResult],
+    ) -> IntentGraphState:
         """
-        Cosine similarity between rationale and sub-goal via embedding port + cache; ``None`` on any failure.
+        Terminate the run when the retain backstop is exhausted instead of looping.
         """
 
-        embedder = self.__context.embedder
-        cache = self.__context.embedding_cache
+        agent_state = self.__context.agent_state
+        reason = (
+            CompletionReason.UNSATISFIABLE
+            if advancement.kind is AdvanceKind.UNSATISFIABLE
+            else CompletionReason.STUCK
+        )
 
-        if cache is None or embedder is None:
-            logger.info(
-                "Semantic similarity unavailable; embedder or cache missing",
-                extra={
-                    "component": "graph.intent.completion",
-                    "event": "completion.semantic_similarity.unavailable",
-                    "cache.present": cache is not None,
-                    "embedder.present": embedder is not None,
-                },
-            )
-            return None
+        agent_state.reset_subgoal_retain()
+        agent_state.mark_complete(reason=reason.value)
 
-        rationale = (analysis.subgoal_completion_reason or analysis.reasoning or "").strip()
-        if not rationale:
-            logger.info(
-                "Semantic similarity skipped; rationale text is empty",
-                extra={
-                    "component": "graph.intent.completion",
-                    "event": "completion.semantic_similarity.empty_rationale",
-                    "sub_goal.index": sub_goal.index,
-                },
-            )
-            return None
-
-        try:
-            sub_goal_vector = await cache.get(text=sub_goal.description)
-            if sub_goal_vector is None:
-                logger.info(
-                    "Sub-goal embedding cache miss",
-                    extra={
-                        "component": "graph.intent.completion",
-                        "event": "completion.semantic_similarity.cache_miss",
-                        "sub_goal.index": sub_goal.index,
-                    },
-                )
-                return None
-            rationale_result = await embedder.embed(texts=(rationale,))
-        except asyncio.CancelledError:
-            raise
-        except Exception as exception:  # noqa: BLE001 - logged with kind + message
-            logger.warning(
-                "Semantic similarity scoring failed; falling back to legacy verifier",
-                extra={
-                    "component": "graph.intent.completion",
-                    "event": "completion.semantic_similarity.error",
-                    "sub_goal.index": sub_goal.index,
-                    "error.kind": type(exception).__name__,
-                    "error.message": str(exception),
-                },
-            )
-            return None
-
-        if not rationale_result.vectors:
-            logger.warning(
-                "Rationale embedding returned no vectors",
-                extra={
-                    "component": "graph.intent.completion",
-                    "event": "completion.semantic_similarity.empty_result",
-                    "sub_goal.index": sub_goal.index,
-                },
-            )
-            return None
-
-        try:
-            score = float(sub_goal_vector.cosine(other=rationale_result.vectors[0]))
-        except ValueError as exception:
-            logger.warning(
-                "Embedding vector dimension mismatch",
-                extra={
-                    "component": "graph.intent.completion",
-                    "event": "completion.semantic_similarity.dimension_mismatch",
-                    "sub_goal.index": sub_goal.index,
-                    "error.message": str(exception),
-                },
-            )
-            return None
-
-        logger.info(
-            "Semantic similarity resolved",
+        logger.error(
+            "Sub-goal retain backstop exhausted; terminating run",
             extra={
-                "component": "graph.intent.completion",
-                "event": "completion.semantic_similarity.resolved",
-                "similarity.score": score,
-                "sub_goal.index": sub_goal.index,
-                "rationale.length": len(rationale),
+                **self.__log_context(),
+                "sub_goal.index": active.index,
+                "sub_goal.kind": active.kind.value,
+                "advancement.kind": advancement.kind.value,
+                "completion.reason": reason.value,
+                "sub_goal.description": active.description[:80],
+                "event": "subgoal.escalated",
             },
         )
-        return score
+        return cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                IntentStateKey.VERIFY_MODE: None,
+                IntentStateKey.SHOULD_RETRY: False,
+                IntentStateKey.STEP_RESULTS: accumulated,
+                CommonStateKey.COMPLETION_REASON: reason.value,
+            },
+        )
 
     def __advance_or_complete(
         self,
@@ -584,7 +532,6 @@ class SubGoalEvaluator:
                 "sub_goal.kind": active.kind.value,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
                 "validation.executed": evidence.validation.executed,
                 "sub_goal.description": active.description[:80],
@@ -604,44 +551,37 @@ class SubGoalEvaluator:
             },
         )
 
-    def __log_gate_adjudicated(
+    def __log_adjudicated(
         self,
         *,
         active: SubGoal,
-        decision: GateDecision,
+        advancement: Advancement,
         step_result: StepResult,
-        action_kind: ActionKind,
         evidence: CompletionEvidence,
         effect: Optional[ActionEffect],
     ) -> None:
         """
-        Structured log: completion-gate decision for this turn, including which branch ratified an ADVANCE.
+        Structured log: advancement decision for this turn and the typed signals behind it.
         """
 
         logger.info(
-            "Completion gate adjudicated",
+            "Advancement adjudicated",
             extra={
                 **self.__log_context(),
                 "sub_goal.index": active.index,
                 "sub_goal.kind": active.kind.value,
-                "gate.outcome": decision.outcome.value,
+                "advancement.kind": advancement.kind.value,
+                "advancement.redispatch": advancement.redispatch,
                 "screen.evolved": evidence.screen.evolved,
                 "claim.asserted": evidence.claim.asserted,
-                "claim.explained": evidence.claim.explained,
                 "action.dispatched": evidence.action.dispatched,
                 "validation.executed": evidence.validation.executed,
                 "event": CompletionEvent.GATE_ADJUDICATED.value,
                 "step.screen_changed": step_result.screen_changed,
-                "gate.retain_reason": (
-                    decision.retain_reason.value if decision.retain_reason is not None else None
+                "advancement.reason": (
+                    advancement.reason.value if advancement.reason is not None else None
                 ),
-                "gate.advance_reason": self.__advance_reason(
-                    sub_goal=active,
-                    decision=decision,
-                    evidence=evidence,
-                    action_kind=action_kind,
-                ),
-                "action.kind": action_kind.value,
+                "retain.streak": self.__context.agent_state.subgoal_retain_streak,
                 "effect.status": (effect.status.value if effect is not None else None),
                 "veto.applied": self.__no_progress_vetoed(
                     effect=effect,
@@ -650,33 +590,6 @@ class SubGoalEvaluator:
                 ),
             },
         )
-
-    @staticmethod
-    def __advance_reason(
-        *,
-        sub_goal: SubGoal,
-        decision: GateDecision,
-        action_kind: ActionKind,
-        evidence: CompletionEvidence,
-    ) -> Optional[str]:
-        """
-        Tag an ADVANCE outcome with the branch that ratified it so RCA can distinguish strict vs implicit-completion.
-        """
-
-        if decision.outcome is not GateOutcome.ADVANCE:
-            return None
-
-        if (
-            not evidence.screen.evolved
-            and sub_goal.kind is SubGoalKind.ACTION
-            and action_kind is ActionKind.VALIDATION
-        ):
-            return AdvanceReason.VALIDATION_IMPLICIT_COMPLETION.value
-
-        if sub_goal.kind is SubGoalKind.VALIDATION and evidence.validation.executed:
-            return AdvanceReason.VALIDATION_ACTION.value
-
-        return AdvanceReason.STRICT_PATH.value
 
     @staticmethod
     def __no_progress_vetoed(
@@ -699,7 +612,7 @@ class SubGoalEvaluator:
         self,
         *,
         active: SubGoal,
-        decision: GateDecision,
+        advancement: Advancement,
         step_result: StepResult,
         evidence: CompletionEvidence,
     ) -> None:
@@ -718,8 +631,9 @@ class SubGoalEvaluator:
                 "event": CompletionEvent.SUBGOAL_RETAINED.value,
                 "step.screen_changed": step_result.screen_changed,
                 "planner.emitted_action_type": step_result.step.action.action_type.value,
-                "gate.retain_reason": (
-                    decision.retain_reason.value if decision.retain_reason is not None else None
+                "retain.streak": self.__context.agent_state.subgoal_retain_streak,
+                "advancement.reason": (
+                    advancement.reason.value if advancement.reason is not None else None
                 ),
             },
         )

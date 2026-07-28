@@ -715,7 +715,6 @@ class PostActionCompareEnrichmentSkipTest(unittest.IsolatedAsyncioTestCase):
         context.storage = MagicMock()
         context.storage.backend = None
         context.agent_state.step_count = 1
-        context.oracle.read = AsyncMock(return_value=None)
 
         post_capture = self.__capture()
         context.perception_port.capture = AsyncMock(return_value=post_capture)

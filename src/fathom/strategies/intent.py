@@ -254,10 +254,6 @@ class IntentStrategy:
 
             self.__graph_context.agent_state.set_sub_goals(sub_goals)
 
-            if self.__graph_context.embedding_cache is not None:
-                self.__graph_context.embedding_cache.warm(
-                    texts=tuple(goal.description for goal in sub_goals),
-                )
             sub_goal_payload = [
                 {
                     "index": goal.index,

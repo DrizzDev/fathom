@@ -45,7 +45,7 @@ class CorpusLoadTest(unittest.TestCase):
                     task=SubGoal(description="Open the notes list", index=1),
                     kind=ActionKind.NAVIGATION,
                     evidence=CompletionEvidence(
-                        claim=ClaimEvidence(asserted=False, explained=True),
+                        claim=ClaimEvidence(asserted=False),
                         action=ActionEvidence(dispatched=True, executed=True),
                         screen=ScreenEvidence(evolved=True),
                     ),

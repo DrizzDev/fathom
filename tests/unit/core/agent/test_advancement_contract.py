@@ -455,7 +455,7 @@ class AdvancementContractTest(unittest.TestCase):
                 completion=completion,
             ),
             evidence=TurnEvidence(
-                claim=ClaimEvidence(asserted=claim, explained=claim),
+                claim=ClaimEvidence(asserted=claim),
                 action=ActionEvidence(dispatched=dispatched, executed=dispatched),
                 effect=(
                     EffectReading(live=effect, trial=effect)

@@ -148,8 +148,7 @@ class CriterionObserver:
 
     Tri-state verdict (SATISFIED / UNSATISFIED / UNCLEAR) returned via
     :class:`CriterionDecision`. Logged for RCA on every turn but never gates
-    completion: the multi-signal :class:`CompletionGate` consumes this only
-    as an additive signal that cannot veto an otherwise-conclusive outcome.
+    completion; it is an additive signal that cannot veto an otherwise-conclusive outcome.
 
     Symbolic-then-LLM layering keeps cost low: a cheap token-overlap pass
     resolves trivial cases without an LLM call; the LLM judge runs only on

@@ -377,13 +377,12 @@ class PostAction:
                 ),
             )
 
-        verdict = await self.__context.oracle.read(
+        self.__context.oracle.observe(
             turn=context.step.step_number,
             workflow_id=self.__context.workflow_id,
             criterion=self.__criterion(),
             image=post_capture.image,
         )
-        self.__context.agent_state.record_verdict(verdict=verdict)
 
         # Post-action enrichment (OCR + icon + ensemble) was previously
         # re-run here on every turn; the next GROUND call rebuilds the same

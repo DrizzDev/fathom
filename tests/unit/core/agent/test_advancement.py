@@ -306,7 +306,7 @@ class AdvancementPolicyTest(unittest.TestCase):
         """
 
         return TurnEvidence(
-            claim=ClaimEvidence(asserted=claim, explained=claim),
+            claim=ClaimEvidence(asserted=claim),
             action=ActionEvidence(dispatched=dispatched, executed=dispatched),
             effect=EffectReading(live=trial, trial=trial) if trial is not None else None,
             verdict=verdict,
@@ -328,7 +328,7 @@ class AdvancementTrialTest(unittest.TestCase):
         self.trial = AdvancementTrial(catalog=CommandCatalogProvider().build())
         self.sub_goal = SubGoal(description="Open the notes list", index=1)
         self.loop_evidence = CompletionEvidence(
-            claim=ClaimEvidence(asserted=False, explained=True),
+            claim=ClaimEvidence(asserted=False),
             action=ActionEvidence(dispatched=True, executed=True),
             screen=ScreenEvidence(evolved=True),
         )
@@ -358,7 +358,7 @@ class AdvancementTrialTest(unittest.TestCase):
         """
 
         advancing = CompletionEvidence(
-            claim=ClaimEvidence(asserted=True, explained=True),
+            claim=ClaimEvidence(asserted=True),
             action=ActionEvidence(dispatched=True, executed=True),
             screen=ScreenEvidence(evolved=True),
         )
@@ -398,7 +398,7 @@ class AdvancementTrialTest(unittest.TestCase):
             action_kind=ActionKind.VALIDATION,
             evidence=self.loop_evidence,
             measured=TurnEvidence(
-                claim=ClaimEvidence(asserted=True, explained=True),
+                claim=ClaimEvidence(asserted=True),
                 action=ActionEvidence(dispatched=True, executed=True),
                 validation=Validation(subject="Note is listed", source=ValidationSource.COMMAND),
             ),
