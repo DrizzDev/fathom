@@ -165,7 +165,17 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "  the directive of the FINAL action -> 'tap', unless it contains a store/capture\n"
             "  clause that must be split out first.\n"
             "- A compound step that ends in validation (e.g. 'Go to cart and verify total')\n"
-            "  takes 'validate'."
+            "  takes 'validate'.\n"
+            "\n"
+            "PROOF FIELD (MANDATORY):\n"
+            "Each sub-goal must also carry a 'proof' field with exactly one of:\n"
+            "  DURABLE    -> the step mutates persistent state whose outcome must be\n"
+            "                observed before moving on (add to cart, pay, save, submit,\n"
+            "                delete, send, place order, toggle a persisted setting).\n"
+            "  TRANSIENT  -> the step only navigates or reveals state (open, tap through,\n"
+            "                scroll, read, focus a field).\n"
+            "- When uncertain, choose DURABLE: a wrong DURABLE costs one extra check;\n"
+            "  a wrong TRANSIENT can silently skip outcome verification."
         )
 
     @staticmethod
@@ -177,7 +187,8 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         return (
             "EXAMPLES:\n"
             'GOOD: User says "Tap the login button"\n'
-            '      -> {"description": "Tap the login button", "directive": "tap"}\n'
+            '      -> {"description": "Tap the login button", "directive": "tap",\n'
+            '          "proof": "TRANSIENT"}\n'
             "\n"
             "GOOD: User says \"Enter password 'test123'\"\n"
             '      -> {"description": "Enter password \'test123\'", "directive": "type"}\n'

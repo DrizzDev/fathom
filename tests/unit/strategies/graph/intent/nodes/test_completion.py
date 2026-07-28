@@ -419,8 +419,9 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         context = MagicMock(name="GraphContext")
         context.workflow_id = "run-test"
         context.agent_state.get_current_sub_goal.return_value = sub_goal
+        context.agent_state.get_last_verdict.return_value = None
+        context.agent_state.get_recent_effects.return_value = []
         context.agent_state.has_sub_goals.return_value = True
-        context.agent_state.last_delta_score = None
         context.agent_state.has_active_final_sub_goal.return_value = not has_more
         context.agent_state.mark_current_sub_goal_complete.return_value = has_more
         context.reasoner = _StubReasoner(evidence=evidence, signal=signal)

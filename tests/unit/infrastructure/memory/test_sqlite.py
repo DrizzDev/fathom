@@ -4,9 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import aiosqlite
+
 from fathom.constants import ActionType
+from fathom.constants.turn.binding import BindingState
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.schemas.actions import Action
+from fathom.schemas.effect import ActionEffectStatus
+from fathom.schemas.experience import Experience
 from fathom.schemas.screens import ScreenState
 
 
@@ -82,3 +87,40 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(knowledge["description"], "Swiggy home.")
         self.assertEqual(len(knowledge["previous_actions"]), 1)
+
+    async def test_typed_outcome_round_trips_through_the_store(self) -> None:
+        """
+        A stored typed outcome persists every reinforcement-bearing field.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.db"
+            provider = SQLiteMemoryProvider(database_path=path)
+
+            await provider.store_outcome(
+                experience=Experience(
+                    workflow="6cfc5fd2",
+                    session="exec-1",
+                    screen="b" * 16,
+                    action=ActionType.TAP,
+                    target="ADD button",
+                    executed=True,
+                    transitioned=ActionEffectStatus.PROGRESS,
+                    advanced=False,
+                    binding=BindingState.BOUND,
+                )
+            )
+
+            async with aiosqlite.connect(path) as db:
+                cursor = await db.execute(
+                    "SELECT workflow, action, executed, transitioned, advanced, binding FROM outcome"
+                )
+                rows = await cursor.fetchall()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "6cfc5fd2")
+        self.assertEqual(rows[0][1], "tap")
+        self.assertEqual(rows[0][2], 1)
+        self.assertEqual(rows[0][3], "progress")
+        self.assertEqual(rows[0][4], 0)
+        self.assertEqual(rows[0][5], "BOUND")

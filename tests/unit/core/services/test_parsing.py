@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from fathom.constants import ActionType, StepEvent
 from fathom.constants.completion import GateOutcome
 from fathom.constants.tools import StateNamespace
+from fathom.constants.turn.validation import ValidationSource
 from fathom.core.agent.completion import CompletionGate
 from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.agent.reasoner import Reasoner
@@ -480,6 +481,12 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
             result.action.validation_subject,
             "Coca-Cola Diet Coke and Sunfeast Dark fantasy are present",
         )
+        assert result.validation is not None
+        self.assertEqual(result.validation.source, ValidationSource.STATE)
+        self.assertEqual(
+            result.validation.subject,
+            "Coca-Cola Diet Coke and Sunfeast Dark fantasy are present",
+        )
 
     def test_verify_goal_sets_validation_subject_when_goal_is_not_complete(self) -> None:
         """
@@ -510,6 +517,9 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
             result.action.validation_subject,
             "Cart screen is visible.",
         )
+        assert result.validation is not None
+        self.assertEqual(result.validation.source, ValidationSource.GOAL)
+        self.assertEqual(result.validation.subject, "Cart screen is visible.")
 
     def test_verify_goal_falls_back_to_current_screen_for_validation_subject(self) -> None:
         """
@@ -959,3 +969,30 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_verify_goal_prefers_explicit_assertion_for_validation_subject(self) -> None:
+        """
+        A crisp assertion beats completion reasons and the screen description.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="verify_goal",
+                    args={
+                        "assistant_message": "The cart shows the item.",
+                        "goal_completed": False,
+                        "sub_goal_completed": True,
+                        "subgoal_completion_reason": "Item added.",
+                        "current_screen": "Cart screen",
+                        "assertion": "Cart contains Diet Coke x1",
+                        "evidence": "Cart badge shows 1.",
+                    },
+                )
+            )
+        )
+
+        assert result.validation is not None
+        self.assertEqual(result.validation.subject, "Cart contains Diet Coke x1")
+        self.assertEqual(result.action.validation_subject, "Cart contains Diet Coke x1")

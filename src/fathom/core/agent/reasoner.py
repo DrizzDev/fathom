@@ -15,7 +15,6 @@ from fathom.constants.reasoning import (
     ACTION_NEXT_PHASE_CONFIDENCE,
     COMPLETION_KEYWORDS,
     LATERAL_CREDIT_SIMILARITY_THRESHOLD,
-    MEANINGFUL_SCREEN_DELTA_FLOOR,
     NEXT_PHASE_KEYWORDS,
     OPENER_GOAL_WORDS,
     RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
@@ -173,12 +172,10 @@ class Reasoner:
         sub_goal_description: str,
         *,
         screen_changed: bool = False,
-        delta_score: Optional[float] = None,
         screen_description: Optional[str] = None,
     ) -> SubGoalCompletionSignal:
         """
         Multi-signal verification for sub-goal completion.
-        ``delta_score`` gates screen verification by magnitude; ``screen_changed`` is a boolean fallback when no magnitude is available.
         """
 
         evidence: List[str] = []
@@ -212,10 +209,8 @@ class Reasoner:
         if action_executed:
             evidence.append(f"Action executed: {action.action_type.value}")
 
-        # Flag 4: post-action screen change exceeded the meaningful-delta floor.
-        # Magnitude path rejects animation noise; boolean path is the fallback.
+        # Flag 4: post-action screen change was observed.
         screen_verified, screen_evidence = self.__verify_screen_change(
-            delta_score=delta_score,
             screen_changed=screen_changed,
         )
         if screen_verified:
@@ -250,7 +245,6 @@ class Reasoner:
                 "action_executed": action_executed,
                 "screen_verified": screen_verified,
                 "signal.count": signal.count_signals(),
-                "delta_score": delta_score,
                 "similarity": round(similarity, 3),
                 "llm_confidence": round(llm_confidence, 3),
             },
@@ -264,7 +258,6 @@ class Reasoner:
         screen_changed: bool,
         execution_success: bool,
         analysis: AnalysisResult,
-        delta_score: Optional[float] = None,
         effect: Optional[ActionEffect] = None,
         screen_description: Optional[str] = None,
         semantic_similarity: Optional[float] = None,
@@ -357,7 +350,6 @@ class Reasoner:
 
         evolved, screen_note = self.__verify_screen_change(
             effect=effect,
-            delta_score=delta_score,
             screen_changed=screen_changed,
         )
 
@@ -465,22 +457,14 @@ class Reasoner:
     def __verify_screen_change(
         *,
         screen_changed: bool,
-        delta_score: Optional[float],
         effect: Optional[ActionEffect] = None,
     ) -> Tuple[bool, str]:
         """
         Return (verified, evidence) for the screen-change verification; NO_PROGRESS effect short-circuits to false.
-        Magnitude path takes precedence over the boolean fallback when neither veto fires.
         """
 
         if effect is not None and effect.status is ActionEffectStatus.NO_PROGRESS:
             return (False, "effect.status=no_progress vetoed screen.evolved")
-
-        if delta_score is not None:
-            if delta_score >= MEANINGFUL_SCREEN_DELTA_FLOOR:
-                return True, f"Screen changed meaningfully (delta={delta_score:.2f})"
-
-            return False, f"delta {delta_score:.2f} below floor {MEANINGFUL_SCREEN_DELTA_FLOOR}"
 
         if screen_changed:
             return True, "Screen changed after action execution"

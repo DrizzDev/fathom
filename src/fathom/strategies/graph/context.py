@@ -10,6 +10,7 @@ from fathom.adapters.evidence.history import HistoryEvidenceSource
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
+from fathom.adapters.oracle.vision import VisionOracle
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.adapters.script.refresher import BaselineRefresher
 from fathom.authoring.adapters.artifacts import FileAuthoringArtifactProvider
@@ -57,6 +58,7 @@ from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
+from fathom.core.services.oracle import OracleRecorder
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.resolution import ReferenceResolutionService
@@ -371,6 +373,10 @@ class GraphContext:
         )
 
         self.__abort_detector = abort_detector or AbortDetectorFactory.build(llm=llm)
+
+        self.__oracle = OracleRecorder(
+            oracle=VisionOracle(llm=llm) if configuration.oracle.enabled else None,
+        )
 
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
@@ -771,6 +777,14 @@ class GraphContext:
         """
 
         return self.__catalog
+
+    @property
+    def oracle(self) -> OracleRecorder:
+        """
+        Returns the shadow criterion-oracle recorder.
+        """
+
+        return self.__oracle
 
     @property
     def capture_store(self) -> CaptureStore:

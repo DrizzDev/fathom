@@ -26,6 +26,7 @@ from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
+from fathom.schemas.criterion import Verdict
 from fathom.schemas.directive import OperatorDirective
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
@@ -108,12 +109,8 @@ class AgentState:
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
 
-        # Legacy delta-context fields. Kept as immutable defaults so the
-        # checkpoint round-trip continues to accept payloads written by
-        # earlier versions of the schema. No code path mutates them
-        # any more — the signal lives in runtime effect history instead.
-        self.__low_delta_streak: int = 0
-        self.__last_delta_score: Optional[float] = None
+        # Shadow oracle verdict for the current turn; refreshed every OBSERVE, never drives live decisions.
+        self.__last_verdict: Optional[Verdict] = None
 
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
@@ -266,14 +263,6 @@ class AgentState:
         current = self.get_current_sub_goal()
         if current is not None and current.deferral_count != 0:
             current.deferral_count = 0
-
-    @property
-    def last_delta_score(self) -> Optional[float]:
-        """
-        Most recent post-action screen-change magnitude in [0.0, 1.0].
-        """
-
-        return self.__last_delta_score
 
     def bump_realignment_budget(self) -> None:
         """
@@ -1127,6 +1116,20 @@ class AgentState:
 
         return self.__runtime.effects.last_effect()
 
+    def record_verdict(self, *, verdict: Optional[Verdict]) -> None:
+        """
+        Store this turn's shadow oracle verdict (or None); refreshed every OBSERVE so it never goes stale.
+        """
+
+        self.__last_verdict = verdict
+
+    def get_last_verdict(self) -> Optional[Verdict]:
+        """
+        Return the current turn's shadow oracle verdict, or None when the oracle is disabled or unread.
+        """
+
+        return self.__last_verdict
+
     def build_loop_observation(self) -> Optional[LoopObservation]:
         """
         Construct a :class:`LoopObservation` summarizing the current
@@ -1434,8 +1437,6 @@ class AgentState:
             "completion_reason": self.__completion_reason,
             "realignment_budget": self.__runtime.realignment.budget,
             "realignment_state": self.__runtime.realignment.to_state(),
-            "last_delta_score": self.__last_delta_score,
-            "low_delta_streak": self.__low_delta_streak,
             "seen_screens": [screen.model_dump() for screen in self.__runtime.screen.seen],
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
@@ -1473,10 +1474,8 @@ class AgentState:
         completion_reason: Optional[str],
         seen_screens: List[Dict[str, Any]],
         *,
-        low_delta_streak: int = 0,
         realignment_count: int = 0,
         current_sub_goal_index: int = 0,
-        last_delta_score: Optional[float] = None,
         sub_goals: Optional[List[Dict[str, Any]]] = None,
         loop_detector_state: Optional[Dict[str, Any]] = None,
         recent_effects: Optional[List[Dict[str, Any]]] = None,
@@ -1511,8 +1510,6 @@ class AgentState:
             for _ in range(max(0, realignment_count - self.__runtime.realignment.count)):
                 self.__runtime.realignment.record()
 
-        self.__last_delta_score = last_delta_score
-        self.__low_delta_streak = max(0, low_delta_streak)
         self.__sub_goal_action_count = max(0, sub_goal_action_count)
 
         self.__runtime.screen.load_seen(
@@ -1590,16 +1587,8 @@ class AgentState:
 
         is_complete = bool(data.get("is_complete", False))
         realignment_count = int(cast("int", data.get("realignment_count", 0)))
-        low_delta_streak = int(cast("int", data.get("low_delta_streak", 0)))
-
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
-        last_delta_raw = data.get("last_delta_score")
-        last_delta_score = (
-            float(cast("float", last_delta_raw))
-            if isinstance(last_delta_raw, (int, float))
-            else None
-        )
 
         seen_screens: List[Dict[str, Any]] = []
         screens_value = data.get("seen_screens")
@@ -1676,8 +1665,6 @@ class AgentState:
             step_count=step_count,
             is_complete=is_complete,
             seen_screens=seen_screens,
-            low_delta_streak=low_delta_streak,
-            last_delta_score=last_delta_score,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
             realignment_state=realignment_state,

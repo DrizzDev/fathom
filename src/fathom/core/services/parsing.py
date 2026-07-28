@@ -31,6 +31,7 @@ from fathom.schemas.tools import (
     ToolDiagnostic,
     ToolResponse,
 )
+from fathom.schemas.validation import Validation
 
 logger = getLogger(__name__)
 
@@ -568,10 +569,11 @@ class ToolResponseParser:
         screen = args.current_screen
 
         action_type = ActionType.COMPLETE if completed else ActionType.VALIDATE
-        validation_subject = self.__first_text(
-            args.subgoal_completion_reason,
-            args.goal_completion_reason,
-            screen,
+        validation = Validation.goal(
+            assertion=args.assertion,
+            subgoal=args.subgoal_completion_reason,
+            goal=args.goal_completion_reason,
+            screen=screen,
         )
         result = AnalysisResult(
             action=Action(
@@ -580,8 +582,9 @@ class ToolResponseParser:
                 target=screen,
                 event_type=StepEvent.VALIDATION,
                 action_type=action_type,
-                validation_subject=validation_subject,
+                validation_subject=validation.subject if validation is not None else None,
             ),
+            validation=validation,
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
@@ -601,18 +604,6 @@ class ToolResponseParser:
             raw_goal_completed=raw_goal_completed,
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
-
-    @staticmethod
-    def __first_text(*values: Optional[str]) -> str:
-        """
-        Return the first non-empty text value.
-        """
-
-        for value in values:
-            if value and (text := value.strip()):
-                return text
-
-        return ""
 
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
         """
@@ -638,6 +629,7 @@ class ToolResponseParser:
         if args.condition_met is not None:
             metadata["condition_met"] = args.condition_met
 
+        validation = Validation.state(condition=condition)
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
@@ -645,8 +637,9 @@ class ToolResponseParser:
                 event_type=StepEvent.VALIDATION,
                 action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
-                validation_subject=condition.strip(),
+                validation_subject=validation.subject if validation is not None else None,
             ),
+            validation=validation,
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
@@ -741,6 +734,11 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=message,
             metadata={},
+            validation=(
+                Validation.command(subject=data.validation_subject)
+                if action_type is ActionType.VALIDATE
+                else None
+            ),
             tool_response=ToolResponse(
                 command=ToolCommand(action_type=action_type, payload=data),
                 updates=self.__updates(memory_updates=args.memory_updates),

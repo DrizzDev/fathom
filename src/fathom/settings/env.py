@@ -245,6 +245,8 @@ class FathomSettings(BaseSettings):
     # Perception subsystem toggles. CV stays off by default because its
     # anonymous visual-control boxes are still too noisy for production
     # grounding and can pollute both prompts and debug artifacts.
+    oracle_enabled: bool = Field(default=True, alias="FATHOM_ORACLE_ENABLED")
+
     observation_ocr_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OCR")
     observation_cv_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_CV")
     observation_icon_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_ICON")

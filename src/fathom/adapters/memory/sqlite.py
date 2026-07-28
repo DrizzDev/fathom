@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from fathom.interfaces import ILedger, IMemoryProvider
 from fathom.interfaces.memory import MemoryPort
 from fathom.schemas.actions import Action
+from fathom.schemas.experience import Experience
 from fathom.schemas.screens import ScreenState
 
 
@@ -48,6 +49,13 @@ class SQLiteMemory(MemoryPort):
         """
 
         await self.__provider.store_observation(screen=screen, description=description)
+
+    async def store_outcome(self, *, experience: Experience) -> None:
+        """
+        Store the typed outcome of one executed action.
+        """
+
+        await self.__provider.store_outcome(experience=experience)
 
     async def store_experience(self, *, visual_hash: str, action: Action, success: bool) -> None:
         """

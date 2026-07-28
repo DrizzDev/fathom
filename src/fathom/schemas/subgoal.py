@@ -4,9 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from fathom.constants import ActionType
-from fathom.constants.subgoal import (
-    DEFAULT_SUB_GOAL_MAX_STEPS,
-)
+from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS, TaskProof
 
 
 class SubGoalStatus(StrEnum):
@@ -50,6 +48,13 @@ class SubGoal(BaseModel):
             "against this value to detect divergence. Optional only for "
             "backward compatibility with checkpoints written before the "
             "directive contract existed; new decompositions always populate it."
+        ),
+    )
+    proof: Optional[TaskProof] = Field(
+        default=None,
+        description=(
+            "Decomposer-declared proof requirement; None on legacy decompositions "
+            "written before the typed contract existed."
         ),
     )
     status: SubGoalStatus = Field(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Final, List, Optional, Tuple, cast
 
@@ -20,6 +21,9 @@ from fathom.constants.state import (
 )
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import FathomError
+from fathom.schemas.binding import Binding
+from fathom.schemas.effect import ActionEffectStatus, EffectReading
+from fathom.schemas.experience import Experience
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.recording import (
     ActionSummary,
@@ -54,6 +58,7 @@ class RecordNode:
         """
 
         self.__provider = provider
+        self.__finished: Optional[float] = None
         self.__verification_modes = VerificationModePolicy()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
@@ -137,6 +142,7 @@ class RecordNode:
         try:
             # Record in agent state (internal bookkeeping, always done)
             self.__provider.context.agent_state.record_step(result=step_result)
+            self.__log_cadence(state=state, step_result=step_result)
             await self.__record_step_finished(result=step_result, state=state)
 
             # Accumulate step results in graph state so MemorySaver checkpoints them.
@@ -370,11 +376,21 @@ class RecordNode:
                 if isinstance(screen_observation_raw, ScreenObservation)
                 else None
             )
+            binding_raw = state.get(IntentStateKey.BINDING)
+            reading_raw = state.get(IntentStateKey.EFFECT_READING)
+            binding = binding_raw if isinstance(binding_raw, Binding) else None
             subgoal_result = await self.__provider.completion.evaluate(
                 plan=execution_plan,
                 step_result=step_result,
                 accumulated=accumulated_step_results,
                 observation=screen_observation,
+                binding=binding,
+                reading=reading_raw if isinstance(reading_raw, EffectReading) else None,
+            )
+            await self.__store_outcome(
+                step_result=step_result,
+                binding=binding,
+                advanced=subgoal_result is not None,
             )
             if subgoal_result is not None:
                 self.__provider.persistence.persist(result=subgoal_result)
@@ -981,6 +997,71 @@ class RecordNode:
             },
         )
         return tuple(recorded)
+
+    def __log_cadence(self, *, state: IntentGraphState, step_result: StepResult) -> None:
+        """
+        Emit the per-step duration breakdown so inter-step overhead is measurable without reconstruction.
+        """
+
+        now = time.monotonic()
+        gap = now - self.__finished if self.__finished is not None else None
+        self.__finished = now
+
+        logger.info(
+            "Step cadence recorded",
+            extra={
+                "component": "graph.intent.record",
+                "event": "record.step.cadence",
+                "workflow.id": self.__provider.context.workflow_id,
+                "step.number": step_result.step.step_number,
+                "step.duration": step_result.duration / 1000.0,
+                "cadence.gap": round(gap, 3) if gap is not None else None,
+                "duration.analysis": state.get(CommonStateKey.ANALYSIS_DURATION),
+                "duration.grounding": state.get(CommonStateKey.GROUNDING_DURATION),
+                "duration.execution": state.get(CommonStateKey.EXECUTION_DURATION),
+            },
+        )
+
+    async def __store_outcome(
+        self,
+        *,
+        step_result: StepResult,
+        binding: Optional[Binding],
+        advanced: bool,
+    ) -> None:
+        """
+        Persist the typed outcome of this turn's action; storage failures never break recording.
+        """
+
+        effect = self.__provider.context.agent_state.get_last_action_effect()
+
+        try:
+            await self.__provider.context.memory.store_outcome(
+                experience=Experience(
+                    workflow=self.__provider.context.workflow_id,
+                    session=self.__provider.context.execution_id,
+                    screen=step_result.pre_hash,
+                    action=step_result.step.action.action_type,
+                    target=step_result.step.action.target or "",
+                    executed=step_result.executed,
+                    transitioned=(
+                        effect.status if effect is not None else ActionEffectStatus.UNCERTAIN
+                    ),
+                    advanced=advanced,
+                    binding=binding.state if binding is not None else None,
+                ),
+            )
+        except Exception as exception:
+            logger.warning(
+                "Typed outcome store failed; recording unaffected",
+                extra={
+                    "component": "graph.intent.record",
+                    "event": "record.outcome.failed",
+                    "workflow.id": self.__provider.context.workflow_id,
+                    "exception.type": type(exception).__name__,
+                    "exception.message": str(exception),
+                },
+            )
 
     @staticmethod
     def __completion_claim_reason(*, reason: Optional[str]) -> str:

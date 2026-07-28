@@ -10,6 +10,7 @@ from fathom.constants.completion import (
 )
 from fathom.schemas.completion import CompletionEvidence, GateDecision
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.turn import TurnEvidence
 from fathom.schemas.vision import ActionKind
 
 
@@ -33,9 +34,11 @@ class CompletionGate:
         sub_goal: SubGoal,
         action_kind: ActionKind,
         evidence: CompletionEvidence,
+        measured: Optional[TurnEvidence] = None,
     ) -> GateDecision:
         """
         Return the gate decision (outcome plus diagnostic retain reason) for this turn.
+        The measured channel is accepted for seam compatibility; this gate does not read it.
         """
 
         effective = evidence.action.dispatched and evidence.screen.evolved

@@ -511,6 +511,14 @@ class ToolRegistry:
                         "type": "STRING",
                         "description": "The actual screen currently displayed.",
                     },
+                    "assertion": {
+                        "type": "STRING",
+                        "description": (
+                            "Crisp observable condition this verification asserts on the current "
+                            "screen (e.g. 'Cart contains Diet Coke x1'). Prefer a checkable "
+                            "condition over a screen description."
+                        ),
+                    },
                     "evidence": {
                         "type": "STRING",
                         "description": "Visual evidence proving goal completion.",

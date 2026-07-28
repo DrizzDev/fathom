@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from logging import getLogger
 from typing import Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, cast
 
+import structlog
 from langchain_core.runnables import RunnableConfig
 
 from fathom.authoring.application import StepDraftComposer
@@ -17,12 +18,13 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.graph import NodeName
 from fathom.constants.state import (
-    TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
     RunOutcome,
 )
+from fathom.constants.turn.termination import TerminationStatus
+from fathom.core.agent.termination import TerminationResolver
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import (
@@ -219,6 +221,10 @@ class IntentStrategy:
         stack = AsyncExitStack()
         budgets = self.__graph_context.configuration.intent.finalization
 
+        # Bind the run identity so every log this run emits — including the stdlib
+        # LoopDetector logs on the shared device stream — carries workflow.id.
+        structlog.contextvars.bind_contextvars(**{"workflow.id": self.__workflow_id})
+
         try:
             checkpointer: LangGraphCheckpointer = await stack.enter_async_context(
                 self.__checkpoint_store.open(workflow_id=self.__workflow_id)
@@ -314,6 +320,8 @@ class IntentStrategy:
             )
 
         finally:
+            structlog.contextvars.unbind_contextvars("workflow.id")
+
             await AbandonablePhase(
                 workflow_id=self.__workflow_id,
                 timeout=budgets.graph.checkpointer_close,
@@ -531,23 +539,36 @@ class IntentStrategy:
             )
             return None
 
-    @staticmethod
     def __resolve_script_outcome(
-        *, run_outcome: RunOutcome, final_state: Optional[Any]
+        self, *, run_outcome: RunOutcome, final_state: Optional[Any]
     ) -> RunOutcome:
         """
-        Derive the script event outcome from the terminal graph state when it is available.
+        Derive the script event outcome from the honest termination status, resolved in one place.
         """
 
-        if run_outcome is not RunOutcome.COMPLETED or final_state is None:
-            return run_outcome
-
         completion_reason = (
-            final_state.values.get(CommonStateKey.COMPLETION_REASON)
-            or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
-            or final_state.values.get("completion_reason")
+            (
+                final_state.values.get(CommonStateKey.COMPLETION_REASON)
+                or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
+                or final_state.values.get("completion_reason")
+            )
+            if final_state is not None
+            else None
         )
-        if completion_reason in TERMINAL_COMPLETION_REASONS:
+        status = TerminationResolver().resolve(outcome=run_outcome, reason=completion_reason)
+
+        logger.info(
+            "Termination resolved",
+            extra={
+                "event": "fathom.intent.termination.resolved",
+                "workflow.id": self.__workflow_id,
+                "termination.status": status.value,
+                "termination.reason": completion_reason,
+                "run.outcome": run_outcome.value,
+            },
+        )
+
+        if run_outcome is RunOutcome.COMPLETED and status is not TerminationStatus.COMPLETED:
             return RunOutcome.FAILED
 
         return run_outcome

@@ -38,6 +38,7 @@ class CompletionReason(StrEnum):
     NOT_EXECUTABLE = "Request is not an executable UI task"
     RETRY_BUDGET_EXHAUSTED = "Planner retry budget exhausted"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
+    UNSATISFIABLE = "Unsatisfiable: criterion observed refuted"
 
 
 class VerifyMode(StrEnum):
@@ -57,6 +58,7 @@ TERMINAL_COMPLETION_REASONS: Final[Tuple[str, ...]] = (
     CompletionReason.FAILED.value,
     CompletionReason.MAX_STEPS.value,
     CompletionReason.CANCELLED.value,
+    CompletionReason.UNSATISFIABLE.value,
     CompletionReason.ACTION_BLOCKED.value,
     CompletionReason.OPERATOR_ABORTED.value,
     CompletionReason.INTERVENTION_REQUIRED.value,
@@ -130,6 +132,10 @@ class IntentStateKey(StrEnum):
 
     # Execution coordination across SUPERVISE / EXECUTE / OBSERVE
     EXECUTION_CONTEXT = "EXECUTION_CONTEXT"
+
+    # Measured evidence carried to the completion turn
+    BINDING = "BINDING"
+    EFFECT_READING = "EFFECT_READING"
 
     # Sub-goal state propagation (for global checkpoint persistence)
     CURRENT_SUB_GOAL_INDEX = "CURRENT_SUB_GOAL_INDEX"

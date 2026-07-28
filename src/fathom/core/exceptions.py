@@ -297,6 +297,17 @@ class HITLNotAvailableError(FathomError):
         self.workflow_id = workflow_id
 
 
+class HITLTimeoutError(FathomError):
+    """
+    Raised when an interactive ask exhausts its deadline without a human response.
+    """
+
+    def __init__(self, *, workflow_id: Optional[str] = None) -> None:
+        super().__init__("HITL ask deadline exhausted without a response", retryable=False)
+
+        self.workflow_id = workflow_id
+
+
 class FinalizationTimeoutError(FathomError):
     """
     Post-terminal finalization phase exceeded its allotted timeout.

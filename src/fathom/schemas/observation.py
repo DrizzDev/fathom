@@ -132,6 +132,13 @@ class PerceivedElement(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="Provider confidence.")
     text: Optional[str] = Field(default=None, description="Visible or accessibility text.")
     tappable: bool = Field(description="Whether the element can be used as an action target.")
+    interactive: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Parser-declared interactivity hint from the source hierarchy; None when the "
+            "source declares nothing. A hint for grounding, never ground truth on its own."
+        ),
+    )
 
     parent: Optional[str] = Field(default=None, description="Parent element identifier.")
     label_id: Optional[str] = Field(

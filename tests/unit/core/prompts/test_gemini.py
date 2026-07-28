@@ -53,3 +53,28 @@ class GeminiPromptBuilderTest(unittest.TestCase):
         self.assertIn("Continue working on the active sub-goal", user_context)
         self.assertIn("{'reason': 'modal still visible'}", user_context)
         self.assertNotIn("when the screen still needs a change", user_context)
+
+    def test_durable_step_prompt_demands_visible_outcome_before_completion(self) -> None:
+        """
+        A durable sub-goal instructs the model not to claim completion until the result is visible.
+        """
+
+        durable = GeminiPromptBuilder().build_user_context(
+            sub_goal_info={
+                "index": 1,
+                "total": 3,
+                "description": "Add Diet Coke to the cart",
+                "durable": True,
+            },
+        )
+        transient = GeminiPromptBuilder().build_user_context(
+            sub_goal_info={
+                "index": 1,
+                "total": 3,
+                "description": "Open the cart",
+                "durable": False,
+            },
+        )
+
+        self.assertIn("VISIBLE on screen", durable)
+        self.assertNotIn("VISIBLE on screen", transient)

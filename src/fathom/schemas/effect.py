@@ -15,6 +15,7 @@ from fathom.constants.screen import (
     ACTION_EFFECT_PROGRESS_SCROLL_DISTANCE_PX_ABOVE,
     ACTION_EFFECT_PROGRESS_SSIM_BELOW,
 )
+from fathom.schemas.base.common import SealedModel
 from fathom.schemas.screens import ScreenDiff
 
 
@@ -47,8 +48,6 @@ class ActionEffectStatus(StrEnum):
     """
     Coarse classification of what an action did to the screen.
 
-    Three values are sufficient for downstream consumers:
-
     - ``PROGRESS``: the screen visibly moved forward (significant pHash
       jump, low SSIM, large content diff, OR meaningful scroll).
     - ``NO_PROGRESS``: every available signal indicates the screen did
@@ -56,10 +55,13 @@ class ActionEffectStatus(StrEnum):
     - ``UNCERTAIN``: signals are mixed; some indicate change, others do
       not. The agent should treat this as "ambiguous outcome" rather
       than "no effect".
+    - ``REGRESSION``: the foreground left the target application; produced
+      only by the direction-aware trial classifier, never by the live path.
     """
 
     PROGRESS = "progress"
     UNCERTAIN = "uncertain"
+    REGRESSION = "regression"
     NO_PROGRESS = "no_progress"
 
 
@@ -289,3 +291,32 @@ class ActionEffect(BaseModel):
             available += 1
 
         return available
+
+
+class EffectReading(SealedModel):
+    """
+    Direction-aware trial facets computed alongside the live effect classification.
+    """
+
+    live: ActionEffectStatus = Field(description="Status the live classifier produced this turn.")
+    trial: ActionEffectStatus = Field(
+        description="Status the direction-aware classifier would have produced."
+    )
+
+    scoped: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Whether changed regions covered enough of the action-target region; "
+            "None when the diff or target geometry was unavailable."
+        ),
+    )
+    departed: Optional[bool] = Field(
+        default=None,
+        description="Whether the foreground left the target application; None when unknown.",
+    )
+    overlap: Optional[float] = Field(
+        ge=0.0,
+        le=1.0,
+        default=None,
+        description="Largest fraction of the target region covered by one changed region.",
+    )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, Optional, Tuple, Union
 
+from fathom.schemas.configuration import OracleConfiguration
 from fathom.schemas.localization import EnsembleMemberName
 from fathom.schemas.perception import (
     CvConfiguration,
@@ -36,6 +37,13 @@ class RuntimeConfigLoader:
         """
 
         self.__settings = settings if settings is not None else FathomSettings()
+
+    def oracle(self) -> OracleConfiguration:
+        """
+        Resolve the shadow criterion-oracle configuration from settings.
+        """
+
+        return OracleConfiguration(enabled=self.__settings.oracle_enabled)
 
     def perception(self) -> PerceptionConfiguration:
         """

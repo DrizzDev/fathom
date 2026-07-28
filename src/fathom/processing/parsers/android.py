@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET  # nosec
@@ -156,19 +156,19 @@ class AndroidParser(PlatformParser):
         has_id = bool(metadata.get("resource-id", ""))
         has_description = bool(str(metadata.get("content-desc", "")).strip())
 
+        is_clickable = self.__declared_interactive(metadata=metadata) is True
         is_focusable = str(metadata.get("focusable", "false")).lower() == "true"
-        is_clickable = str(metadata.get("clickable", "false")).lower() == "true"
         is_scrollable = str(metadata.get("scrollable", "false")).lower() == "true"
 
         return (
-            kind in self.__GENERIC_CONTAINER_CLASSES
+            not has_id
             and not has_text
             and not is_enabled
             and not is_focusable
             and not is_clickable
             and not is_scrollable
-            and not has_id
             and not has_description
+            and kind in self.__GENERIC_CONTAINER_CLASSES
         )
 
     def __is_tappable(self, element: LabeledElement) -> bool:
@@ -183,9 +183,20 @@ class AndroidParser(PlatformParser):
             self.__is_typeable(element=element)
             or bool(metadata.get("resource-id"))
             or kind in self.__TAPPABLE_CLASSES
-            or str(metadata.get("clickable")).lower() == "true"
+            or self.__declared_interactive(metadata=metadata) is True
             or bool(str(metadata.get("content-desc", "")).strip())
         )
+
+    @staticmethod
+    def __declared_interactive(*, metadata: Dict[str, Any]) -> Optional[bool]:
+        """
+        Interpret the hierarchy's clickable declaration as a tri-state hint, None when absent.
+        """
+
+        if (value := str(metadata.get("clickable", "")).lower()) == "true":
+            return True
+
+        return False if value == "false" else None
 
     def __is_typeable(self, element: LabeledElement) -> bool:
         """
@@ -333,6 +344,7 @@ class AndroidParser(PlatformParser):
                         color="",
                         attributes=metadata,
                         bounds=UIBounds(x1=x1, y1=y1, x2=x2, y2=y2),
+                        interactive=self.__declared_interactive(metadata=metadata),
                     )
                 )
 

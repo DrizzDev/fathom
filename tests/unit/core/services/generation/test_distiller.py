@@ -345,6 +345,9 @@ class DistillerTest(unittest.TestCase):
         The recorded Meesho loop drops recovery, collapses inside the region, and flags partial.
         """
 
+        if not self.__fixture().exists():
+            self.skipTest("Meesho loop history fixture absent (fixtures are gitignored).")
+
         payload = json.loads(self.__fixture().read_text())
         records = tuple(StepRecord.model_validate(item) for item in payload["history"])
 

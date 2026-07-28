@@ -4,8 +4,8 @@ from typing import List
 
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.screen import LOOP_DETECTOR_WINDOW_SIZE, LOOP_REPETITION_THRESHOLD
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import LoopDetector
 
 
 def _screen(visual_hash: str, *, activity: str = "com.example.app") -> ScreenState:

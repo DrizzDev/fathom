@@ -377,6 +377,14 @@ class PostAction:
                 ),
             )
 
+        verdict = await self.__context.oracle.read(
+            turn=context.step.step_number,
+            workflow_id=self.__context.workflow_id,
+            criterion=self.__criterion(),
+            image=post_capture.image,
+        )
+        self.__context.agent_state.record_verdict(verdict=verdict)
+
         # Post-action enrichment (OCR + icon + ensemble) was previously
         # re-run here on every turn; the next GROUND call rebuilds the same
         # observation from a fresh capture before any planner reads it, so
@@ -748,6 +756,14 @@ class PostAction:
             return backend
 
         return StorageBackend.LOCAL
+
+    def __criterion(self) -> Optional[str]:
+        """
+        Return the active sub-goal's criterion text when present.
+        """
+
+        sub_goal = self.__context.agent_state.get_current_sub_goal()
+        return sub_goal.criterion if sub_goal is not None else None
 
     def __log_context(self) -> Dict[str, Any]:
         """

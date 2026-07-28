@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio  # noqa: TC003 — used at runtime for Task types
 import contextlib
 import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Set, TypedDict
+from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
@@ -41,6 +40,7 @@ class SubGoalContext(TypedDict):
     index: int
     total: int
     description: str
+    durable: NotRequired[bool]
 
 
 class VisionService:
@@ -70,7 +70,6 @@ class VisionService:
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__parser = ToolResponseParser()
-        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
         self.__capabilities = capabilities
         self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
@@ -463,7 +462,7 @@ class VisionService:
         current_screen_hash: str,
     ) -> List[Dict[str, Any]]:
         """
-        Return successful actions from this workflow on the current screen.
+        Return actions dispatched by this workflow on the current screen; dispatch is not outcome proof.
         """
 
         if not isinstance(trace, list):
@@ -492,9 +491,8 @@ class VisionService:
                 continue
             actions.append(
                 {
-                    "success": True,
-                    "action": action.get("action_type"),
                     "target": str(target),
+                    "action": action.get("action_type"),
                 }
             )
 

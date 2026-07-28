@@ -338,26 +338,23 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
                 self.assertTrue(signal.success_indicator)
                 self.assertIn(action_type.value, signal.evidence)
 
-    def test_screen_evolved_via_delta_score_above_floor(self) -> None:
+    def test_screen_evolved_tracks_screen_changed(self) -> None:
         """
-        delta_score above the meaningful-delta floor → screen.evolved=True even
-        when screen_changed=False. Critical for counter-style mutations where
-        the screen layout is mostly identical but a text value changed.
+        screen_changed=True → screen.evolved=True.
         """
 
         evidence = self.__reasoner().assess_completion(
             execution_success=True,
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
-            screen_changed=False,
-            delta_score=1.0,
+            screen_changed=True,
         )
 
         self.assertTrue(evidence.screen.evolved)
 
-    def test_screen_evolved_false_when_both_signals_negative(self) -> None:
+    def test_screen_evolved_false_without_screen_change(self) -> None:
         """
-        No screen_changed, delta_score below floor → screen.evolved=False.
+        screen_changed=False → screen.evolved=False.
         """
 
         evidence = self.__reasoner().assess_completion(
@@ -365,7 +362,6 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=False,
-            delta_score=0.0,
         )
 
         self.assertFalse(evidence.screen.evolved)
@@ -440,22 +436,6 @@ class ReasonerAssessCompletionTest(unittest.TestCase):
             analysis=self.__analysis(),
             sub_goal=self.__sub_goal(),
             screen_changed=True,
-            effect=self.__effect(status=ActionEffectStatus.NO_PROGRESS),
-        )
-
-        self.assertFalse(evidence.screen.evolved)
-
-    def test_no_progress_effect_vetoes_screen_evolved_when_delta_above_floor(self) -> None:
-        """
-        The veto must also block the magnitude path so a delta above the meaningful floor cannot revive evolved.
-        """
-
-        evidence = self.__reasoner().assess_completion(
-            execution_success=True,
-            analysis=self.__analysis(),
-            sub_goal=self.__sub_goal(),
-            screen_changed=True,
-            delta_score=0.95,
             effect=self.__effect(status=ActionEffectStatus.NO_PROGRESS),
         )
 

@@ -193,3 +193,88 @@ class SwipeRetryPlannerHorizontalTest(unittest.TestCase):
         self.assertEqual(starts[0], 200)
         self.assertGreater(starts[1], starts[0])
         self.assertGreater(starts[2], starts[1])
+
+
+class SwipeRetryPlannerFrameTest(unittest.TestCase):
+    """
+    Verify anchor clamping against the OS-reported window frame.
+    """
+
+    @staticmethod
+    def __viewport_bounds() -> Bounds:
+        """
+        Build a 1080x2208 device-pixel viewport rectangle.
+        """
+
+        return Bounds(
+            x=0,
+            y=0,
+            width=1080,
+            height=2208,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    @staticmethod
+    def __frame() -> Bounds:
+        """
+        Build a focused-window frame excluding the status bar and gesture-navigation zone.
+        """
+
+        return Bounds(
+            x=0,
+            y=80,
+            width=1080,
+            height=2000,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    def test_anchor_in_gesture_zone_rejects_unsafe_anchor(self) -> None:
+        """
+        The Swiggy full-viewport case: a touch-down at the screen bottom edge never dispatches.
+        """
+
+        path = GesturePath(start_x=540, start_y=2190, end_x=540, end_y=800, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+            frame=self.__frame(),
+        )
+
+        self.assertEqual(sequence.accepted, ())
+        self.assertEqual(sequence.rejections[0].reason, AbortReason.UNSAFE_ANCHOR)
+
+    def test_endpoint_may_leave_the_frame_freely(self) -> None:
+        """
+        Only the anchor is clamped; a swipe ending past the frame bottom stays accepted.
+        """
+
+        path = GesturePath(start_x=540, start_y=1500, end_x=540, end_y=2100, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+            frame=self.__frame(),
+        )
+
+        self.assertEqual(len(sequence.accepted), 1)
+
+    def test_missing_frame_preserves_previous_behavior(self) -> None:
+        """
+        Without a frame probe the planner accepts exactly what it accepted before.
+        """
+
+        path = GesturePath(start_x=540, start_y=2190, end_x=540, end_y=800, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+        )
+
+        self.assertEqual(len(sequence.accepted), 1)

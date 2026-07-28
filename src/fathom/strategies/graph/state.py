@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, TypedDict
 
+from fathom.schemas.binding import Binding
+from fathom.schemas.effect import EffectReading
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.results import AnalysisResult, PlanResult
@@ -42,6 +44,11 @@ class IntentGraphState(TypedDict, total=False):
     # Coordination handoff: SUPERVISE writes, EXECUTE / OBSERVE read.
     # Must be declared on the schema or LangGraph drops the channel update.
     EXECUTION_CONTEXT: Optional[ExecutionContext]
+
+    # Measured evidence: SUPERVISE / OBSERVE write, RECORD consumes.
+    BINDING: Optional[Binding]
+    EFFECT_READING: Optional[EffectReading]
+
     ANALYSIS_DURATION: float
     EXECUTION_DURATION: float
     GROUNDING_DURATION: float

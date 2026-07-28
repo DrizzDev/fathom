@@ -5,6 +5,11 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants import ActionType
+from fathom.constants.capability import CompletionMode
+from fathom.schemas.base.common import SealedModel
+from fathom.schemas.subgoal import SubGoalKind
+
 
 class ExecutionTaskState(StrEnum):
     """
@@ -64,3 +69,26 @@ class ExecutionTask(BaseModel):
         """
 
         return self.attempts.count >= self.attempts.limit
+
+
+class Task(SealedModel):
+    """
+    Consolidated execution task: what to do, how it is proven complete, and its decomposition slot.
+    """
+
+    index: int = Field(ge=0, description="Position in the decomposition sequence.")
+    description: str = Field(description="What this task accomplishes.")
+
+    kind: SubGoalKind = Field(description="Completion-gate strategy family for the task.")
+    completion: CompletionMode = Field(
+        description="Typed proof requirement projected once at decomposition.",
+    )
+
+    criterion: Optional[str] = Field(
+        default=None,
+        description="Observable terminal state criterion.",
+    )
+    directive: Optional[ActionType] = Field(
+        default=None,
+        description="Structured action the planner must emit to satisfy this task.",
+    )

@@ -11,6 +11,7 @@ from fathom.constants.retries import (
     RetryMetadataField,
 )
 from fathom.constants.state import CompletionReason, PlanMetadataKey
+from fathom.constants.subgoal import TaskProof
 from fathom.constants.tools import TurnMode
 from fathom.core.agent.action import ActionBuilder
 from fathom.core.agent.command import CommandGate
@@ -254,6 +255,7 @@ class StepPlanner:
                 "total": total,
                 "index": current_idx,
                 "description": current_sub_goal.description,
+                "durable": current_sub_goal.proof is TaskProof.DURABLE,
             }
 
         allowed_tools = self.__resolve_tools(state=state, current_sub_goal=current_sub_goal)

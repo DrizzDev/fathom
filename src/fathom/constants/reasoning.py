@@ -18,9 +18,6 @@ RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.35
 # Below this rationale-to-sub-goal similarity an asserted claim is flagged as lateral credit; observe-only.
 LATERAL_CREDIT_SIMILARITY_THRESHOLD: float = 0.45
 
-# Magnitude below which a post-action screen change is treated as noise.
-MEANINGFUL_SCREEN_DELTA_FLOOR: float = 0.05
-
 # Minimum decomposer confidence below which the fallback single-goal path is used.
 MINIMUM_DECOMPOSITION_CONFIDENCE: float = 0.6
 

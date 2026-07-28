@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.core.services.effect import EffectRecorder
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
@@ -25,12 +26,18 @@ class ObserveNode:
     OBSERVE graph node; captures post-action evidence and stages RECORD inputs.
     """
 
-    def __init__(self, *, provider: IntentNodeProvider) -> None:
+    def __init__(
+        self,
+        *,
+        provider: IntentNodeProvider,
+        recorder: Optional[EffectRecorder] = None,
+    ) -> None:
         """
-        Bind the node to the shared intent provider.
+        Bind the node to the shared intent provider and the effect-trial recorder.
         """
 
         self.__provider = provider
+        self.__recorder = recorder if recorder is not None else EffectRecorder()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -109,9 +116,20 @@ class ObserveNode:
         )
 
         action_effect = self.__provider.effects.effect_from(diff=screen_diff)
+
         if context.step.action.execution_kind is ActionExecutionKind.DEVICE:
             self.__provider.context.agent_state.record_action_effect(effect=action_effect)
+
         self.__provider.effects.log_diff(screen_diff=screen_diff, action_effect=action_effect)
+
+        reading = self.__recorder.observe(
+            diff=screen_diff,
+            effect=action_effect,
+            package=context.package,
+            foreground=post_activity,
+            bounds=context.step.action.bounds,
+            workflow_id=self.__provider.context.workflow_id,
+        )
 
         screen_changed = self.__screen_changed(
             context=context,
@@ -176,6 +194,7 @@ class ObserveNode:
             CommonStateKey.EXECUTION_DURATION: context.duration / 1000.0,
             CommonStateKey.SCREEN_OBSERVATION: next_observation,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
+            IntentStateKey.EFFECT_READING: reading,
             IntentStateKey.POST_ACTIVITY: post_activity,
         }
 

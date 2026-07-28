@@ -8,10 +8,14 @@ from fathom.constants.capability import CompletionMode
 from fathom.constants.completion import AdvanceReason, GateOutcome
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey, PlanMetadataKey, VerifyMode
+from fathom.core.agent.advancement import AdvancementTrial
 from fathom.core.agent.capture import StoreCaptureCompletionPolicy
 from fathom.core.agent.completion import CompletionGate
+from fathom.core.agent.stall import StallPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
+from fathom.core.services.shadow import ShadowRecorder
+from fathom.schemas.binding import Binding
 from fathom.schemas.completion import (
     ActionEvidence,
     ClaimEvidence,
@@ -21,13 +25,14 @@ from fathom.schemas.completion import (
     ValidationEvidence,
 )
 from fathom.schemas.criterion import CriterionDecision
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus
+from fathom.schemas.effect import ActionEffect, ActionEffectStatus, EffectReading
 from fathom.schemas.observability import CompletionLogContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.turn import TurnEvidence
 from fathom.schemas.vision import ActionKind, ActionKindResolver
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
@@ -66,10 +71,11 @@ class SubGoalEvaluator:
         context: GraphContext,
         criterion_observer: CriterionObserver,
         gate: Optional[CompletionGate] = None,
+        shadow: Optional[ShadowRecorder] = None,
         capture_policy: Optional[StoreCaptureCompletionPolicy] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, gate, and capture policy.
+        Bind the evaluator to its graph context, criterion observer, gate, capture policy, and shadow recorder.
         """
 
         self.__context = context
@@ -79,12 +85,29 @@ class SubGoalEvaluator:
             capture_policy if capture_policy is not None else StoreCaptureCompletionPolicy()
         )
 
+        self.__stall = StallPolicy()
+        self.__shadow: Optional[ShadowRecorder] = shadow
+
+    def __recorder(self) -> ShadowRecorder:
+        """
+        Return the shadow recorder, building the advancement trial lazily against the live context.
+        """
+
+        if self.__shadow is None:
+            self.__shadow = ShadowRecorder(
+                trial=AdvancementTrial(catalog=self.__context.catalog),
+            )
+
+        return self.__shadow
+
     async def evaluate(
         self,
         *,
         plan: Any,
         step_result: StepResult,
         accumulated: List[StepResult],
+        binding: Optional[Binding] = None,
+        reading: Optional[EffectReading] = None,
         observation: Optional[ScreenObservation] = None,
     ) -> Optional[IntentGraphState]:
         """
@@ -143,7 +166,6 @@ class SubGoalEvaluator:
                 execution_success=step_result.executed,
                 semantic_similarity=semantic_similarity,
                 criterion_decision=criterion_decision,
-                delta_score=agent_state.last_delta_score,
                 screen_changed=step_result.screen_changed,
                 screen_description=step_result.observation or step_result.step.action.target or "",
             )
@@ -158,6 +180,23 @@ class SubGoalEvaluator:
                 evidence=evidence,
                 sub_goal=active,
                 action_kind=emitted_kind,
+            )
+            self.__recorder().observe(
+                sub_goal=active,
+                evidence=evidence,
+                decision=decision,
+                action_kind=emitted_kind,
+                turn=step_result.step.step_number,
+                workflow_id=self.__context.workflow_id,
+                measured=TurnEvidence(
+                    effect=reading,
+                    binding=binding,
+                    claim=evidence.claim,
+                    action=evidence.action,
+                    verdict=agent_state.get_last_verdict(),
+                    validation=analysis.validation,
+                    stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
+                ),
             )
             self.__log_gate_adjudicated(
                 active=active,
@@ -175,11 +214,11 @@ class SubGoalEvaluator:
                 step_result=step_result,
             )
             return self.__advance_or_complete(
-                current=active,
                 signal=signal,
+                current=active,
+                kind=emitted_kind,
                 evidence=evidence,
                 accumulated=accumulated,
-                kind=emitted_kind,
             )
 
         self.__log_retained(
@@ -241,7 +280,6 @@ class SubGoalEvaluator:
             analysis=analysis,
             sub_goal_description=active.description,
             screen_changed=step_result.screen_changed,
-            delta_score=self.__context.agent_state.last_delta_score,
             screen_description=step_result.observation or step_result.step.action.target or "",
         )
 

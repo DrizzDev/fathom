@@ -113,6 +113,26 @@ class CommandGateTest(unittest.TestCase):
                 )
             )
 
+    def test_rejects_validate_with_whitespace_validation_subject(self) -> None:
+        """
+        A whitespace-only subject is no assertion; the canonical constructor rejects it.
+        """
+
+        gate = CommandGate(catalog=CommandCatalogProvider().build())
+        payload = ExecuteAction.model_construct(
+            action_type="validate",
+            validation_subject="   ",
+            confidence=0.9,
+        )
+
+        with self.assertRaises(ToolValidationError):
+            gate.validate(
+                command=ToolCommand.model_construct(
+                    action_type=ActionType.VALIDATE,
+                    payload=payload,
+                )
+            )
+
     def test_accepts_validate_with_validation_subject(self) -> None:
         """
         VALIDATE passes when the assertion subject is explicit.

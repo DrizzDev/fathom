@@ -10,7 +10,7 @@ from fathom.constants.collaboration import TaskKind
 from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.conversation.identity import InteractionIdentity
-from fathom.core.exceptions import HITLNotAvailableError
+from fathom.core.exceptions import HITLNotAvailableError, HITLTimeoutError
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.recording import Step as RecordedStep
@@ -122,6 +122,8 @@ class ExecuteNode:
                 )
             except HITLNotAvailableError:
                 return self.__route_back_for_replan()
+            except HITLTimeoutError:
+                return self.__terminate_unanswered()
         else:
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
             resolved_observation = (
@@ -250,6 +252,25 @@ class ExecuteNode:
                 error=str(exception),
                 step=step.step_number + 1,
             )
+
+    def __terminate_unanswered(self) -> IntentGraphState:
+        """
+        Close the run typed when the interactive ask exhausted its deadline without a response.
+        """
+
+        self.__provider.context.agent_state.mark_complete(
+            reason=CompletionReason.INTERVENTION_REQUIRED.value
+        )
+        result = cast(
+            "IntentGraphState",
+            {
+                CommonStateKey.IS_COMPLETE: True,
+                CommonStateKey.COMPLETION_REASON: CompletionReason.INTERVENTION_REQUIRED.value,
+            },
+        )
+        self.__provider.persistence.persist(result=result)
+
+        return result
 
     def __route_back_for_replan(self) -> IntentGraphState:
         """

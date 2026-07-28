@@ -94,6 +94,14 @@ class GeminiPromptBuilder(PromptBuilder):
 
             if index is not None and total > 1:
                 progress_text = f"[{index + 1}/{total}]"
+                proof_clause = (
+                    "5. This step changes persistent state (adds, saves, submits, pays, deletes). "
+                    "Do NOT signal completion until the resulting state is VISIBLE on screen "
+                    "(e.g. the item is shown in the cart). A claim without a visible result is not "
+                    "completion.\n"
+                    if sub_goal_info.get("durable")
+                    else ""
+                )
 
                 parts.append(
                     f"<CURRENT_STEP>\n"
@@ -106,6 +114,7 @@ class GeminiPromptBuilder(PromptBuilder):
                     f"   - Setting 'is_goal_complete: true' in your response, OR\n"
                     f"   - Returning a COMPLETE action\n"
                     f"4. The system will automatically advance to the next step\n"
+                    f"{proof_clause}"
                     f"</CURRENT_STEP>"
                 )
                 logger.info(

@@ -21,6 +21,7 @@ class SwipeRetryPlanner:
         bounds: Bounds,
         policy: SwipeRetryPolicy,
         keyboard: KeyboardObservation,
+        frame: Optional[Bounds] = None,
     ) -> CandidateSequence:
         """
         Return ordered accepted candidates (original plus retries) with all safety filters applied uniformly.
@@ -32,6 +33,7 @@ class SwipeRetryPlanner:
 
         original_rejection = self.__reject(
             path=original,
+            frame=frame,
             bounds=bounds,
             keyboard_bounds=keyboard_bounds,
             minimum_travel=policy.minimum_travel,
@@ -55,6 +57,7 @@ class SwipeRetryPlanner:
             for shifted in shifted_paths:
                 rejection_reason = self.__reject(
                     path=shifted,
+                    frame=frame,
                     bounds=bounds,
                     keyboard_bounds=keyboard_bounds,
                     minimum_travel=policy.minimum_travel,
@@ -167,6 +170,7 @@ class SwipeRetryPlanner:
         bounds: Bounds,
         keyboard_bounds: Optional[Bounds],
         minimum_travel: int,
+        frame: Optional[Bounds] = None,
     ) -> Optional[AbortReason]:
         """
         Return the first applicable rejection reason for the candidate path, or None if it passes.
@@ -186,7 +190,22 @@ class SwipeRetryPlanner:
 
         if not SwipeRetryPlanner.__inside_bounds(path=path, bounds=bounds):
             return AbortReason.OUT_OF_BOUNDS
+
+        if frame is not None and not SwipeRetryPlanner.__anchor_inside(path=path, frame=frame):
+            return AbortReason.UNSAFE_ANCHOR
+
         return None
+
+    @staticmethod
+    def __anchor_inside(*, path: GesturePath, frame: Bounds) -> bool:
+        """
+        Whether the touch-down anchor lies inside the OS-reported window frame; the endpoint may exit freely.
+        """
+
+        return (
+            frame.x <= path.start_x <= frame.x + frame.width
+            and frame.y <= path.start_y <= frame.y + frame.height
+        )
 
     @staticmethod
     def __keyboard_bounds(*, keyboard: KeyboardObservation) -> Optional[Bounds]:

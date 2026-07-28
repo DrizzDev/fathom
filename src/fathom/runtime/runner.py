@@ -172,8 +172,12 @@ class FathomRunner:
         self.__qualifier = qualifier
         self.__interaction = interaction
         self.__config = config or FathomConfiguration()
-
         self.__runtime_configuration = runtime_configuration
+
+        if self.__runtime_configuration is not None:
+            self.__config = self.__config.model_copy(
+                update={"oracle": self.__runtime_configuration.oracle()},
+            )
 
         self.__recorder = self.__recorder_for(interaction=interaction)
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Final
 
 # Default per-sub-goal step budget. The agent gets this many ANALYZE -> EXECUTE
@@ -10,3 +11,12 @@ TAP_SUB_GOAL_MAX_STEPS: Final[int] = 3
 INPUT_SUB_GOAL_MAX_STEPS: Final[int] = 5
 WAIT_SUB_GOAL_MAX_STEPS: Final[int] = 3
 VALIDATE_SUB_GOAL_MAX_STEPS: Final[int] = 3
+
+
+class TaskProof(StrEnum):
+    """
+    Proof requirement the decomposer declares for one task's completion.
+    """
+
+    DURABLE = "DURABLE"
+    TRANSIENT = "TRANSIENT"

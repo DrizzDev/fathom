@@ -634,6 +634,7 @@ class ScreenObservationService:
             confidence=confidence,
             identifier=identifier,
             axis=self.__axis(attributes=attributes),
+            interactive=element.interactive,
             kind=self.__element_kind(attributes=attributes, role=role),
             tappable=self.__is_tappable(role=role, attributes=attributes),
             scrollable=self.__scrollable(attributes=attributes, role=role),

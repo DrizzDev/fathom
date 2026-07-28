@@ -14,6 +14,7 @@ from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.swipe import SwipeExecution
 from fathom.schemas.tools import StateUpdate, ToolArtifact, ToolData, ToolDiagnostic, ToolResponse
+from fathom.schemas.validation import Validation
 
 
 class AnalysisOutcome(StrEnum):
@@ -64,6 +65,10 @@ class AnalysisResult(BaseModel):
     completion_criteria_met: Optional[List[str]] = Field(
         default=None,
         description="List of criteria/conditions that triggered completion (e.g., ['payment_processed', 'order_confirmed']). For multi-condition verifications.",
+    )
+    validation: Optional[Validation] = Field(
+        default=None,
+        description="Canonical validation assertion parsed from the emitting tool, when present.",
     )
     memories: int = Field(
         default=0, description="Number of historical experiences retrieved for this state"

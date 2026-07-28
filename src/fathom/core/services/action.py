@@ -814,6 +814,25 @@ class ActionExecutor:
             source=action.bounds.source or CoordinateSource.MODEL,
         )
 
+    async def __window_frame(self) -> Optional[Bounds]:
+        """
+        Probe the OS-reported focused-window frame; probe failures never block dispatch.
+        """
+
+        try:
+            return await self.__device.frame()
+        except Exception as exception:
+            logger.warning(
+                "Window-frame probe failed; swipe anchors unclamped this turn",
+                extra={
+                    "event": "swipe.frame.unavailable",
+                    "component": "core.services.action",
+                    "exception.type": type(exception).__name__,
+                    "exception.message": str(exception),
+                },
+            )
+            return None
+
     async def __coordinate_and_emit(
         self,
         *,
@@ -834,9 +853,11 @@ class ActionExecutor:
         keyboard = self.__keyboard_observation(observation=observation)
         viewport_bounds = self.__viewport_bounds(region=region, capture=pre_capture)
         policy = self.__device_configuration().interaction.policy.swipe.retry
+        frame = await self.__window_frame()
 
         execution = await self.__swipe_coordinator.execute(
             original=path,
+            frame=frame,
             policy=policy,
             keyboard=keyboard,
             bounds=viewport_bounds,

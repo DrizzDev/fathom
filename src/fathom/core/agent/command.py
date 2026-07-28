@@ -10,6 +10,7 @@ from fathom.schemas.capability import CommandProfile
 from fathom.schemas.gemini_tools import ExecuteAction
 from fathom.schemas.results import ToolErrorFeedback
 from fathom.schemas.tools import AcceptedCommand, ToolCommand
+from fathom.schemas.validation import Validation
 
 
 class CommandGate:
@@ -128,7 +129,7 @@ class CommandGate:
             )
 
         if field is PayloadField.SUBJECT:
-            return bool(payload.validation_subject)
+            return Validation.command(subject=payload.validation_subject) is not None
 
         if field is PayloadField.WAIT_SUBJECT:
             return bool(payload.wait_subject)

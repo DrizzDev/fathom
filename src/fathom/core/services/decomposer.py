@@ -236,6 +236,7 @@ class IntentDecomposer:
         if isinstance(entry, DecomposedTask):
             return SubGoal(
                 index=index,
+                proof=entry.proof,
                 confidence=confidence,
                 criterion=entry.criterion,
                 directive=entry.directive,

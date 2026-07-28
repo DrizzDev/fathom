@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.observation import KeyboardVisibility
+from fathom.schemas.actions import Bounds
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
@@ -82,6 +83,13 @@ class DevicePort(ABC):
         """
 
         raise NotImplementedError
+
+    async def frame(self) -> Optional[Bounds]:
+        """
+        OS-reported focused-window frame in device pixels; None when the platform cannot report one.
+        """
+
+        return None
 
     @abstractmethod
     async def get_current_package(self) -> str:

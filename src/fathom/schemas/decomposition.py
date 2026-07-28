@@ -7,6 +7,7 @@ from typing import Any, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fathom.constants import ActionType
+from fathom.constants.subgoal import TaskProof
 
 
 class DecomposedTask(BaseModel):
@@ -28,6 +29,13 @@ class DecomposedTask(BaseModel):
             "against this directive; divergence prevents advancement and "
             "guards against the LLM short-circuiting action sub-goals with "
             "stray validate emits."
+        ),
+    )
+    proof: TaskProof = Field(
+        default=TaskProof.DURABLE,
+        description=(
+            "Whether the task mutates persistent state whose outcome must be observed before "
+            "advancing. Defaults to DURABLE so an omission can never lose outcome protection."
         ),
     )
 

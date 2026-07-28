@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from fathom.constants.screen import LOOP_DETECTOR_WINDOW_SIZE
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import LoopDetector, LoopDetectorState
+from fathom.schemas.state import LoopDetectorState
 
 
 class TestLoopDetectorState:

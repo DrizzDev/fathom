@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import List, Optional
 
 from fathom.constants.runtime import DEFAULT_LOOP_THRESHOLD, DEFAULT_LOOP_WINDOW
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import LoopDetector
 
 
 class ScreenRuntimeState:

@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
 from fathom.schemas.actions import Action
+from fathom.schemas.experience import Experience
 from fathom.schemas.screens import ScreenState
 
 
@@ -51,6 +52,13 @@ class MemoryPort(ABC):
         """
 
         raise NotImplementedError
+
+    async def store_outcome(self, *, experience: Experience) -> None:
+        """
+        Store the typed outcome of one executed action; default is a no-op for adapters without persistence.
+        """
+
+        return None
 
     @abstractmethod
     async def retrieve_knowledge(self, *, visual_hash: str) -> Dict[str, Any]:

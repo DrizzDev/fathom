@@ -10,6 +10,7 @@ import aiosqlite
 from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.interfaces import IMemoryProvider
 from fathom.schemas.actions import Action
+from fathom.schemas.experience import Experience
 from fathom.schemas.screens import ScreenState
 
 
@@ -43,6 +44,9 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute(
                 "CREATE TABLE IF NOT EXISTS experience (id INTEGER PRIMARY KEY AUTOINCREMENT, visual_hash TEXT, action_json TEXT, success BOOLEAN, rationale TEXT, timestamp INTEGER)"
             )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS outcome (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow TEXT, session TEXT, screen TEXT, action TEXT, target TEXT, executed BOOLEAN, transitioned TEXT, advanced BOOLEAN, binding TEXT, timestamp INTEGER)"
+            )
             await db.commit()
         self.__initialized = True
 
@@ -57,6 +61,31 @@ class SQLiteMemoryProvider(IMemoryProvider):
             await db.execute(
                 "INSERT OR REPLACE INTO screens (visual_hash, activity, description, last_seen) VALUES (?, ?, ?, ?)",
                 (screen.visual_hash, screen.activity, description, int(time.time())),
+            )
+            await db.commit()
+
+    async def store_outcome(self, experience: Experience) -> None:
+        """
+        Stores the typed outcome of one executed action.
+        """
+
+        await self.__initialize()
+
+        async with aiosqlite.connect(self.__path) as db:
+            await db.execute(
+                "INSERT INTO outcome (workflow, session, screen, action, target, executed, transitioned, advanced, binding, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    experience.workflow,
+                    experience.session,
+                    experience.screen,
+                    experience.action.value,
+                    experience.target,
+                    experience.executed,
+                    experience.transitioned.value,
+                    experience.advanced,
+                    experience.binding.value if experience.binding is not None else None,
+                    int(time.time()),
+                ),
             )
             await db.commit()
 
@@ -143,7 +172,7 @@ class SQLiteMemoryProvider(IMemoryProvider):
 
             # Get total experience count
             async with db.execute("SELECT COUNT(*) FROM experience") as cursor:
-                row = await cursor.fetchone()
-                summary["experience_count"] = row[0] if row else 0
+                count = await cursor.fetchone()
+                summary["experience_count"] = count[0] if count else 0
 
         return summary
