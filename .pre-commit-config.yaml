@@ -34,3 +34,25 @@ repos:
       - id: bandit
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
+
+  # Architecture-fitness checker. The rollout mode lives in governance/debt.json, not a flag:
+  # REPORT (Phase 0a) always exits 0; set it to RATCHET (Phase 0b) to fail on any blocking
+  # disposition once the baseline is governance-approved.
+  - repo: local
+    hooks:
+      - id: architecture-fitness
+        name: architecture fitness
+        entry: python -m governance
+        language: python
+        additional_dependencies: ["pydantic>=2.0.0"]
+        pass_filenames: false
+        always_run: true
+
+      # Strict typing for the governance slice, which the global mypy hook excludes with tests/.
+      - id: mypy-governance
+        name: mypy (governance slice, strict)
+        entry: mypy
+        language: python
+        additional_dependencies: ["mypy>=1.19.0", "pydantic>=2.0.0"]
+        files: ^(governance/|tests/architecture/|tests/unit/governance/).*\.py$
+        pass_filenames: true

@@ -95,8 +95,9 @@ Formats:
 
 ## 7. Data models
 
-- use Pydantic `BaseModel` for anything crossing a boundary
-- use `dataclass` only for pure in-memory domain value objects with no validation/serialization requirement
+- use Pydantic `BaseModel` for entities, validated value models, and anything crossing a boundary
+- never use `@dataclass` anywhere in the repository
+- use an ordinary class only for behavior-only objects that are not entities
 - never use raw `dict` or `tuple` instead of a typed model
 - prefer immutable domain entities/value objects where possible
 - validate at the boundary; Domain may assume valid data

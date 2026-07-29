@@ -106,7 +106,7 @@ include = [
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["src", "tests"]
+src = ["src", "tests", "governance"]
 
 [tool.ruff.lint]
 select = [
@@ -145,7 +145,17 @@ ignore = [
 # 6. Runtime (runtime/) wires everything together and can import adapters
 
 [tool.ruff.lint.isort]
-known-first-party = ["fathom"]
+known-first-party = ["fathom", "governance"]
+
+[tool.ruff.lint.per-file-ignores]
+# Governance keeps stdlib imports at the top (SKILL section 4). In the schema models these
+# names are Pydantic field types resolved at runtime; in the loaders they are annotation-only
+# but kept at the top for consistency rather than hidden in a TYPE_CHECKING block.
+"governance/checker.py" = ["TC003"]
+"governance/configuration.py" = ["TC003"]
+"governance/index.py" = ["TC003"]
+"governance/schemas/debt.py" = ["TC003"]
+"governance/schemas/module.py" = ["TC003"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -181,6 +191,7 @@ fallback-python-interpreter-name = "python"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # `importlib` mode avoids the rootdir-based basename collision (three

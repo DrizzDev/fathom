@@ -1,0 +1,8 @@
+{
+  "provisional": true,
+  "domain": [
+    "fathom.schemas",
+    "fathom.constants",
+    "fathom.core.agent"
+  ]
+}
