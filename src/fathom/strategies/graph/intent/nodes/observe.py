@@ -281,7 +281,7 @@ class ObserveNode:
 
     async def __emit_noop(self, *, context: ExecutionContext) -> None:
         """
-        Surface a no-op to the client and hand the planner a use-once repeat hint.
+        Surface a no-op to the client for visibility (planner is not fed a repeat hint).
         """
 
         action = context.step.action.action_type.value
@@ -294,10 +294,6 @@ class ObserveNode:
             target=target,
             step=context.step.step_number,
             type=FathomEvent.ACTION_NO_EFFECT,
-        )
-        await self.__provider.context.context_manager.inject_action_feedback(
-            step=context.step.step_number,
-            feedback=f"Your last {action} on '{target}' produced no detectable change on screen.",
         )
 
     def __step_success(

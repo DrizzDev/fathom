@@ -173,7 +173,6 @@ class StepPlanner:
         state.clear_rejection_history()
         context_manager.consume_user_guidance()
         context_manager.clear_verifier_feedback()
-        context_manager.clear_action_feedback()
         context_manager.clear_completion_feedback()
 
         if analysis.content_exhausted:

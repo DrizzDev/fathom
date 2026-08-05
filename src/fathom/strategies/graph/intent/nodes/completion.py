@@ -144,7 +144,12 @@ class SubGoalEvaluator:
         )
         advancement = self.__policy.decide(success=active.success, evidence=turn)
         self.__log_adjudicated(active=active, advancement=advancement, step_result=step_result)
-        await self.__surface_refute(assessment=assessment, step=step_result.step.step_number)
+        await self.__surface_refute(
+            assessment=assessment,
+            advancement=advancement,
+            progressed=step_result.screen_changed,
+            step=step_result.step.step_number,
+        )
 
         if advancement.kind in (AdvanceKind.ADVANCE, AdvanceKind.SATISFIED_PRIOR):
             patch: Optional[IntentGraphState] = self.__advance_or_complete(
@@ -280,13 +285,26 @@ class SubGoalEvaluator:
             )
 
     async def __surface_refute(
-        self, *, assessment: Optional[VisualAssessment], step: int
+        self,
+        *,
+        assessment: Optional[VisualAssessment],
+        advancement: Advancement,
+        progressed: bool,
+        step: int,
     ) -> None:
         """
-        Hand the planner a use-once reason when vision refuted the observation, so it can re-target.
+        Surface a use-once refute reason only when the goal is stuck: retaining with no screen progress.
+
+        A refute during genuine intermediate progress (e.g. adding items one by one toward a compound
+        goal) is not surfaced, so the planner is not nagged while it is already advancing correctly.
         """
 
-        if assessment is None or assessment.verdict is not VisualVerdict.NOT_SATISFIED:
+        if (
+            progressed
+            or assessment is None
+            or assessment.verdict is not VisualVerdict.NOT_SATISFIED
+            or advancement.kind is not AdvanceKind.RETAIN
+        ):
             return
 
         await self.__context.context_manager.inject_completion_feedback(

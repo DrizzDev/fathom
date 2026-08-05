@@ -5,7 +5,8 @@ from typing import Final
 
 # Default per-sub-goal step budget. The agent gets this many ANALYZE -> EXECUTE
 # -> RECORD cycles per sub-goal before the planner must choose another path.
-DEFAULT_SUB_GOAL_MAX_STEPS: Final[int] = 8
+# Temporarily raised 8 -> 12 so multi-action sub-goals (e.g. "add 3 items") fit; revisit with decomposition.
+DEFAULT_SUB_GOAL_MAX_STEPS: Final[int] = 12
 SCROLL_SUB_GOAL_MAX_STEPS: Final[int] = 25
 TAP_SUB_GOAL_MAX_STEPS: Final[int] = 3
 INPUT_SUB_GOAL_MAX_STEPS: Final[int] = 5

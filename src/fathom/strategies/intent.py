@@ -397,7 +397,8 @@ class IntentStrategy:
         )
         await self.__phase.plan_synthesized(
             intent=self.__intent,
-            sub_goals=sub_goal_payload,
+            # Client renders sub-goals off "description"; keep that wire key alongside the domain "objective".
+            sub_goals=[{**goal, "description": goal["objective"]} for goal in sub_goal_payload],
         )
 
     def __resume_plan(self, *, plan: Plan) -> None:
