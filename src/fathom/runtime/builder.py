@@ -450,9 +450,7 @@ class FathomBuilder:
             self.__realignment = RealignmentPolicy()
 
         # Deterministic sibling of the planner for decomposition; runner owns its cleanup.
-        architect = cast("LLMPort", self.__llm).derive(
-            overrides=LLMConfiguration(temperature=0.0, use_cache=False)
-        )
+        architect = self.__llm.derive(overrides=LLMConfiguration(temperature=0.0, use_cache=False))
         owned_resources.append(architect)
 
         return FathomRunner(
