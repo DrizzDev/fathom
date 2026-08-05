@@ -91,6 +91,18 @@ class GeminiLLM(LLMPort):
 
         return self.__configuration.model
 
+    def derive(self, *, overrides: LLMConfiguration) -> LLMPort:
+        """
+        Spawn a sibling adapter sharing credentials and model, applying only the
+        explicitly-set fields of ``overrides``.
+        """
+
+        return GeminiLLM(
+            configuration=self.__configuration.model_copy(
+                update=overrides.model_dump(exclude_unset=True)
+            )
+        )
+
     @property
     def client(self) -> Any:
         """

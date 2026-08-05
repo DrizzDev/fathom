@@ -116,8 +116,10 @@ class IntentStrategy:
         plans: PlanStore,
         checkpoint_store: Optional[CheckpointStore] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
+        architect: Optional[LLMPort] = None,
     ) -> None:
         self.__llm = llm
+        self.__architect = architect or llm
         self.__intent = intent
         self.__catalog = catalog
         self.__workflow_id = workflow_id
@@ -366,7 +368,7 @@ class IntentStrategy:
             },
         )
         decomposer = IntentDecomposer.with_configuration(
-            llm=self.__llm,
+            llm=self.__architect,
             translator=ProposalTranslator(catalog=self.__catalog),
             configuration=self.__graph_context.configuration.llm,
         )

@@ -20,6 +20,7 @@ from fathom.schemas.configuration import (
     ExplorationConfiguration,
     FathomConfiguration,
     IntentConfiguration,
+    LLMConfiguration,
     QualifierConfiguration,
     StorageConfiguration,
 )
@@ -448,8 +449,15 @@ class FathomBuilder:
         if not self.__realignment:
             self.__realignment = RealignmentPolicy()
 
+        # Deterministic sibling of the planner for decomposition; runner owns its cleanup.
+        architect = cast("LLMPort", self.__llm).derive(
+            overrides=LLMConfiguration(temperature=0.0, use_cache=False)
+        )
+        owned_resources.append(architect)
+
         return FathomRunner(
             llm=self.__llm,
+            architect=architect,
             device=self.__device,
             config=self.__config,
             memory=self.__memory,

@@ -139,6 +139,17 @@ class DevicePort(ABC):
 
         raise NotImplementedError
 
+    async def hide_keyboard(self) -> Optional[ActionResult]:
+        """
+        Dismiss the soft keyboard natively; returns None when the adapter has no native dismissal.
+
+        Adapters without a native IME channel inherit this default. ``None``
+        instructs the caller to fall back to the platform Back primitive, which
+        dismisses the keyboard on Android.
+        """
+
+        return None
+
     async def detect_keyboard(self) -> KeyboardObservation:
         """
         Probe the platform for soft-keyboard state; returns UNKNOWN when the adapter cannot determine it.

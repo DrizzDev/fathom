@@ -4,15 +4,29 @@ from typing import List, Optional, Tuple
 
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.swipe import AbortReason, RetryDirection
+from fathom.core.swipe.anchor import AnchorGuard
 from fathom.schemas.actions import Bounds, GesturePath
 from fathom.schemas.observation import KeyboardObservation
-from fathom.schemas.swipe import CandidateSequence, SwipeRejection, SwipeRetryPolicy
+from fathom.schemas.swipe import (
+    Admission,
+    CandidateSequence,
+    ReservePolicy,
+    SwipeRejection,
+    SwipeRetryPolicy,
+)
 
 
 class SwipeRetryPlanner:
     """
     Pure-logic planner that generates ordered retry candidates with bounds, travel and keyboard filters.
     """
+
+    def __init__(self, *, guard: Optional[AnchorGuard] = None) -> None:
+        """
+        Bind the guard that excludes operating-system reserved screen edges from touch-down points.
+        """
+
+        self.__guard = guard if guard is not None else AnchorGuard()
 
     def candidates(
         self,
@@ -25,24 +39,28 @@ class SwipeRetryPlanner:
     ) -> CandidateSequence:
         """
         Return ordered accepted candidates (original plus retries) with all safety filters applied uniformly.
+
+        Confinement can collapse distinct shifts onto one anchor, so duplicates
+        are dropped rather than dispatched twice against the same coordinates.
         """
 
         accepted: List[GesturePath] = []
         rejections: List[SwipeRejection] = []
         keyboard_bounds = self.__keyboard_bounds(keyboard=keyboard)
 
-        original_rejection = self.__reject(
+        admission = self.__admit(
             path=original,
             frame=frame,
             bounds=bounds,
             keyboard_bounds=keyboard_bounds,
             minimum_travel=policy.minimum_travel,
+            reserve=policy.reserve,
         )
-        if original_rejection is None:
-            accepted.append(original)
+        if admission.reason is None:
+            accepted.append(admission.path)
         else:
             rejections.append(
-                SwipeRejection(index=0, path=original, reason=original_rejection),
+                SwipeRejection(index=0, path=admission.path, reason=admission.reason),
             )
 
         if not policy.enabled:
@@ -55,19 +73,28 @@ class SwipeRetryPlanner:
                 direction=policy.direction,
             )
             for shifted in shifted_paths:
-                rejection_reason = self.__reject(
+                shifted_admission = self.__admit(
                     path=shifted,
                     frame=frame,
                     bounds=bounds,
+                    reserve=policy.reserve,
                     keyboard_bounds=keyboard_bounds,
                     minimum_travel=policy.minimum_travel,
                 )
-                if rejection_reason is not None:
+                if shifted_admission.reason is not None:
                     rejections.append(
-                        SwipeRejection(index=index, path=shifted, reason=rejection_reason),
+                        SwipeRejection(
+                            index=index,
+                            path=shifted_admission.path,
+                            reason=shifted_admission.reason,
+                        ),
                     )
                     continue
-                accepted.append(shifted)
+
+                if shifted_admission.path in accepted:
+                    continue
+
+                accepted.append(shifted_admission.path)
 
         return CandidateSequence(accepted=tuple(accepted), rejections=tuple(rejections))
 
@@ -163,27 +190,50 @@ class SwipeRetryPlanner:
             return original.model_copy(update={"start_y": max(0, original.start_y + delta)})
         return original.model_copy(update={"start_x": max(0, original.start_x + delta)})
 
+    def __admit(
+        self,
+        *,
+        bounds: Bounds,
+        path: GesturePath,
+        minimum_travel: int,
+        reserve: ReservePolicy,
+        frame: Optional[Bounds] = None,
+        keyboard_bounds: Optional[Bounds],
+    ) -> Admission:
+        """
+        Confine the candidate's touch-down to addressable screen area and return its dispatch verdict.
+        """
+
+        confined = self.__guard.confine(path=path, viewport=bounds, policy=reserve)
+
+        if confined is None:
+            return Admission(path=path, reason=AbortReason.ANCHOR_RESERVED)
+
+        return Admission(
+            path=confined,
+            reason=self.__reject(
+                frame=frame,
+                bounds=bounds,
+                path=confined,
+                minimum_travel=minimum_travel,
+                keyboard_bounds=keyboard_bounds,
+            ),
+        )
+
     @staticmethod
     def __reject(
         *,
-        path: GesturePath,
         bounds: Bounds,
-        keyboard_bounds: Optional[Bounds],
+        path: GesturePath,
         minimum_travel: int,
         frame: Optional[Bounds] = None,
+        keyboard_bounds: Optional[Bounds],
     ) -> Optional[AbortReason]:
         """
         Return the first applicable rejection reason for the candidate path, or None if it passes.
 
-        Only OUT_OF_BOUNDS rejects pre-dispatch — a gesture that exits the screen
-        literally cannot fire on the device. MINIMUM_TRAVEL_VIOLATED and
-        KEYBOARD_BLOCKED used to reject here, which caused short-container swipes
-        (e.g. carousel cells snapped as scroller's) to never reach the device.
-        Those concerns now move to post-dispatch observation: if the dispatched
-        gesture produces NO_VISUAL_CHANGE, the coordinator falls through to the
-        shifted retry candidates that are already generated by candidates().
-        Keyboard avoidance similarly relies on observed behavior rather than
-        bounds-rectangle intersection guesswork.
+        Only a path that exits the screen rejects here; reserved edges are confined in __admit,
+        and travel and keyboard concerns are left to post-dispatch observation and retry.
         """
 
         _ = keyboard_bounds, minimum_travel
@@ -225,6 +275,7 @@ class SwipeRetryPlanner:
 
         x_left, x_right = bounds.x, bounds.x + bounds.width
         y_top, y_bottom = bounds.y, bounds.y + bounds.height
+
         return (
             x_left <= path.start_x <= x_right
             and x_left <= path.end_x <= x_right
@@ -277,9 +328,12 @@ class SwipeRetryPlanner:
 
         if SwipeRetryPlanner.__point_in_rect(x=x1, y=y1, rx=rx, ry=ry, rw=rw, rh=rh):
             return True
+
         if SwipeRetryPlanner.__point_in_rect(x=x2, y=y2, rx=rx, ry=ry, rw=rw, rh=rh):
             return True
+
         x_right, y_bottom = rx + rw, ry + rh
+
         for edge in (
             (rx, ry, x_right, ry),
             (rx, ry, rx, y_bottom),

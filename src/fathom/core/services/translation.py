@@ -28,7 +28,7 @@ class ProposalTranslator:
 
     def translate(self, *, intent: str, proposal: DecompositionProposal) -> Success:
         """
-        Translate one proposal into canonical Success, failing closed on an unbindable command.
+        Translate one proposal into canonical Success, failing closed on an un-bindable command.
         """
 
         if isinstance(proposal, ObservedProposal):
@@ -36,8 +36,8 @@ class ProposalTranslator:
 
         if isinstance(proposal, CaptureProposal):
             return CaptureSuccess(
-                target=CaptureIdentity(name=proposal.name, provenance=proposal.provenance),
                 subject=proposal.subject,
+                target=CaptureIdentity(name=proposal.name, provenance=proposal.provenance),
             )
 
         return self.__command(intent=intent, proposal=proposal)
@@ -48,6 +48,7 @@ class ProposalTranslator:
         """
 
         result = self.__binder.bind(intent=intent, proposal=proposal)
+
         if isinstance(result, BoundCommand):
             return result.success
 

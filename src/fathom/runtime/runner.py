@@ -138,6 +138,7 @@ class FathomRunner:
         self,
         *,
         llm: LLMPort,
+        architect: Optional[LLMPort] = None,
         device: DevicePort,
         memory: MemoryPort,
         signal: SignalPort,
@@ -159,6 +160,7 @@ class FathomRunner:
         """
 
         self.__llm = llm
+        self.__architect = architect or llm
         self.__device = device
         self.__perception = perception
 
@@ -428,6 +430,7 @@ class FathomRunner:
             tenant=tenant,
             thread=thread,
             llm=self.__llm,
+            architect=self.__architect,
             requester=requester,
             responder=responder,
             workspace=workspace,
