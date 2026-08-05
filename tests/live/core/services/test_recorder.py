@@ -300,7 +300,7 @@ class RunFactory:
                 id="agent:fathom",
                 name="agent:fathom",
                 kind=ActorKind.AGENT,
-                model="gemini-3-flash-preview",
+                model="gemini-3.5-flash",
             ),
         )
 
