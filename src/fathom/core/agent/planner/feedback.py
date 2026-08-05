@@ -179,9 +179,7 @@ class RejectionFeedback:
         Author rejection history and the typed retry result for a command that failed structural validation.
         """
 
-        self.__reject_with(
-            state=state, analysis=analysis, prompt=f"REJECTED: {feedback.message}"
-        )
+        self.__reject_with(state=state, analysis=analysis, prompt=f"REJECTED: {feedback.message}")
         return RetryFeedback.result(
             retry=PlannerRetry(kind=RetryKind.SILENT_REJECTION, branch=RetryBranch.UNKNOWN),
             reason=feedback.message,

@@ -23,8 +23,12 @@ class VisualAssessment(SealedModel):
     active goal and turn; the model never authors goal, run, or turn identity.
     """
 
-    verdict: VisualVerdict = Field(description="Whether the visual requirement holds on this screen.")
+    verdict: VisualVerdict = Field(
+        description="Whether the visual requirement holds on this screen."
+    )
     confidence: float = Field(
         ge=0.0, le=1.0, description="Model confidence in the verdict, on a bounded 0..1 scale."
     )
-    evidence: NonBlank = Field(description="Concise visible evidence the model cites for the verdict.")
+    evidence: NonBlank = Field(
+        description="Concise visible evidence the model cites for the verdict."
+    )

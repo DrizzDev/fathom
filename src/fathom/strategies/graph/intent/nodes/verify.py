@@ -181,6 +181,7 @@ class VerifyNode:
         )
 
         # 3. Ask the LLM
+        await self.__provider.context.phase.verifying(intent=self.__provider.context.intent)
         try:
             llm_result = await self.__provider.context.llm.generate(
                 use_cache=False,

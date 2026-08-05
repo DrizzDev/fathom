@@ -50,9 +50,7 @@ class ToolRegistry:
         return {"function_declarations": ordered}
 
     @classmethod
-    def __with_assessment(
-        cls, *, name: ToolName, declaration: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def __with_assessment(cls, *, name: ToolName, declaration: Dict[str, Any]) -> Dict[str, Any]:
         """
         Attach the common visual-assessment field to a primary tool declaration, leaving others untouched.
         """

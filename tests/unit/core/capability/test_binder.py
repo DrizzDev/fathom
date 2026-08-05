@@ -80,7 +80,8 @@ class CommandBinderTest(unittest.TestCase):
         """
 
         result = self.__binder.bind(
-            intent="Open the app", proposal=self.__proposal(requirement=self.__press(), quote="Tap Login")
+            intent="Open the app",
+            proposal=self.__proposal(requirement=self.__press(), quote="Tap Login"),
         )
 
         self.assertIsInstance(result, BoundCommand)
@@ -163,7 +164,8 @@ class CommandBinderTest(unittest.TestCase):
 
         binder = CommandBinder(catalog=CommandCatalog(profiles={}))
         result = binder.bind(
-            intent="Tap Login", proposal=self.__proposal(requirement=self.__press(), quote="Tap Login")
+            intent="Tap Login",
+            proposal=self.__proposal(requirement=self.__press(), quote="Tap Login"),
         )
 
         self.assertIsInstance(result, RejectedCommand)
@@ -186,7 +188,8 @@ class CommandBinderTest(unittest.TestCase):
             }
         )
         result = CommandBinder(catalog=catalog).bind(
-            intent="Tap Login", proposal=self.__proposal(requirement=self.__press(), quote="Tap Login")
+            intent="Tap Login",
+            proposal=self.__proposal(requirement=self.__press(), quote="Tap Login"),
         )
 
         self.assertIsInstance(result, RejectedCommand)

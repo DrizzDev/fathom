@@ -193,7 +193,6 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
     Replays the final-subgoal VERIFY rejection/acceptance handoff.
     """
 
-
     @staticmethod
     def __step_result(*, step_number: int) -> StepResult:
         """
@@ -257,10 +256,16 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoalFixtures.make(index=0, description="Tap on the current address or change address option"),
-                SubGoalFixtures.make(index=1, description="Type HSR Layout into the address search field"),
+                SubGoalFixtures.make(
+                    index=0, description="Tap on the current address or change address option"
+                ),
+                SubGoalFixtures.make(
+                    index=1, description="Type HSR Layout into the address search field"
+                ),
                 SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
-                SubGoalFixtures.make(index=3, description="Tap the button to confirm or save the address change"),
+                SubGoalFixtures.make(
+                    index=3, description="Tap the button to confirm or save the address change"
+                ),
             ]
         )
         for _ in range(3):

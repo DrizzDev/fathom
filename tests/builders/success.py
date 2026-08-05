@@ -45,9 +45,7 @@ class SuccessFixtures:
         """
 
         start = intent.find(quote)
-        return SourceSpan(
-            quote=quote, location=SourceLocation(start=start, end=start + len(quote))
-        )
+        return SourceSpan(quote=quote, location=SourceLocation(start=start, end=start + len(quote)))
 
     @classmethod
     def command(
@@ -121,7 +119,5 @@ class ProgressFixtures:
 
         return GoalState(
             goal=goal,
-            progress=cls.progress(
-                status=status, attempts=attempts, recovery=recovery, limit=limit
-            ),
+            progress=cls.progress(status=status, attempts=attempts, recovery=recovery, limit=limit),
         )

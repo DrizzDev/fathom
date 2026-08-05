@@ -63,6 +63,7 @@ from fathom.core.services.perception import PerceptionService
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.core.services.timing import RunClock
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
@@ -209,6 +210,7 @@ class GraphContext:
 
         # Injected services with defaults for backward compatibility
         self.__metrics = metrics or ExecutionMetrics()
+        self.__clock = RunClock()
 
         self.__capabilities = RuntimeCapabilities(
             hitl=HITLCapability(enabled=signal.supports_interruption()),
@@ -825,6 +827,14 @@ class GraphContext:
         """
 
         return self.__metrics
+
+    @property
+    def clock(self) -> RunClock:
+        """
+        Returns the run-scoped monotonic timing ledger shared across graph nodes.
+        """
+
+        return self.__clock
 
     @property
     def vision(self) -> VisionService:

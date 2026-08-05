@@ -276,7 +276,13 @@ class DeterministicDecomposer:
         Return a single deterministic sub-goal so an accepted plan always has one goal.
         """
 
-        return [SubGoal(index=0, objective=intent, success=ObservedSuccess(observation=ObservationRequirement(assertion=intent)))]
+        return [
+            SubGoal(
+                index=0,
+                objective=intent,
+                success=ObservedSuccess(observation=ObservationRequirement(assertion=intent)),
+            )
+        ]
 
 
 class TerminalIntentGraph:

@@ -508,7 +508,9 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
     still reaches the planned step and the goal cursor never advances.
     """
 
-    def __provider(self, *, agent_state: AgentState, vision: Mock, reasoner: Mock) -> SimpleNamespace:
+    def __provider(
+        self, *, agent_state: AgentState, vision: Mock, reasoner: Mock
+    ) -> SimpleNamespace:
         return SimpleNamespace(
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -531,7 +533,9 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
             ),
         )
 
-    async def test_satisfied_with_action_records_retaining_candidate_action_stays_cursor_holds(self) -> None:
+    async def test_satisfied_with_action_records_retaining_candidate_action_stays_cursor_holds(
+        self,
+    ) -> None:
         agent_state = AgentState(
             intent="Open Amazon",
             max_steps=10,
@@ -562,12 +566,14 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
         reasoner = Mock()
         reasoner.select_best_action.return_value = action
 
-        node = AnalyzeNode(provider=self.__provider(agent_state=agent_state, vision=vision, reasoner=reasoner))  # type: ignore[arg-type]
+        node = AnalyzeNode(
+            provider=self.__provider(agent_state=agent_state, vision=vision, reasoner=reasoner)
+        )  # type: ignore[arg-type]
 
-        with self.assertLogs(
-            "fathom.strategies.graph.intent.nodes.analyze", level="INFO"
-        ) as logs:
-            result = await node.run(state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.amazon.mp3")})
+        with self.assertLogs("fathom.strategies.graph.intent.nodes.analyze", level="INFO") as logs:
+            result = await node.run(
+                state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.amazon.mp3")}
+            )
 
         # Exactly one model turn (the vision boundary the planner calls once).
         vision.analyze.assert_awaited_once()

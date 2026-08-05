@@ -32,10 +32,7 @@ class _GraphHandle(Protocol):
         ...
 
     async def aupdate_state(
-        self,
-        config: RunnableConfig,
-        values: Dict[str, Any],
-        as_node: Optional[str] = None
+        self, config: RunnableConfig, values: Dict[str, Any], as_node: Optional[str] = None
     ) -> RunnableConfig:
         """
         Commit a state patch attributed to ``as_node`` for the configured thread.
@@ -84,9 +81,7 @@ class LangGraphPlanStore(PlanStore):
         checkpoint: Dict[str, Any] = {
             "intent": plan.intent,
             "current_sub_goal_index": plan.cursor,
-            "sub_goals": [
-                GoalState(goal=goal).model_dump(mode="json") for goal in plan.goals
-            ],
+            "sub_goals": [GoalState(goal=goal).model_dump(mode="json") for goal in plan.goals],
         }
 
         await graph.aupdate_state(

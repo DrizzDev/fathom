@@ -4,6 +4,7 @@ import json
 import unittest
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
+from unittest.mock import AsyncMock
 
 from fathom.constants import ActionType
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
@@ -117,6 +118,7 @@ class _Provider:
             intent="finish onboarding",
             max_steps=10,
             workflow_id="run-test",
+            phase=AsyncMock(),
             perception=_Perception(
                 image=capture_image,
                 activity=capture_activity,

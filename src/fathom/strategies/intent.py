@@ -483,6 +483,7 @@ class IntentStrategy:
                 assembler=assembler,
             )
         else:
+            await self.__phase.authoring(intent=self.__intent)
             script_data = await self.__run_finalization_phase(
                 assembler=assembler,
                 timeout=budgets.history.script,
@@ -1569,9 +1570,7 @@ class IntentStrategy:
 
         skipped: List[str] = []
         subgoals = self.__graph_context.agent_state.sub_goal_list
-        executed = [
-            sub_goal.objective for sub_goal in subgoals if sub_goal.is_complete()
-        ]
+        executed = [sub_goal.objective for sub_goal in subgoals if sub_goal.is_complete()]
 
         return executed, skipped, len(subgoals)
 

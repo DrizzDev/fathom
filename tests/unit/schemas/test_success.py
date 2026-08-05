@@ -39,7 +39,9 @@ class SuccessUnionTest(unittest.TestCase):
         )
 
         self.assertEqual(success.kind, SuccessKind.OBSERVED)
-        self.assertEqual(success.observation.assertion, "Search results for Ghar soaps are displayed")
+        self.assertEqual(
+            success.observation.assertion, "Search results for Ghar soaps are displayed"
+        )
 
     def test_command_success_requires_operation_and_located_source(self) -> None:
         """

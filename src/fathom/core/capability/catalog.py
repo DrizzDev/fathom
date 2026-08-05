@@ -65,7 +65,9 @@ class CommandCatalog:
         Return whether a canonical command requirement runs on an admissible execution channel.
         """
 
-        return self.profile(action_type=requirement.operation).channel in COMMAND_REQUIREMENT_CHANNELS
+        return (
+            self.profile(action_type=requirement.operation).channel in COMMAND_REQUIREMENT_CHANNELS
+        )
 
     def is_spatial(self, *, action_type: ActionType) -> bool:
         """

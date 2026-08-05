@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, cast
 from fathom.constants.collaboration import TaskCode, TaskKind, TaskState
 from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import HITLNotAvailableError, HITLTimeoutError
 from fathom.schemas.execution import ExecutionContext
@@ -36,10 +37,11 @@ class ExecuteNode:
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the EXECUTE node handler.
+        Run the EXECUTE node handler under the run-scoped device-action timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.EXECUTE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """

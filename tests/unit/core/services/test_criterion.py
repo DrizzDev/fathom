@@ -177,9 +177,7 @@ class CriterionObserverModelAdjudicationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.source, CriterionSource.LLM)
         self.assertEqual(second.source, CriterionSource.CACHE)
 
-        unsatisfied = _StubLLM(
-            verdicts=[CriterionVerdict.UNSATISFIED, CriterionVerdict.SATISFIED]
-        )
+        unsatisfied = _StubLLM(verdicts=[CriterionVerdict.UNSATISFIED, CriterionVerdict.SATISFIED])
         checker2 = CriterionObserver(llm=unsatisfied)
         await checker2.check(
             workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
@@ -198,10 +196,16 @@ class CriterionObserverModelAdjudicationTest(unittest.IsolatedAsyncioTestCase):
         llm = _StubLLM(verdicts=[CriterionVerdict.SATISFIED, CriterionVerdict.UNSATISFIED])
         checker = CriterionObserver(llm=llm)
         await checker.check(
-            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation(visual_hash="hA")
+            workflow_id="wf",
+            index=0,
+            requirement=_requirement(),
+            observation=_observation(visual_hash="hA"),
         )
         other = await checker.check(
-            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation(visual_hash="hB")
+            workflow_id="wf",
+            index=0,
+            requirement=_requirement(),
+            observation=_observation(visual_hash="hB"),
         )
         self.assertEqual(llm.calls, 2)
         self.assertEqual(other.verdict, CriterionVerdict.UNSATISFIED)

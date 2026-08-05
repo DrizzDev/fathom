@@ -145,15 +145,17 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         state.record_deferral()
 
         planner = StepPlanner(vision_tool=Mock())
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=True,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=True,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -199,15 +201,17 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             vision_tool=Mock(),
             escalation_policy=EscalationPolicy(enabled=False),
         )
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=True,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=True,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -308,15 +312,17 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = (await planner.plan_step(
-            state=state,
-            screen_width=100,
-            screen_height=200,
-            reasoner=reasoner,
-            prompt_if_stuck=False,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                screen_width=100,
+                screen_height=200,
+                reasoner=reasoner,
+                prompt_if_stuck=False,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -345,15 +351,17 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         planner = StepPlanner(vision_tool=vision)
         context = AgentFixtures.context_manager(user_guidance=[Mock(active=True)])
 
-        result = (await planner.plan_step(
-            state=state,
-            screen_width=100,
-            screen_height=200,
-            reasoner=reasoner,
-            prompt_if_stuck=True,
-            context_manager=context,
-            capture=ScreenFixtures.capture(activity="app"),
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                screen_width=100,
+                screen_height=200,
+                reasoner=reasoner,
+                prompt_if_stuck=True,
+                context_manager=context,
+                capture=ScreenFixtures.capture(activity="app"),
+            )
+        ).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.should_retry)

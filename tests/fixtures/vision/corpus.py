@@ -32,20 +32,35 @@ class VisionCase(SealedModel):
     """
 
     name: NonBlank = Field(description="Stable case identifier used in reports.")
-    screenshot: NonBlank = Field(description="File name under screens/ holding the captured pixels.")
+    screenshot: NonBlank = Field(
+        description="File name under screens/ holding the captured pixels."
+    )
     app: NonBlank = Field(description="Application exercised by the screen.")
     package: NonBlank = Field(description="Foreground package truth on the captured screen.")
-    assertion: NonBlank = Field(description="Exact assertion threaded into the production VLM prompt.")
+    assertion: NonBlank = Field(
+        description="Exact assertion threaded into the production VLM prompt."
+    )
     goal_kind: SuccessKind = Field(description="Success kind of the active goal driving this turn.")
-    expected_verdict: VisualVerdict = Field(description="Oracle verdict a correct model must return.")
-    truth_satisfied: bool = Field(description="Oracle: whether the observed goal is genuinely satisfied here.")
+    expected_verdict: VisualVerdict = Field(
+        description="Oracle verdict a correct model must return."
+    )
+    truth_satisfied: bool = Field(
+        description="Oracle: whether the observed goal is genuinely satisfied here."
+    )
     authority_package: Optional[str] = Field(
-        default=None, description="Bound TargetAuthority package for the goal, or None when unbound."
+        default=None,
+        description="Bound TargetAuthority package for the goal, or None when unbound.",
     )
     scenario: NonBlank = Field(description="Screen type or adversarial trap this case represents.")
-    provenance: NonBlank = Field(description="Source of the pixels: a trace run path or a controlled tag.")
-    label_source: LabelSource = Field(description="Whether the ground-truth was assigned by human or programmatic means.")
-    critical_negative: bool = Field(description="Whether an effective false positive here blocks the Slice-3 cutover.")
+    provenance: NonBlank = Field(
+        description="Source of the pixels: a trace run path or a controlled tag."
+    )
+    label_source: LabelSource = Field(
+        description="Whether the ground-truth was assigned by human or programmatic means."
+    )
+    critical_negative: bool = Field(
+        description="Whether an effective false positive here blocks the Slice-3 cutover."
+    )
 
     @property
     def expected_admission(self) -> bool:
@@ -62,9 +77,13 @@ class VisionCase(SealedModel):
         """
 
         if self.goal_kind is SuccessKind.OBSERVED:
-            expected = VisualVerdict.SATISFIED if self.truth_satisfied else VisualVerdict.NOT_SATISFIED
+            expected = (
+                VisualVerdict.SATISFIED if self.truth_satisfied else VisualVerdict.NOT_SATISFIED
+            )
             if self.expected_verdict is not expected:
-                raise ValueError("Observed case expected_verdict must match its truth_satisfied oracle.")
+                raise ValueError(
+                    "Observed case expected_verdict must match its truth_satisfied oracle."
+                )
         return self
 
 

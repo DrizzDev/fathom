@@ -79,7 +79,9 @@ class CommandGateTest(unittest.TestCase):
             action_type="type", target_name="Search box", export_target="Search box", confidence=0.9
         )
         with self.assertRaises(ToolValidationError):
-            self.__gate().validate(command=ToolCommand(action_type=ActionType.TYPE, payload=payload))
+            self.__gate().validate(
+                command=ToolCommand(action_type=ActionType.TYPE, payload=payload)
+            )
 
     def test_rejects_validate_without_validation_subject(self) -> None:
         """
@@ -120,7 +122,9 @@ class CommandGateTest(unittest.TestCase):
         """
 
         full = CommandCatalogProvider().build()
-        catalog = CommandCatalog(profiles={ActionType.TAP: full.profile(action_type=ActionType.TAP)})
+        catalog = CommandCatalog(
+            profiles={ActionType.TAP: full.profile(action_type=ActionType.TAP)}
+        )
         gate = CommandGate(catalog=catalog)
 
         with self.assertRaises(ToolValidationError):

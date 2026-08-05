@@ -20,7 +20,11 @@ class VisionCaseRepository:
         Bind the fixtures root; defaults to the committed tests/fixtures/vision directory.
         """
 
-        self.__root = root if root is not None else Path(__file__).resolve().parents[2] / "fixtures" / "vision"
+        self.__root = (
+            root
+            if root is not None
+            else Path(__file__).resolve().parents[2] / "fixtures" / "vision"
+        )
 
     @property
     def screens(self) -> Path:

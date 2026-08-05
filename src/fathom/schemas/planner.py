@@ -22,7 +22,10 @@ class PlannerMetrics(SealedModel):
     """
 
     latency: float = Field(ge=0.0, description="Planner call wall-clock latency in seconds.")
-    calls: int = Field(ge=1, description="Planner generate-call count; a produced analysis always ran at least once.")
+    calls: int = Field(
+        ge=1,
+        description="Planner generate-call count; a produced analysis always ran at least once.",
+    )
 
 
 class GoalRef(SealedModel):
@@ -63,7 +66,9 @@ class GuardEvent(SealedModel):
     category: Literal[PlannerEventCategory.GUARD] = Field(
         default=PlannerEventCategory.GUARD, description="Event family discriminator."
     )
-    kind: PlannerEventKind = Field(description="Whether the action was blocked or the guard bypassed.")
+    kind: PlannerEventKind = Field(
+        description="Whether the action was blocked or the guard bypassed."
+    )
     action: str = Field(description="Human-facing descriptor of the guarded action.")
     block_reason: Optional[BlockReason] = Field(
         default=None, description="Structured block reason, when the action was blocked."
@@ -106,7 +111,9 @@ class GuardDecision(SealedModel):
     The pure verdict of the action guard: whether to block, the blocked action, why, and the events observed.
     """
 
-    outcome: GuardOutcome = Field(description="Whether the action is allowed or which rule blocked it.")
+    outcome: GuardOutcome = Field(
+        description="Whether the action is allowed or which rule blocked it."
+    )
     action: Optional[NonBlank] = Field(
         default=None, description="Descriptor of the blocked action, when the guard blocked one."
     )

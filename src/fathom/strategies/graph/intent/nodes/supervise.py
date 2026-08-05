@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
 from fathom.core.services.grounding import GroundingRecorder
 from fathom.schemas.binding import Binding
 from fathom.schemas.execution import ExecutionContext
@@ -39,10 +40,11 @@ class SuperviseNode:
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the SUPERVISE node handler.
+        Run the SUPERVISE node handler under the run-scoped supervise timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.SUPERVISE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """

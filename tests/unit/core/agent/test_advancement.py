@@ -69,9 +69,7 @@ def _step(action: Action, *, requirement: Optional[CommandRequirement] = None) -
     return Step(action=action, screen_hash="h", step_number=1, requirement=requirement)
 
 
-def _result(
-    step: Step, *, executed: bool = True, capture: Optional[Capture] = None
-) -> StepResult:
+def _result(step: Step, *, executed: bool = True, capture: Optional[Capture] = None) -> StepResult:
     return StepResult(
         step=step,
         success=True,
@@ -152,7 +150,9 @@ class TestCommandActionMatch:
         requirement = PressRequirement(operation=ActionType.TAP, target="Login")
         success = _command_success(requirement)
         action = _action(ActionType.TAP, natural_language_target="Logout")
-        evidence = _turn(execution=_result(_step(action, requirement=requirement)), binding=_bound())
+        evidence = _turn(
+            execution=_result(_step(action, requirement=requirement)), binding=_bound()
+        )
         assert _decide(success, evidence) is AdvanceKind.ADVANCE
 
     def test_unbound_target_retains(self) -> None:
@@ -170,7 +170,9 @@ class TestCommandActionMatch:
         requirement = PressRequirement(operation=ActionType.TAP, target="Login")
         success = _command_success(requirement)
         action = _action(ActionType.TAP, natural_language_target="Login")
-        evidence = _turn(execution=_result(_step(action, requirement=requirement)), binding=_bound())
+        evidence = _turn(
+            execution=_result(_step(action, requirement=requirement)), binding=_bound()
+        )
         assert _decide(success, evidence) is AdvanceKind.ADVANCE
 
     def test_inferred_target_advances(self) -> None:
@@ -208,7 +210,9 @@ class TestCommandActionMatch:
         )
         success = _command_success(requirement)
         action = _action(ActionType.SCROLL, surface="other surface")
-        evidence = _turn(execution=_result(_step(action, requirement=requirement)), binding=_bound())
+        evidence = _turn(
+            execution=_result(_step(action, requirement=requirement)), binding=_bound()
+        )
         assert _decide(success, evidence) is AdvanceKind.ADVANCE
 
     def test_missing_dispatch_retains(self) -> None:
@@ -325,7 +329,9 @@ class TestConfidenceFloor:
         return _turn(
             execution=_result(_step(_action(ActionType.TAP))),
             observation=target,
-            verdict=Verdict(outcome=CriterionVerdict.SATISFIED, confidence=confidence, evidence="s"),
+            verdict=Verdict(
+                outcome=CriterionVerdict.SATISFIED, confidence=confidence, evidence="s"
+            ),
         )
 
     def test_satisfied_at_floor_advances(self) -> None:
@@ -596,19 +602,29 @@ class TestVisualEvidenceAdvancement:
         )
         assert _decide(ObservedSuccess(observation=obs), evidence) is AdvanceKind.RETAIN
 
-    def test_observed_low_confidence_still_advances(self) -> None:
+    def test_observed_satisfied_at_floor_advances(self) -> None:
         """
-        Confidence is telemetry only: a low-confidence satisfied verdict still advances.
+        A satisfied assessment exactly at the confidence floor confirms and advances.
         """
 
         obs = _obs("search results for ghar soap shown")
         evidence = self.__turn(
             observation=obs,
-            visual=self.__visual(
-                observation=obs, verdict=VisualVerdict.SATISFIED, confidence=0.05
-            ),
+            visual=self.__visual(observation=obs, verdict=VisualVerdict.SATISFIED, confidence=0.7),
         )
         assert _decide(ObservedSuccess(observation=obs), evidence) is AdvanceKind.ADVANCE
+
+    def test_observed_below_floor_retains(self) -> None:
+        """
+        Vision is the live authority: a satisfied verdict below the confidence floor cannot advance.
+        """
+
+        obs = _obs("search results for ghar soap shown")
+        evidence = self.__turn(
+            observation=obs,
+            visual=self.__visual(observation=obs, verdict=VisualVerdict.SATISFIED, confidence=0.69),
+        )
+        assert _decide(ObservedSuccess(observation=obs), evidence) is AdvanceKind.RETAIN
 
     def test_command_postcondition_receipt_and_assessment_advances(self) -> None:
         """

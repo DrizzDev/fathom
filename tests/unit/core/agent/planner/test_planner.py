@@ -46,15 +46,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         """
 
         planner = StepPlanner(vision_tool=Mock())
-        result = (await planner.plan_step(
-            state=self.__stuck_state_with_exhausted_autonomous_budget(),
-            reasoner=Mock(),
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=self.__stuck_state_with_exhausted_autonomous_budget(),
+                reasoner=Mock(),
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertFalse(result.is_complete)
         self.assertIsNotNone(result.step)
@@ -92,15 +94,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         reasoner = Mock()
         reasoner.select_best_action.return_value = action
 
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.should_retry)
@@ -149,15 +153,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         state = AgentFixtures.state(intent="Tap search")
         state.set_sub_goals([SubGoalFixtures.make(description="Tap search box")])
 
-        result = (await StepPlanner(vision_tool=vision).plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -212,15 +218,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        result = (await StepPlanner(vision_tool=vision).plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -259,15 +267,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         reasoner = Mock()
         reasoner.select_best_action.return_value = action
 
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         self.assertFalse(result.should_retry)
@@ -379,15 +389,17 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -415,15 +427,17 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.is_complete)
@@ -483,15 +497,17 @@ class StepPlannerControlAdmissionTest(unittest.IsolatedAsyncioTestCase):
             text="Which product should I select?",
         )
 
-        return (await StepPlanner(vision_tool=vision).plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        return (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
     async def test_ask_user_command_reaches_escalation_under_capture_goal(self) -> None:
         """
@@ -576,15 +592,17 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = action
         planner = StepPlanner(vision_tool=vision)
 
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         return result, state, vision
 
@@ -660,15 +678,17 @@ class StepPlannerTerminalReasonResolutionTest(unittest.IsolatedAsyncioTestCase):
         """
 
         planner = StepPlanner(vision_tool=Mock())
-        return (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )).plan
+        return (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
     async def test_state_marked_cancelled_preserves_cancelled_reason(self) -> None:
         """

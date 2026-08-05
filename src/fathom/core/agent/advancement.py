@@ -32,8 +32,8 @@ class AdvancementPolicy:
     def __init__(
         self,
         *,
-        floor: float = OracleThreshold.CONFIDENCE_FLOOR,
         matcher: Optional[CommandMatcher] = None,
+        floor: float = OracleThreshold.CONFIDENCE_FLOOR,
     ) -> None:
         """
         Bind the verdict confidence floor and the command-matching authority.
@@ -142,9 +142,9 @@ class AdvancementPolicy:
             and request.name == success.target.name
             and capture is not None
             and capture.success
+            and bool(capture.value)
             and capture.name == success.target.name
             and capture.step == execution.step.step_number
-            and bool(capture.value)
         )
 
     def __escalation(self, *, success: Success, evidence: TurnEvidence) -> Advancement:
@@ -213,6 +213,7 @@ class AdvancementPolicy:
         if outcome is CriterionVerdict.SATISFIED:
             return (
                 assessment.verdict is VisualVerdict.SATISFIED
+                and assessment.confidence >= self.__floor
                 and not visual.action_present
                 and self.__foreground_holds(visual=visual)
             )

@@ -233,9 +233,7 @@ class StepPlanner:
                     analysis.tool_response.artifacts if analysis.tool_response is not None else ()
                 ),
                 diagnostics=(
-                    analysis.tool_response.diagnostics
-                    if analysis.tool_response is not None
-                    else ()
+                    analysis.tool_response.diagnostics if analysis.tool_response is not None else ()
                 ),
             ),
             events=tuple(events),

@@ -111,5 +111,7 @@ class CaptureSuccess(SealedModel):
 
 Success = Annotated[
     Union[ObservedSuccess, CommandSuccess, CaptureSuccess],
-    Field(discriminator="kind", description="Exactly one typed definition of a sub-goal's success."),
+    Field(
+        discriminator="kind", description="Exactly one typed definition of a sub-goal's success."
+    ),
 ]

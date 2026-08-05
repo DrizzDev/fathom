@@ -30,7 +30,9 @@ class CommandRequirementTest(unittest.TestCase):
         """
 
         for operation in ("tap", "long_press"):
-            requirement = self.__adapter.validate_python({"operation": operation, "target": "Login"})
+            requirement = self.__adapter.validate_python(
+                {"operation": operation, "target": "Login"}
+            )
             self.assertIsInstance(requirement, PressRequirement)
 
     def test_type_variant_requires_target_and_text(self) -> None:

@@ -18,6 +18,7 @@ from fathom.constants.tools import StateNamespace
 from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.exceptions import ToolValidationError
+from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
 from fathom.schemas.advancement import Advancement
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
@@ -73,6 +74,8 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 workflow_id="run-test",
                 max_steps=max_steps,
                 agent_state=agent_state,
@@ -84,6 +87,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
@@ -195,19 +199,21 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=PlanTurn(plan=PlanResult(
-                step=None,
-                is_complete=False,
-                should_retry=True,
-                reason="Remember selected price",
-                updates=(
-                    StateUpdate(
-                        namespace=StateNamespace.MEMORY,
-                        key="item_price",
-                        value="94",
+            return_value=PlanTurn(
+                plan=PlanResult(
+                    step=None,
+                    is_complete=False,
+                    should_retry=True,
+                    reason="Remember selected price",
+                    updates=(
+                        StateUpdate(
+                            namespace=StateNamespace.MEMORY,
+                            key="item_price",
+                            value="94",
+                        ),
                     ),
-                ),
-            ))
+                )
+            )
         )
         provider = self.__provider(agent_state=agent_state, planner=planner)
         node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
@@ -296,16 +302,19 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(plan=SimpleNamespace(
-                action=None,
-                metrics=None,
-                rationale="",
-                step=None,
-                is_complete=False,
-                reasoning="",
-                ux_label="",
-                use_xml_grounding=True,
-            ), events=()),
+            return_value=SimpleNamespace(
+                plan=SimpleNamespace(
+                    action=None,
+                    metrics=None,
+                    rationale="",
+                    step=None,
+                    is_complete=False,
+                    reasoning="",
+                    ux_label="",
+                    use_xml_grounding=True,
+                ),
+                events=(),
+            ),
         )
         provider = SimpleNamespace(
             completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -313,6 +322,8 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
@@ -324,6 +335,7 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
@@ -363,17 +375,22 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             intent="change the address to salaryse office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
-        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(plan=SimpleNamespace(
-                metrics=None,
-                step=None,
-                is_complete=True,
-                should_retry=False,
-                reason="Address appears selected",
-                context=PlanContext(),
-            ), events=()),
+            return_value=SimpleNamespace(
+                plan=SimpleNamespace(
+                    metrics=None,
+                    step=None,
+                    is_complete=True,
+                    should_retry=False,
+                    reason="Address appears selected",
+                    context=PlanContext(),
+                ),
+                events=(),
+            ),
         )
         provider = SimpleNamespace(
             completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -381,6 +398,8 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
@@ -392,6 +411,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
@@ -433,22 +453,25 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(plan=SimpleNamespace(
-                metrics=None,
-                is_complete=True,
-                should_retry=False,
-                reason=CompletionReason.SUCCESS.value,
-                context=PlanContext(),
-                step=Step(
-                    action=Action(
-                        action_type=ActionType.TAP,
-                        target="stale target",
-                        rationale="stale action attached to completion claim",
+            return_value=SimpleNamespace(
+                plan=SimpleNamespace(
+                    metrics=None,
+                    is_complete=True,
+                    should_retry=False,
+                    reason=CompletionReason.SUCCESS.value,
+                    context=PlanContext(),
+                    step=Step(
+                        action=Action(
+                            action_type=ActionType.TAP,
+                            target="stale target",
+                            rationale="stale action attached to completion claim",
+                        ),
+                        step_number=0,
+                        screen_hash="screen",
                     ),
-                    step_number=0,
-                    screen_hash="screen",
                 ),
-            ), events=()),
+                events=(),
+            ),
         )
         provider = SimpleNamespace(
             completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -456,6 +479,8 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
@@ -467,6 +492,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 memory=SimpleNamespace(set=AsyncMock()),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
@@ -503,14 +529,17 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(reason=reason):
                 planner = Mock()
                 planner.plan_step = AsyncMock(
-                    return_value=SimpleNamespace(plan=SimpleNamespace(
-                        metrics=None,
-                        step=None,
-                        is_complete=True,
-                        should_retry=False,
-                        reason=reason,
-                        context=PlanContext(),
-                    ), events=()),
+                    return_value=SimpleNamespace(
+                        plan=SimpleNamespace(
+                            metrics=None,
+                            step=None,
+                            is_complete=True,
+                            should_retry=False,
+                            reason=reason,
+                            context=PlanContext(),
+                        ),
+                        events=(),
+                    ),
                 )
                 provider = SimpleNamespace(
                     completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -518,6 +547,8 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                     persistence=_Persistence(),
                     hitl=SimpleNamespace(prompt=AsyncMock()),
                     context=SimpleNamespace(
+                        intent="test-intent",
+                        phase=AsyncMock(),
                         workflow_id="run-test",
                         max_steps=10,
                         agent_state=agent_state,
@@ -531,6 +562,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                         use_xml=True,
                         reasoner=Mock(),
                         metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                        clock=RunClock(),
                         memory=SimpleNamespace(set=AsyncMock()),
                         telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
                     ),
@@ -575,24 +607,27 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
 
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(plan=SimpleNamespace(
-                metrics=None,
-                step=Step(
-                    action=Action(
-                        target="search_field",
-                        rationale="tap search",
-                        action_type=ActionType.TAP,
+            return_value=SimpleNamespace(
+                plan=SimpleNamespace(
+                    metrics=None,
+                    step=Step(
+                        action=Action(
+                            target="search_field",
+                            rationale="tap search",
+                            action_type=ActionType.TAP,
+                        ),
+                        metadata={},
+                        step_number=0,
+                        screen_hash="abc",
                     ),
-                    metadata={},
-                    step_number=0,
-                    screen_hash="abc",
+                    reason="planned",
+                    is_complete=False,
+                    should_retry=False,
+                    reasoning="deliberating",
+                    context=PlanContext(analysis=analysis),
                 ),
-                reason="planned",
-                is_complete=False,
-                should_retry=False,
-                reasoning="deliberating",
-                context=PlanContext(analysis=analysis),
-            ), events=()),
+                events=(),
+            ),
         )
         provider = SimpleNamespace(
             completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -600,6 +635,8 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
             hitl=SimpleNamespace(prompt=AsyncMock()),
             is_cancelled=AsyncMock(return_value=False),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 max_steps=10,
                 use_xml=True,
                 reasoner=Mock(),
@@ -609,6 +646,7 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
                 memory=SimpleNamespace(set=AsyncMock()),
                 context_manager=AgentFixtures.context_manager(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
                 signal=SimpleNamespace(supports_interruption=Mock(return_value=False)),
                 device=SimpleNamespace(get_dimensions=AsyncMock(return_value=(100, 200))),
@@ -651,15 +689,18 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(plan=SimpleNamespace(
-                metrics=None,
-                step=None,
-                is_complete=False,
-                should_retry=False,
-                reason="",
-                reasoning="",
-                context=PlanContext(),
-            ), events=()),
+            return_value=SimpleNamespace(
+                plan=SimpleNamespace(
+                    metrics=None,
+                    step=None,
+                    is_complete=False,
+                    should_retry=False,
+                    reason="",
+                    reasoning="",
+                    context=PlanContext(),
+                ),
+                events=(),
+            ),
         )
         provider = SimpleNamespace(
             completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
@@ -667,6 +708,8 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             context=SimpleNamespace(
+                intent="test-intent",
+                phase=AsyncMock(),
                 workflow_id="run-test",
                 max_steps=10,
                 agent_state=agent_state,
@@ -679,6 +722,7 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
                 use_xml=True,
                 reasoner=Mock(),
                 metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
+                clock=RunClock(),
                 telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
             ),
         )

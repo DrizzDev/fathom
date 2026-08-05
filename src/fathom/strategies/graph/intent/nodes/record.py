@@ -19,10 +19,13 @@ from fathom.constants.state import (
     IntentStateKey,
     VerifyMode,
 )
+from fathom.constants.timing import TimingEvent, TimingPhase
 from fathom.conversation.identity import InteractionIdentity
 from fathom.core.exceptions import FathomError
+from fathom.core.services.timing import Stopwatch
 from fathom.schemas.binding import Binding
 from fathom.schemas.effect import ActionEffectStatus, EffectReading
+from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.experience import Experience
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.recording import (
@@ -35,9 +38,10 @@ from fathom.schemas.recording import (
     StepCompletion,
     Usage,
 )
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult, TraceEmission
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import StepResult
+from fathom.schemas.timing import StepTiming
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
@@ -137,6 +141,7 @@ class RecordNode:
             return result
 
         step_result: StepResult = recorded_step
+        record_watch = Stopwatch()
 
         # ERROR BOUNDARY: Wrap recording logic
         try:
@@ -386,6 +391,7 @@ class RecordNode:
                 observation=screen_observation,
                 binding=binding,
                 reading=reading_raw if isinstance(reading_raw, EffectReading) else None,
+                trace=self.__trace(state=state),
             )
             await self.__store_outcome(
                 step_result=step_result,
@@ -393,9 +399,11 @@ class RecordNode:
                 advanced=subgoal_result is not None,
             )
             if subgoal_result is not None:
+                self.__emit_step_timing(step_result=step_result, watch=record_watch)
                 self.__provider.persistence.persist(result=subgoal_result)
                 return subgoal_result
 
+            self.__emit_step_timing(step_result=step_result, watch=record_watch)
             logger.info(
                 f"Step {self.__provider.context.agent_state.step_count} recorded successfully",
                 extra={
@@ -1021,6 +1029,48 @@ class RecordNode:
                 "duration.execution": state.get(CommonStateKey.EXECUTION_DURATION),
             },
         )
+
+    def __emit_step_timing(self, *, step_result: StepResult, watch: Stopwatch) -> None:
+        """
+        Close the record phase and emit the committed per-step timing breakdown for this executed step.
+        """
+
+        clock = self.__provider.context.clock
+        clock.record(phase=TimingPhase.RECORD, duration=watch.elapsed)
+        timing = clock.commit(
+            step=step_result.step.step_number,
+            subgoal=self.__sub_goal_index(),
+        )
+        if not isinstance(timing, StepTiming):
+            return
+        logger.info(
+            "Step timing recorded",
+            extra={
+                "component": "graph.intent.record",
+                "event": TimingEvent.STEP.value,
+                "workflow.id": self.__provider.context.workflow_id,
+                **timing.to_event(),
+            },
+        )
+
+    def __sub_goal_index(self) -> int:
+        """
+        Return the active sub-goal index for timing correlation, or -1 when no sub-goal is active.
+        """
+
+        progress = self.__provider.context.agent_state.get_sub_goal_progress()
+        return progress[0] if isinstance(progress, tuple) else -1
+
+    @staticmethod
+    def __trace(*, state: IntentGraphState) -> Tuple[TraceEmission, ...]:
+        """
+        Return this turn's dispatched trace emissions for the shadow's post-action vision verdict, or empty.
+        """
+
+        context = state.get(IntentStateKey.EXECUTION_CONTEXT)
+        if not isinstance(context, ExecutionContext) or context.execution_result is None:
+            return ()
+        return context.execution_result.trace_emissions
 
     async def __store_outcome(
         self,

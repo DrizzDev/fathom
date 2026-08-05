@@ -54,8 +54,7 @@ class CommandMatcher:
 
         if isinstance(requirement, WaitRequirement):
             return (
-                action.action_type is ActionType.WAIT
-                and action.wait_duration == requirement.bound
+                action.action_type is ActionType.WAIT and action.wait_duration == requirement.bound
             )
 
         return self.__navigation(action=action, requirement=requirement)

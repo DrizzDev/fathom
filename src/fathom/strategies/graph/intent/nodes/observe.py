@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 from fathom.constants import ActionExecutionKind, ActionType
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
 from fathom.core.services.effect import EffectRecorder
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
@@ -41,10 +42,11 @@ class ObserveNode:
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the OBSERVE node handler.
+        Run the OBSERVE node handler under the run-scoped post-action timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.OBSERVE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """

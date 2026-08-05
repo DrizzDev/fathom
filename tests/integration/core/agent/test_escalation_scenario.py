@@ -128,15 +128,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         planner = StepPlanner(vision_tool=vision)
         context = self.__context()
 
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=self.__capture(),
-            context_manager=context,
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=self.__capture(),
+                context_manager=context,
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         # ASK_USER was NOT produced; the planner fell through to analysis.
         self.assertEqual(state.deferral_count, 1)
@@ -165,15 +167,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state.record_deferral()  # Now at 3 (above default limit of 2).
 
         planner = StepPlanner(vision_tool=Mock())
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -201,15 +205,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             )
 
         planner = StepPlanner(vision_tool=Mock())
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -234,15 +240,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         self.assertTrue(state.current_sub_goal_over_budget)
 
         planner = StepPlanner(vision_tool=Mock())
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -298,15 +306,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             vision_tool=Mock(),
             escalation_policy=EscalationPolicy(enabled=False),
         )
-        result = (await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )).plan
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None

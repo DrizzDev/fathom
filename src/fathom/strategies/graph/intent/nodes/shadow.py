@@ -8,6 +8,7 @@ from fathom.core.agent.candidate import ShadowCandidate
 from fathom.core.agent.eligibility import Eligibility
 from fathom.core.capability.matcher import CommandMatcher
 from fathom.schemas.advancement import Advancement
+from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.planner import PlannerMetrics
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.shadow import (
@@ -45,7 +46,7 @@ class ShadowRunner:
         matcher: Optional[CommandMatcher] = None,
     ) -> None:
         """
-        Bind the candidate producer and the command matcher used to correlate a pending receipt.
+        Bind the candidate producer and the command matcher.
         """
 
         self.__candidate = candidate if candidate is not None else ShadowCandidate()
@@ -91,7 +92,9 @@ class ShadowRunner:
             ),
             action=ShadowAction(proposed=analysis.action),
             application=ShadowApplication(authority=authority, foreground=foreground),
-            pre_dispatch=self.__pre_phase(success=active.success, candidate=candidate, live=live_pre),
+            pre_dispatch=self.__pre_phase(
+                success=active.success, candidate=candidate, live=live_pre
+            ),
             cursor_before=cursor_before,
             metrics=metrics,
         )
@@ -117,13 +120,20 @@ class ShadowRunner:
         screen: Optional[str],
         foreground: Optional[str],
         cursor_after: GoalCursor,
+        assessment: Optional[VisualAssessment] = None,
     ) -> ShadowTurn:
         """
-        Finalize a successful dispatch: the receipt-derived candidate is compared only when the goal proves from a receipt.
+        Finalize a successful dispatch: an observed goal reuses the single live vision verdict; a receipt-proving
+        goal stays receipt-derived. Both are compared against the live decision on the settled post-action screen.
         """
 
         candidate = self.__post_candidate(
-            active=active, receipt=receipt, screen=screen, foreground=foreground, draft=draft
+            active=active,
+            receipt=receipt,
+            screen=screen,
+            foreground=foreground,
+            draft=draft,
+            assessment=assessment,
         )
         self.__reconcile(active=active, receipt=receipt, live=live, candidate=candidate)
         return self.__finalize(
@@ -132,7 +142,12 @@ class ShadowRunner:
             post=ShadowPostDispatch(
                 screen=screen,
                 foreground=foreground,
-                phase=self.__post_phase(success=active.success, candidate=candidate, live=live),
+                phase=self.__post_phase(
+                    success=active.success,
+                    candidate=candidate,
+                    live=live,
+                    assessed=assessment is not None,
+                ),
             ),
             cursor_after=cursor_after,
         )
@@ -177,15 +192,16 @@ class ShadowRunner:
         screen: Optional[str],
         foreground: Optional[str],
         draft: ShadowTurnDraft,
+        assessment: Optional[VisualAssessment] = None,
     ) -> Advancement:
         """
-        Compute the post-dispatch candidate from the receipt; no post-dispatch assessment exists this turn.
+        Compute the post-dispatch candidate from the receipt and, for an observed goal, the real vision verdict.
         """
 
         return self.__candidate.decide(
             success=active.success,
             phase=ObservationPhase.POST_DISPATCH,
-            assessment=None,
+            assessment=assessment,
             malformed=False,
             action_present=False,
             screen=screen,
@@ -208,13 +224,14 @@ class ShadowRunner:
         )
 
     def __post_phase(
-        self, *, success: Success, candidate: Advancement, live: Advancement
+        self, *, success: Success, candidate: Advancement, live: Advancement, assessed: bool
     ) -> ShadowPhase:
         """
-        A post-dispatch phase is comparable only when the goal proves from a receipt, not a later visual assessment.
+        A post-dispatch phase is comparable when the goal proves from a receipt or a real post-action verdict was
+        produced; it stays deferred only when the goal needs vision and none could be produced this turn.
         """
 
-        if Eligibility.observation(success=success) is None:
+        if Eligibility.observation(success=success) is None or assessed:
             return ComparablePhase(candidate=candidate, live=live)
         return IncomparablePhase(
             candidate=candidate, live=live, reason=PhaseIncomparability.VISUAL_EVIDENCE_DEFERRED

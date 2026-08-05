@@ -17,3 +17,5 @@ class PhaseKind(StrEnum):
 
     ACTING = "ACTING"
     OBSERVING = "OBSERVING"
+    VERIFYING = "VERIFYING"
+    AUTHORING = "AUTHORING"

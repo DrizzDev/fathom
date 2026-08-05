@@ -97,21 +97,29 @@ class TestVisionAssessmentGate:
                 f"effFN={case.effective_false_negative} miss={case.missing} "
                 f"verdicts={[attempt.verdict.value if attempt.verdict else 'MISSING' for attempt in case.attempts]}"
             )
-        print(f"acceptance_passed={report.acceptance_passed} "
-              f"critical_effFP={report.critical_effective_false_positive} "
-              f"unresolved_rawFP={list(report.unresolved_raw_false_positive)}")
+        print(
+            f"acceptance_passed={report.acceptance_passed} "
+            f"critical_effFP={report.critical_effective_false_positive} "
+            f"unresolved_rawFP={list(report.unresolved_raw_false_positive)}"
+        )
 
     def __assertions(self, *, report: EvaluationReport) -> None:
         """
         Enforce every cutover acceptance condition as hard assertions.
         """
 
-        assert report.totals.missing == 0, "An observed goal produced no assessment; the boundary failed to decode."
-        assert report.totals.schema_failures == 0, "An assessment failed its schema at the production boundary."
+        assert report.totals.missing == 0, (
+            "An observed goal produced no assessment; the boundary failed to decode."
+        )
+        assert report.totals.schema_failures == 0, (
+            "An assessment failed its schema at the production boundary."
+        )
         assert report.totals.effective_false_positive == 0, (
             f"Effective false-positive advancement remains: {list(report.unresolved_raw_false_positive)}."
         )
-        assert report.critical_effective_false_positive == 0, "A critical-negative case advanced under the shadow rule."
+        assert report.critical_effective_false_positive == 0, (
+            "A critical-negative case advanced under the shadow rule."
+        )
         assert not report.unresolved_raw_false_positive, (
             f"Raw false positives not neutralized by a deterministic veto: {list(report.unresolved_raw_false_positive)}."
         )

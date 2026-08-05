@@ -57,7 +57,9 @@ class TestGoalTypeRelationship:
 
     def test_capture_goal_with_assessment_is_wrong_goal(self) -> None:
         out = ShadowAssessor().assess(
-            success=_capture(), assessment=_assessment(VisualVerdict.NOT_SATISFIED), action_present=False
+            success=_capture(),
+            assessment=_assessment(VisualVerdict.NOT_SATISFIED),
+            action_present=False,
         )
         assert _kinds(out) == {ShadowDivergenceKind.WRONG_GOAL}
 
@@ -70,13 +72,17 @@ class TestSatisfiedWithActionIsRecordedNotEnforced:
     def test_satisfied_with_action_is_a_divergence(self) -> None:
         # Slice 2 records the conflict; the action still executes live and no goal advances.
         out = ShadowAssessor().assess(
-            success=_observed(), assessment=_assessment(VisualVerdict.SATISFIED), action_present=True
+            success=_observed(),
+            assessment=_assessment(VisualVerdict.SATISFIED),
+            action_present=True,
         )
         assert ShadowDivergenceKind.SATISFIED_WITH_ACTION in _kinds(out)
 
     def test_satisfied_without_action_is_clean(self) -> None:
         out = ShadowAssessor().assess(
-            success=_observed(), assessment=_assessment(VisualVerdict.SATISFIED), action_present=False
+            success=_observed(),
+            assessment=_assessment(VisualVerdict.SATISFIED),
+            action_present=False,
         )
         assert out == ()
 

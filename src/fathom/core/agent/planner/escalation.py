@@ -116,12 +116,16 @@ class EscalationOrchestrator:
         events: List[PlannerEvent] = []
         llm_source = self.__resolver.resolve(agent_state=state)
         if llm_source is not None:
-            events.append(self.__detected(state=state, path=EscalationPath.LLM_TOOL, source=llm_source))
+            events.append(
+                self.__detected(state=state, path=EscalationPath.LLM_TOOL, source=llm_source)
+            )
 
         llm_decision = self.__decide_model_ask_user(state=state)
         if llm_decision is None:
             events.append(
-                EscalationEvent(kind=PlannerEventKind.ASK_USER_EMITTED, path=EscalationPath.LLM_TOOL)
+                EscalationEvent(
+                    kind=PlannerEventKind.ASK_USER_EMITTED, path=EscalationPath.LLM_TOOL
+                )
             )
             return PlanDecision(events=tuple(events))
 

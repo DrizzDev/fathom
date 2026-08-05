@@ -20,7 +20,10 @@ from fathom.constants.state import (
     CompletionReason,
     IntentStateKey,
 )
+from fathom.constants.timing import TimingPhase
+from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.exceptions import ToolValidationError
+from fathom.schemas.advancement import Advancement
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.planner import (
     EscalationEvent,
@@ -57,10 +60,11 @@ class AnalyzeNode:
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the ANALYZE node handler.
+        Run the ANALYZE node handler under the run-scoped analyze timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.ANALYZE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """
@@ -184,6 +188,7 @@ class AnalyzeNode:
             )
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
 
+            await self.__provider.context.phase.planning(intent=self.__provider.context.intent)
             turn = await self.__provider.context.planner.plan_step(
                 capture=capture,
                 elements=elements,
@@ -203,14 +208,15 @@ class AnalyzeNode:
 
             duration = time.time() - start_time
             self.__provider.context.metrics.record(operation="analysis", duration=duration)
+            self.__provider.context.clock.record(
+                phase=TimingPhase.PLANNER,
+                duration=float((plan.metrics or {}).get("llm_analysis_ms", 0.0) or 0.0),
+            )
 
-            # Honest pre-dispatch shadow: candidate and live probe adjudicate the SAME settled screen.
+            # Pre-dispatch shadow draft: completion is decided only post-dispatch, so no live pre-decision.
             agent_state = self.__provider.context.agent_state
             active = agent_state.get_current_sub_goal()
             cursor_before = agent_state.get_sub_goal_progress()
-            probe_result = await self.__provider.completion.probe(
-                observation=observation if isinstance(observation, ScreenObservation) else None
-            )
             if (
                 active is not None
                 and cursor_before is not None
@@ -225,13 +231,13 @@ class AnalyzeNode:
                     screen=capture.identity,
                     foreground=capture.activity,
                     authority=agent_state.target_authority,
-                    live_pre=probe_result.advancement,
+                    live_pre=Advancement(kind=AdvanceKind.RETAIN),
                     cursor_before=self.__cursor(progress=cursor_before),
                 )
                 plan = plan.model_copy(
                     update={"context": plan.context.model_copy(update={"shadow": draft})}
                 )
-                if plan.step is None or probe_result.transition is not None:
+                if plan.step is None:
                     self.__emit_shadow(
                         record=self.__runner.finalize_undispatched(
                             draft=draft,
@@ -240,17 +246,6 @@ class AnalyzeNode:
                             ),
                         )
                     )
-            if probe_result.transition is not None:
-                logger.info(
-                    "Active sub-goal satisfied on the settled screen; advancing before dispatch",
-                    extra={
-                        "event": "analyze.satisfied_prior",
-                        "component": "graph.intent.analyze",
-                        "workflow.id": self.__provider.context.workflow_id,
-                    },
-                )
-                self.__provider.persistence.persist(result=probe_result.transition)
-                return probe_result.transition
 
             await self.__tool_update_router.route(
                 updates=getattr(plan, "updates", ()),

@@ -103,16 +103,15 @@ class IncomparablePhase(SealedModel):
     """
 
     kind: Literal[PhaseComparison.INCOMPARABLE] = Field(
-        default=PhaseComparison.INCOMPARABLE, description="Discriminator for the incomparable variant."
+        default=PhaseComparison.INCOMPARABLE,
+        description="Discriminator for the incomparable variant.",
     )
     candidate: Advancement = Field(description="The shadow advancement candidate for this phase.")
     live: Advancement = Field(description="The actual live advancement decision for this phase.")
     reason: PhaseIncomparability = Field(description="Why the two decisions cannot be compared.")
 
 
-ShadowPhase = Annotated[
-    Union[ComparablePhase, IncomparablePhase], Field(discriminator="kind")
-]
+ShadowPhase = Annotated[Union[ComparablePhase, IncomparablePhase], Field(discriminator="kind")]
 
 
 class ShadowExecution(SealedModel):
@@ -131,7 +130,8 @@ class ShadowPostDispatch(SealedModel):
     """
 
     screen: Optional[NonBlank] = Field(
-        default=None, description="Post-dispatch settled-screen identity; None when no post observation."
+        default=None,
+        description="Post-dispatch settled-screen identity; None when no post observation.",
     )
     foreground: Optional[NonBlank] = Field(
         default=None, description="Post-dispatch foreground package; None when no post observation."
@@ -155,10 +155,16 @@ class ShadowTurnDraft(SealedModel):
 
     workflow: NonBlank = Field(description="Workflow identity for the run.")
     goal: ShadowGoal = Field(description="Active goal this turn adjudicated.")
-    observation: ShadowObservation = Field(description="Settled pre-dispatch screen and requirement.")
+    observation: ShadowObservation = Field(
+        description="Settled pre-dispatch screen and requirement."
+    )
     action: ShadowAction = Field(description="Proposed action for the turn.")
-    application: ShadowApplication = Field(description="Target authority and pre-dispatch foreground.")
-    pre_dispatch: ShadowPhase = Field(description="Candidate and live decision on the pre-dispatch screen.")
+    application: ShadowApplication = Field(
+        description="Target authority and pre-dispatch foreground."
+    )
+    pre_dispatch: ShadowPhase = Field(
+        description="Candidate and live decision on the pre-dispatch screen."
+    )
     cursor_before: GoalCursor = Field(description="Cursor before any decision applied.")
     metrics: PlannerMetrics = Field(description="Producer-owned planner metrics.")
 
@@ -170,11 +176,17 @@ class ShadowTurn(SealedModel):
 
     workflow: NonBlank = Field(description="Workflow identity for the run.")
     goal: ShadowGoal = Field(description="Active goal this turn adjudicated.")
-    observation: ShadowObservation = Field(description="Settled pre-dispatch screen and requirement.")
+    observation: ShadowObservation = Field(
+        description="Settled pre-dispatch screen and requirement."
+    )
     action: ShadowAction = Field(description="Proposed action for the turn.")
-    application: ShadowApplication = Field(description="Target authority and pre-dispatch foreground.")
+    application: ShadowApplication = Field(
+        description="Target authority and pre-dispatch foreground."
+    )
     metrics: PlannerMetrics = Field(description="Producer-owned planner metrics.")
-    pre_dispatch: ShadowPhase = Field(description="Candidate and live decision on the pre-dispatch screen.")
+    pre_dispatch: ShadowPhase = Field(
+        description="Candidate and live decision on the pre-dispatch screen."
+    )
     execution: ShadowExecution = Field(description="The executed step correlated to the turn.")
     post_dispatch: Optional[ShadowPostDispatch] = Field(
         default=None, description="Post-dispatch screen, foreground, and phase, when an action ran."

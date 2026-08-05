@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Dict, List, Optional, Tuple
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionType
 from fathom.constants.assessment import PhaseComparison, VisualVerdict
@@ -11,8 +11,10 @@ from fathom.constants.success import CaptureNameProvenance
 from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.services.criterion import CriterionObserver
+from fathom.core.services.outcome import OutcomeObserver
 from fathom.schemas.actions import Action, Bounds
 from fathom.schemas.advancement import Advancement
+from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
 from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.capture import Capture, CaptureIdentity, CaptureRequest
@@ -61,6 +63,23 @@ class _StubChecker(CriterionObserver):
         )
 
 
+class _StubOutcome(OutcomeObserver):
+    """
+    Deterministic post-action vision observer returning a fixed assessment without an LLM call.
+    """
+
+    def __init__(self, *, verdict: VisualVerdict) -> None:
+        self.__verdict = verdict
+
+    async def assess(self, *, requirement: object, before: bytes, after: bytes) -> VisualAssessment:
+        """
+        Return the configured assessment.
+        """
+
+        _ = (requirement, before, after)
+        return VisualAssessment(verdict=self.__verdict, confidence=0.9, evidence="stub")
+
+
 class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
     """
     CompletionNode finalizes the pre-dispatch draft into a receipt-bearing record and reconciles pending proof.
@@ -84,7 +103,12 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         return state
 
     @staticmethod
-    def __evaluator(*, state: AgentState, verdict: CriterionVerdict) -> SubGoalEvaluator:
+    def __evaluator(
+        *,
+        state: AgentState,
+        verdict: CriterionVerdict,
+        outcome: Optional[OutcomeObserver] = None,
+    ) -> SubGoalEvaluator:
         """
         Build the real evaluator over a graph-context surface wrapping the agent state.
         """
@@ -92,7 +116,39 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         context = MagicMock(name="GraphContext")
         context.agent_state = state
         context.workflow_id = "wf"
-        return SubGoalEvaluator(context=context, criterion_observer=_StubChecker(verdict=verdict))
+        context.phase = AsyncMock()
+        return SubGoalEvaluator(
+            context=context, criterion_observer=_StubChecker(verdict=verdict), outcome=outcome
+        )
+
+    @staticmethod
+    def __observed_receipt(*, artifacts: bool = True) -> StepResult:
+        """
+        Build an executed TAP receipt for an observed goal, optionally carrying before/after screen bytes.
+        """
+
+        action = Action(action_type=ActionType.TAP, natural_language_target="x", rationale="r")
+        step = Step(action=action, screen_hash="h", step_number=1)
+        bundle = (
+            StepArtifacts(
+                screen=ScreenArtifactBundle(
+                    before=ScreenArtifact(image=b"before"),
+                    after=ScreenArtifact(image=b"after"),
+                )
+            )
+            if artifacts
+            else None
+        )
+        return StepResult(
+            step=step,
+            success=True,
+            executed=True,
+            pre_hash="a",
+            post_hash="b",
+            screen_changed=True,
+            duration=5,
+            artifacts=bundle,
+        )
 
     @staticmethod
     def __analysis() -> AnalysisResult:
@@ -243,7 +299,9 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
             if record.__dict__.get("event") == "shadow.turn.comparison"
         ]
 
-    def __setup(self, *, success: Success, verdict: CriterionVerdict) -> Tuple[SubGoalEvaluator, PlanResult, AgentState]:
+    def __setup(
+        self, *, success: Success, verdict: CriterionVerdict
+    ) -> Tuple[SubGoalEvaluator, PlanResult, AgentState]:
         """
         Build the evaluator, the draft-carrying plan, and the state for one graph turn.
         """
@@ -266,7 +324,9 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(records), 1)
         self.assertIsNotNone(records[0]["execution"]["receipt"])
-        self.assertEqual(records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.ADVANCE.value)
+        self.assertEqual(
+            records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.ADVANCE.value
+        )
 
     async def test_capture_execution_produces_record_with_committed_receipt(self) -> None:
         """
@@ -283,7 +343,9 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["execution"]["receipt"]["capture"]["name"], "price")
-        self.assertEqual(records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.ADVANCE.value)
+        self.assertEqual(
+            records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.ADVANCE.value
+        )
 
     async def test_command_postcondition_creates_checkpointed_proof(self) -> None:
         """
@@ -297,7 +359,9 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         records = await self.__records(
             evaluator=evaluator, plan=plan, receipt=self.__command_receipt()
         )
-        self.assertEqual(records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.RETAIN.value)
+        self.assertEqual(
+            records[0]["post_dispatch"]["phase"]["candidate"]["kind"], AdvanceKind.RETAIN.value
+        )
         proof = state.get_current_sub_goal().progress.proof
         self.assertIsNotNone(proof)
         restored = AgentState.from_checkpoint(
@@ -443,6 +507,49 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
             records[0]["post_dispatch"]["phase"]["kind"], PhaseComparison.COMPARABLE.value
         )
 
+    async def test_observed_goal_post_is_comparable_with_real_assessment(self) -> None:
+        """
+        An observed goal produces a real post-action vision verdict, so its post-dispatch phase is comparable.
+        """
+
+        state = self.__state(success=SuccessFixtures.observed())
+        evaluator = self.__evaluator(
+            state=state,
+            verdict=CriterionVerdict.SATISFIED,
+            outcome=_StubOutcome(verdict=VisualVerdict.SATISFIED),
+        )
+        plan = self.__plan(draft=self.__draft(active=state.get_current_sub_goal()))
+        records = await self.__records(
+            evaluator=evaluator,
+            plan=plan,
+            receipt=self.__observed_receipt(),
+            observation=self.__observation(),
+        )
+        self.assertEqual(len(records), 1)
+        phase = records[0]["post_dispatch"]["phase"]
+        self.assertEqual(phase["kind"], PhaseComparison.COMPARABLE.value)
+        self.assertEqual(phase["candidate"]["kind"], AdvanceKind.ADVANCE.value)
+
+    async def test_observed_goal_stays_deferred_without_post_action_images(self) -> None:
+        """
+        With no post-action screen bytes to judge, an observed goal keeps the deferred, non-comparable phase.
+        """
+
+        state = self.__state(success=SuccessFixtures.observed())
+        evaluator = self.__evaluator(
+            state=state,
+            verdict=CriterionVerdict.UNSATISFIED,
+            outcome=_StubOutcome(verdict=VisualVerdict.SATISFIED),
+        )
+        plan = self.__plan(draft=self.__draft(active=state.get_current_sub_goal()))
+        records = await self.__records(
+            evaluator=evaluator,
+            plan=plan,
+            receipt=self.__observed_receipt(artifacts=False),
+            observation=self.__observation(),
+        )
+        self.assertEqual(records[0]["post_dispatch"]["phase"]["reason"], "VISUAL_EVIDENCE_DEFERRED")
+
     async def test_visual_goal_post_is_not_comparable(self) -> None:
         """
         A command with a postcondition needs a later assessment, so its post-dispatch phase is not comparable.
@@ -461,6 +568,4 @@ class CompletionShadowFinalizationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             records[0]["post_dispatch"]["phase"]["kind"], PhaseComparison.INCOMPARABLE.value
         )
-        self.assertEqual(
-            records[0]["post_dispatch"]["phase"]["reason"], "VISUAL_EVIDENCE_DEFERRED"
-        )
+        self.assertEqual(records[0]["post_dispatch"]["phase"]["reason"], "VISUAL_EVIDENCE_DEFERRED")

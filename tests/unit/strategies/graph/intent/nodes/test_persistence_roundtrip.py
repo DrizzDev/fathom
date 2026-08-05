@@ -194,11 +194,7 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
         state.set_sub_goals(
-            [
-                SubGoalFixtures.make(
-                    index=0, description="Check whether customer rating is >= 4.2"
-                )
-            ]
+            [SubGoalFixtures.make(index=0, description="Check whether customer rating is >= 4.2")]
         )
         context = _StubContext(agent_state=state)
         context.intent = "find rated soap"  # type: ignore[attr-defined]

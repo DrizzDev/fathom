@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import unittest
 from typing import List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from fathom.constants import ActionType
+from fathom.constants.assessment import VisualVerdict
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
 from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.services.criterion import CriterionObserver
+from fathom.core.services.outcome import OutcomeObserver
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.artifacts import ScreenArtifact, ScreenArtifactBundle, StepArtifacts
+from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.capture import Capture, CaptureRequest
 from fathom.schemas.criterion import CriterionDecision, CriterionSource, CriterionVerdict
@@ -57,6 +61,28 @@ class _StubCriterionChecker(CriterionObserver):
         return self.__decision
 
 
+class _StubOutcome(OutcomeObserver):
+    """
+    Deterministic post-action vision observer returning a fixed assessment and counting adjudications.
+    """
+
+    def __init__(self, *, verdict: VisualVerdict, confidence: float = 0.9) -> None:
+        self.__verdict = verdict
+        self.__confidence = confidence
+        self.calls: int = 0
+
+    async def assess(self, *, requirement: object, before: bytes, after: bytes) -> VisualAssessment:
+        """
+        Return the configured assessment, counting each invocation.
+        """
+
+        _ = (requirement, before, after)
+        self.calls += 1
+        return VisualAssessment(
+            verdict=self.__verdict, confidence=self.__confidence, evidence="stub"
+        )
+
+
 class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
     """
     Pins SubGoalEvaluator against canonical Success: pre/post-dispatch evidence and advancement.
@@ -85,13 +111,19 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         context = MagicMock(name="GraphContext")
         context.agent_state = state
         context.workflow_id = "wf"
+        context.phase = AsyncMock()
         return context
 
     def __evaluator(
-        self, *, state: AgentState, verdict: Optional[CriterionVerdict]
+        self,
+        *,
+        state: AgentState,
+        verdict: Optional[CriterionVerdict],
+        outcome: Optional[OutcomeObserver] = None,
+        checker: Optional[_StubCriterionChecker] = None,
     ) -> SubGoalEvaluator:
         """
-        Build an evaluator whose observer returns the given verdict (or SATISFIED by default).
+        Build an evaluator whose criterion observer returns the given verdict and whose vision observer is optional.
         """
 
         decision = CriterionDecision(
@@ -102,7 +134,11 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
             notes=None,
         )
         return SubGoalEvaluator(
-            context=self.__context(state), criterion_observer=_StubCriterionChecker(decision=decision)
+            context=self.__context(state),
+            criterion_observer=checker
+            if checker is not None
+            else _StubCriterionChecker(decision=decision),
+            outcome=outcome,
         )
 
     @staticmethod
@@ -176,9 +212,10 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         requirement: Optional[CommandRequirement] = None,
         executed: bool = True,
         capture: Optional[Capture] = None,
+        artifacts: bool = False,
     ) -> StepResult:
         """
-        Build a StepResult carrying an optional admitted requirement and capture.
+        Build a StepResult carrying an optional admitted requirement, capture, and before/after screen bytes.
         """
 
         step = Step(
@@ -187,11 +224,22 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
             screen_hash="pre",
             requirement=requirement,
         )
+        bundle = (
+            StepArtifacts(
+                screen=ScreenArtifactBundle(
+                    before=ScreenArtifact(image=b"before"),
+                    after=ScreenArtifact(image=b"after"),
+                )
+            )
+            if artifacts
+            else None
+        )
         return StepResult(
             step=step,
             success=True,
             executed=executed,
             capture=capture,
+            artifacts=bundle,
             pre_hash="pre",
             post_hash="post",
             screen_changed=True,
@@ -236,15 +284,25 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_observed_goal_advances_on_satisfied_verdict_post_dispatch(self) -> None:
         """
-        An observed goal advances when its own observation is freshly satisfied after dispatch.
+        An observed goal advances when the single post-action vision verdict is satisfied at the confidence floor.
         """
 
         state = self.__agent_state(self.__two_goals(SuccessFixtures.observed(assertion="home")))
-        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+        checker = _StubCriterionChecker(
+            decision=CriterionDecision(
+                verdict=CriterionVerdict.SATISFIED,
+                source=CriterionSource.SYMBOLIC,
+                confidence=0.95,
+                evidence=(),
+                notes=None,
+            )
+        )
+        outcome = _StubOutcome(verdict=VisualVerdict.SATISFIED, confidence=0.7)
+        evaluator = self.__evaluator(state=state, verdict=None, outcome=outcome, checker=checker)
 
         result = await evaluator.evaluate(
             plan=self.__plan(),
-            step_result=self.__result(),
+            step_result=self.__result(artifacts=True),
             accumulated=[],
             observation=self.__observation(),
         )
@@ -252,6 +310,56 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
         self.assertEqual(state.current_sub_goal_index, 1)
+        self.assertEqual(outcome.calls, 1)
+        self.assertEqual(checker.calls, 0)
+
+    async def test_observed_goal_vision_unclear_retains_and_skips_text(self) -> None:
+        """
+        An UNCLEAR vision verdict retains the observed goal and never consults the text criterion observer.
+        """
+
+        state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
+        checker = _StubCriterionChecker(
+            decision=CriterionDecision(
+                verdict=CriterionVerdict.SATISFIED,
+                source=CriterionSource.SYMBOLIC,
+                confidence=0.95,
+                evidence=(),
+                notes=None,
+            )
+        )
+        outcome = _StubOutcome(verdict=VisualVerdict.UNCLEAR, confidence=0.5)
+        evaluator = self.__evaluator(state=state, verdict=None, outcome=outcome, checker=checker)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan(),
+            step_result=self.__result(artifacts=True),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(outcome.calls, 1)
+        self.assertEqual(checker.calls, 0)
+
+    async def test_observed_goal_below_floor_does_not_advance(self) -> None:
+        """
+        A satisfied vision verdict below the confidence floor cannot advance the observed goal.
+        """
+
+        state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
+        outcome = _StubOutcome(verdict=VisualVerdict.SATISFIED, confidence=0.69)
+        evaluator = self.__evaluator(state=state, verdict=None, outcome=outcome)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan(),
+            step_result=self.__result(artifacts=True),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(outcome.calls, 1)
 
     async def test_pre_dispatch_observed_satisfaction_advances_via_probe(self) -> None:
         """
@@ -268,22 +376,24 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.transition.get(IntentStateKey.SHOULD_RETRY))
         self.assertEqual(state.current_sub_goal_index, 1)
 
-    async def test_observed_goal_retains_when_verdict_unsatisfied(self) -> None:
+    async def test_observed_goal_retains_when_vision_not_satisfied(self) -> None:
         """
-        An observed goal retains when its observation is not satisfied.
+        A NOT_SATISFIED vision verdict retains the observed goal (the refute path escalates only under a stall).
         """
 
         state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
-        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNSATISFIED)
+        outcome = _StubOutcome(verdict=VisualVerdict.NOT_SATISFIED)
+        evaluator = self.__evaluator(state=state, verdict=None, outcome=outcome)
 
         result = await evaluator.evaluate(
             plan=self.__plan(),
-            step_result=self.__result(),
+            step_result=self.__result(artifacts=True),
             accumulated=[],
             observation=self.__observation(),
         )
 
         self.assertIsNone(result)
+        self.assertEqual(outcome.calls, 1)
 
     # ── Command success ───────────────────────────────────────────────────
 
@@ -439,11 +549,12 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         """
 
         state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
-        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+        outcome = _StubOutcome(verdict=VisualVerdict.SATISFIED)
+        evaluator = self.__evaluator(state=state, verdict=None, outcome=outcome)
 
         result = await evaluator.evaluate(
             plan=self.__plan(),
-            step_result=self.__result(),
+            step_result=self.__result(artifacts=True),
             accumulated=[],
             observation=self.__observation(),
         )

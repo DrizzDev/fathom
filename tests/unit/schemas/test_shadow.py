@@ -72,7 +72,9 @@ class ShadowPhaseUnionTest(unittest.TestCase):
         self.assertTrue(ComparablePhase(candidate=_advance(), live=_retain()).diverges)
         self.assertFalse(ComparablePhase(candidate=_advance(), live=_advance()).diverges)
         incomparable = IncomparablePhase(
-            candidate=_advance(), live=_retain(), reason=PhaseIncomparability.EVIDENCE_SOURCE_DIFFERENT
+            candidate=_advance(),
+            live=_retain(),
+            reason=PhaseIncomparability.EVIDENCE_SOURCE_DIFFERENT,
         )
         self.assertFalse(hasattr(incomparable, "diverges"))
 
@@ -82,7 +84,9 @@ class ShadowPhaseUnionTest(unittest.TestCase):
         """
 
         comparable = ShadowPostDispatch(
-            screen="post", foreground="app", phase=ComparablePhase(candidate=_advance(), live=_advance())
+            screen="post",
+            foreground="app",
+            phase=ComparablePhase(candidate=_advance(), live=_advance()),
         )
         reloaded = ShadowPostDispatch.model_validate(comparable.model_dump())
         self.assertIsInstance(reloaded.phase, ComparablePhase)
@@ -114,7 +118,9 @@ class ShadowExecutionBoundaryTest(unittest.TestCase):
             screen="post",
             foreground="app",
             phase=IncomparablePhase(
-                candidate=_advance(), live=_retain(), reason=PhaseIncomparability.VISUAL_EVIDENCE_DEFERRED
+                candidate=_advance(),
+                live=_retain(),
+                reason=PhaseIncomparability.VISUAL_EVIDENCE_DEFERRED,
             ),
         )
         self.assertEqual(post.screen, "post")

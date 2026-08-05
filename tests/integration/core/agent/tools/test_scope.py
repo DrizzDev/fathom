@@ -124,7 +124,9 @@ class ToolScopeCorpusReplayTest(unittest.TestCase):
                     if (ToolName.ASK_USER in tools) != hitl:
                         failures.append(f"intent={intent!r} modes={modes} hitl={hitl}")
 
-        self.assertFalse(failures, "ASK_USER did not track HITL capability:\n" + "\n".join(failures))
+        self.assertFalse(
+            failures, "ASK_USER did not track HITL capability:\n" + "\n".join(failures)
+        )
 
 
 if __name__ == "__main__":

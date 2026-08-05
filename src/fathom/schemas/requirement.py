@@ -49,9 +49,7 @@ class SwipeRequirement(SealedModel):
     A user-requested swipe: the finger moves in the stated direction.
     """
 
-    operation: Literal[ActionType.SWIPE] = Field(
-        description="Swipe operation the user requested."
-    )
+    operation: Literal[ActionType.SWIPE] = Field(description="Swipe operation the user requested.")
     direction: SwipeDirection = Field(
         description="Finger movement direction, used verbatim by the device adapter."
     )

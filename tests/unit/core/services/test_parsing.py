@@ -573,6 +573,7 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         self.assertEqual(result.action.action_type, ActionType.COMPLETE)
         self.assertEqual(result.action.validation_subject, "The final step is complete.")
 
+
 class ToolResponseParserBoundaryTest(unittest.TestCase):
     """
     Covers the model-tool response boundary.

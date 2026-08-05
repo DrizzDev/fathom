@@ -343,7 +343,8 @@ class PlanContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     analysis: Optional["AnalysisResult"] = Field(
-        default=None, description="The turn's analysis, published to state for downstream reasoning."
+        default=None,
+        description="The turn's analysis, published to state for downstream reasoning.",
     )
     observation: Optional[NonBlank] = Field(
         default=None, description="Screen description the effect stage correlates against."
@@ -352,7 +353,8 @@ class PlanContext(BaseModel):
         default=None, description="Retry directive when the turn replans instead of executing."
     )
     shadow: Optional[ShadowTurnDraft] = Field(
-        default=None, description="Pre-dispatch shadow draft Analyze carries to Completion for finalization."
+        default=None,
+        description="Pre-dispatch shadow draft Analyze carries to Completion for finalization.",
     )
 
 
@@ -371,7 +373,8 @@ class PlanResult(BaseModel):
     should_retry: bool = Field(default=False, description="Whether to retry analysis")
 
     context: PlanContext = Field(
-        default_factory=PlanContext, description="Typed context the turn carries for downstream nodes."
+        default_factory=PlanContext,
+        description="Typed context the turn carries for downstream nodes.",
     )
     metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")
 
@@ -414,7 +417,8 @@ class PlanTurn(BaseModel):
 
     plan: PlanResult = Field(description="The planned outcome for the turn.")
     events: Tuple[PlannerEvent, ...] = Field(
-        default_factory=tuple, description="Structured observability events for the graph boundary to log."
+        default_factory=tuple,
+        description="Structured observability events for the graph boundary to log.",
     )
 
 

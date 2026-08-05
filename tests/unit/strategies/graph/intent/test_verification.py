@@ -30,7 +30,6 @@ class VerificationModePolicyTest(unittest.TestCase):
 
         return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
 
-
     def test_producer_uses_sub_goal_mode_for_non_final_active_sub_goal(self) -> None:
         """
         Producers stamp SUB_GOAL while there is more sub-goal work after the active one.
@@ -54,7 +53,9 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
 
         mode = self.__policy.mode_for_producer(agent_state=agent_state)
 
@@ -66,7 +67,9 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
         agent_state.advance_current_sub_goal()
 
         mode = self.__policy.mode_for_producer(agent_state=agent_state)
@@ -110,7 +113,9 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
 
         mode = self.__policy.mode_for_verify(state={}, agent_state=agent_state)
 

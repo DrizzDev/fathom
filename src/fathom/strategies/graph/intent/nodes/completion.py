@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,20 +13,23 @@ from fathom.constants.state import (
     IntentStateKey,
     VerifyMode,
 )
+from fathom.constants.timing import TimingPhase
 from fathom.constants.turn.advancement import AdvanceKind, ObservationPhase
 from fathom.core.agent.advancement import AdvancementPolicy
 from fathom.core.agent.eligibility import Eligibility
 from fathom.core.agent.stall import StallPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
+from fathom.core.services.outcome import OutcomeObserver
 from fathom.schemas.advancement import Advancement
+from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.binding import Binding
 from fathom.schemas.completion import ActionEvidence, ClaimEvidence
 from fathom.schemas.criterion import CriterionDecision, Verdict
 from fathom.schemas.effect import EffectReading
 from fathom.schemas.observability import CompletionLogContext
 from fathom.schemas.observation import ScreenObservation
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.results import AnalysisResult, PlanResult, TraceEmission
 from fathom.schemas.shadow import GoalCursor, ShadowTurn, ShadowTurnDraft
 from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import GoalState
@@ -36,6 +39,7 @@ from fathom.schemas.success import (
     Success,
 )
 from fathom.schemas.turn import TurnEvidence
+from fathom.schemas.visual import VisualEvidence
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.shadow import ShadowRunner
 from fathom.strategies.graph.state import IntentGraphState
@@ -80,13 +84,15 @@ class SubGoalEvaluator:
         context: GraphContext,
         criterion_observer: CriterionObserver,
         policy: Optional[AdvancementPolicy] = None,
+        outcome: Optional[OutcomeObserver] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, and advancement policy.
+        Bind the evaluator to its graph context, criterion observer, advancement policy, and shadow vision observer.
         """
 
         self.__context = context
         self.__criterion_observer = criterion_observer
+        self.__outcome = outcome
         self.__policy = policy if policy is not None else AdvancementPolicy()
         self.__stall = StallPolicy()
         self.__runner = ShadowRunner()
@@ -100,6 +106,7 @@ class SubGoalEvaluator:
         binding: Optional[Binding] = None,
         reading: Optional[EffectReading] = None,
         observation: Optional[ScreenObservation] = None,
+        trace: Tuple[TraceEmission, ...] = (),
     ) -> Optional[IntentGraphState]:
         """
         Assess this turn's evidence and either advance the sub-goal or retain it.
@@ -124,6 +131,7 @@ class SubGoalEvaluator:
 
         active = current
 
+        assessment = await self.__vision(active=active, receipt=step_result, trace=trace)
         turn = await self.__post_dispatch_evidence(
             active=active,
             analysis=analysis,
@@ -131,6 +139,7 @@ class SubGoalEvaluator:
             reading=reading,
             step_result=step_result,
             observation=observation,
+            assessment=assessment,
         )
         advancement = self.__policy.decide(success=active.success, evidence=turn)
         self.__log_adjudicated(active=active, advancement=advancement, step_result=step_result)
@@ -146,7 +155,12 @@ class SubGoalEvaluator:
             patch = None
 
         self.__record_executed(
-            plan=plan, active=active, receipt=step_result, observation=observation, live=advancement
+            plan=plan,
+            active=active,
+            receipt=step_result,
+            observation=observation,
+            live=advancement,
+            assessment=assessment,
         )
         return patch
 
@@ -158,6 +172,7 @@ class SubGoalEvaluator:
 
         agent_state = self.__context.agent_state
         active = agent_state.get_current_sub_goal()
+
         if active is None or not agent_state.has_sub_goals():
             return ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
 
@@ -170,13 +185,14 @@ class SubGoalEvaluator:
             else None
         )
         turn = TurnEvidence(
-            claim=ClaimEvidence(asserted=False),
-            action=ActionEvidence(dispatched=False, executed=False),
-            phase=ObservationPhase.PRE_DISPATCH,
             execution=None,
-            observation=self.__observed_requirement(success=success),
             verdict=verdict,
+            claim=ClaimEvidence(asserted=False),
+            phase=ObservationPhase.PRE_DISPATCH,
+            action=ActionEvidence(dispatched=False, executed=False),
+            observation=self.__observed_requirement(success=success),
         )
+
         advancement = self.__policy.decide(success=success, evidence=turn)
         if advancement.kind is not AdvanceKind.SATISFIED_PRIOR:
             return ProbeResult(advancement=advancement)
@@ -203,38 +219,89 @@ class SubGoalEvaluator:
         binding: Optional[Binding],
         reading: Optional[EffectReading],
         observation: Optional[ScreenObservation],
+        assessment: Optional[VisualAssessment],
     ) -> TurnEvidence:
         """
         Build the correlated post-dispatch evidence for the active goal's success variant.
 
-        The observer is consulted only for an ObservedSuccess observation or a CommandSuccess
-        postcondition; command-without-postcondition and capture goals rely on the StepResult.
+        Any screen requirement, whether an observed goal's observation or a command's postcondition, is
+        proven by the single post-action vision assessment; command-without-postcondition and capture goals rely on the StepResult.
         """
 
-        success = active.success
-        requirement = self.__observed_requirement(success=success)
-        verdict = (
-            await self.__observe(
-                index=active.index, requirement=requirement, observation=observation
-            )
-            if requirement is not None
-            else None
+        requirement = self.__observed_requirement(success=active.success)
+        visual = self.__visual_evidence(
+            requirement=requirement, assessment=assessment, observation=observation
         )
 
         agent_state = self.__context.agent_state
         return TurnEvidence(
+            verdict=None,
+            visual=visual,
+            effect=reading,
+            binding=binding,
+            execution=step_result,
+            observation=requirement,
+            validation=analysis.validation,
+            phase=ObservationPhase.POST_DISPATCH,
+            stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
+            action=ActionEvidence(dispatched=True, executed=step_result.executed),
             claim=ClaimEvidence(
                 asserted=analysis.is_sub_goal_complete or analysis.is_goal_complete
             ),
-            action=ActionEvidence(dispatched=True, executed=step_result.executed),
-            phase=ObservationPhase.POST_DISPATCH,
-            execution=step_result,
+        )
+
+    async def __vision(
+        self,
+        *,
+        active: GoalState,
+        receipt: StepResult,
+        trace: Tuple[TraceEmission, ...],
+    ) -> Optional[VisualAssessment]:
+        """
+        Produce the single post-action vision verdict for a goal with a screen requirement, or None.
+        """
+
+        if self.__outcome is None:
+            return None
+
+        requirement = self.__observed_requirement(success=active.success)
+        if requirement is None:
+            return None
+
+        await self.__context.phase.verifying(intent=self.__context.intent)
+        with self.__context.clock.phase(TimingPhase.VISION):
+            return await self.__outcome.observe(
+                trace=trace,
+                receipt=receipt,
+                requirement=requirement,
+                session=self.__context.workflow_id,
+            )
+
+    def __visual_evidence(
+        self,
+        *,
+        requirement: Optional[ObservationRequirement],
+        assessment: Optional[VisualAssessment],
+        observation: Optional[ScreenObservation],
+    ) -> Optional[VisualEvidence]:
+        """
+        Build settled-screen visual evidence for an observed goal, or None when the verdict or screen is absent.
+        """
+
+        screen = observation.hashes.visual_hash if observation is not None else None
+
+        if requirement is None or assessment is None or screen is None:
+            return None
+
+        return VisualEvidence(
+            screen=screen,
+            malformed=False,
+            action_present=False,
+            assessment=assessment,
             observation=requirement,
-            binding=binding,
-            effect=reading,
-            verdict=verdict,
-            validation=analysis.validation,
-            stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
+            phase=ObservationPhase.POST_DISPATCH,
+            authority=self.__context.agent_state.target_authority,
+            foreground=observation.activity if observation is not None else None,
         )
 
     @staticmethod
@@ -249,8 +316,8 @@ class SubGoalEvaluator:
         self,
         *,
         index: int,
-        requirement: Optional[ObservationRequirement],
         observation: Optional[ScreenObservation],
+        requirement: Optional[ObservationRequirement],
     ) -> Optional[Verdict]:
         """
         Observe exactly the given requirement on the settled screen and project it to a verdict.
@@ -306,11 +373,11 @@ class SubGoalEvaluator:
             "Momentum stalled; terminating run",
             extra={
                 **self.__log_context(),
-                "sub_goal.index": active.index,
-                "advancement.kind": advancement.kind.value,
-                "completion.reason": reason.value,
-                "sub_goal.objective": active.objective[:80],
                 "event": "subgoal.escalated",
+                "sub_goal.index": active.index,
+                "completion.reason": reason.value,
+                "advancement.kind": advancement.kind.value,
+                "sub_goal.objective": active.objective[:80],
             },
         )
         return cast(
@@ -440,9 +507,10 @@ class SubGoalEvaluator:
         receipt: StepResult,
         observation: Optional[ScreenObservation],
         live: Advancement,
+        assessment: Optional[VisualAssessment] = None,
     ) -> None:
         """
-        Emit the finalized record for a successful dispatch, carrying the real receipt and post-dispatch decision.
+        Emit the finalized record for a successful dispatch, reusing the single post-action vision verdict.
         """
 
         draft = self.__draft(plan=plan)
@@ -450,13 +518,14 @@ class SubGoalEvaluator:
             return
         self.__emit(
             record=self.__runner.finalize_executed(
+                live=live,
                 draft=draft,
                 active=active,
                 receipt=receipt,
-                live=live,
+                assessment=assessment,
+                cursor_after=self.__cursor(active=active),
                 screen=self.__post_screen(observation=observation),
                 foreground=self.__post_foreground(observation=observation),
-                cursor_after=self.__cursor(active=active),
             )
         )
 
@@ -480,7 +549,9 @@ class SubGoalEvaluator:
                 draft=draft,
                 active=active,
                 receipt=receipt,
-                live=Advancement(kind=AdvanceKind.RETAIN, reason=RetainReason.STEP_EXECUTION_FAILED),
+                live=Advancement(
+                    kind=AdvanceKind.RETAIN, reason=RetainReason.STEP_EXECUTION_FAILED
+                ),
                 screen=self.__post_screen(observation=observation),
                 foreground=self.__post_foreground(observation=observation),
                 cursor_after=self.__cursor(active=active),
@@ -495,6 +566,7 @@ class SubGoalEvaluator:
 
         if not isinstance(plan, PlanResult) or not isinstance(plan.context.shadow, ShadowTurnDraft):
             return None
+
         return plan.context.shadow
 
     def __cursor(self, *, active: GoalState) -> GoalCursor:
@@ -505,6 +577,7 @@ class SubGoalEvaluator:
         progress = self.__context.agent_state.get_sub_goal_progress()
         if progress is None:
             return GoalCursor(index=active.index, total=active.index + 1)
+
         index, total = progress
         return GoalCursor(index=index, total=total)
 
