@@ -361,7 +361,7 @@ class TestEscalation:
         )
         assert _decide(self._observed(), evidence) is AdvanceKind.ESCALATE
 
-    def test_stalled_refuted_own_observation_is_unsatisfiable(self) -> None:
+    def test_stalled_refuted_own_observation_escalates_not_unsatisfiable(self) -> None:
         target = _obs("login screen displayed")
         evidence = _turn(
             execution=_result(_step(_action(ActionType.TAP))),
@@ -369,7 +369,8 @@ class TestEscalation:
             verdict=_refuted(),
             stall=StallState.STALLED,
         )
-        assert _decide(ObservedSuccess(observation=target), evidence) is AdvanceKind.UNSATISFIABLE
+        # A vision refute may be a false negative, so a stalled refute escalates for help, never hard-kills.
+        assert _decide(ObservedSuccess(observation=target), evidence) is AdvanceKind.ESCALATE
 
     def test_flowing_awaiting_proof_does_not_escalate(self) -> None:
         evidence = _turn(

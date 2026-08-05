@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.constants.assessment import VisualVerdict
 from fathom.constants.completion import RetainReason
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import (
@@ -143,6 +144,7 @@ class SubGoalEvaluator:
         )
         advancement = self.__policy.decide(success=active.success, evidence=turn)
         self.__log_adjudicated(active=active, advancement=advancement, step_result=step_result)
+        await self.__surface_refute(assessment=assessment, step=step_result.step.step_number)
 
         if advancement.kind in (AdvanceKind.ADVANCE, AdvanceKind.SATISFIED_PRIOR):
             patch: Optional[IntentGraphState] = self.__advance_or_complete(
@@ -277,12 +279,27 @@ class SubGoalEvaluator:
                 session=self.__context.workflow_id,
             )
 
+    async def __surface_refute(
+        self, *, assessment: Optional[VisualAssessment], step: int
+    ) -> None:
+        """
+        Hand the planner a use-once reason when vision refuted the observation, so it can re-target.
+        """
+
+        if assessment is None or assessment.verdict is not VisualVerdict.NOT_SATISFIED:
+            return
+
+        await self.__context.context_manager.inject_completion_feedback(
+            step=step,
+            feedback=str(assessment.evidence),
+        )
+
     def __visual_evidence(
         self,
         *,
-        requirement: Optional[ObservationRequirement],
         assessment: Optional[VisualAssessment],
         observation: Optional[ScreenObservation],
+        requirement: Optional[ObservationRequirement],
     ) -> Optional[VisualEvidence]:
         """
         Build settled-screen visual evidence for an observed goal, or None when the verdict or screen is absent.

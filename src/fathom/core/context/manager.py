@@ -12,7 +12,12 @@ from fathom.interfaces.context import ContextEngine
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.schemas.actions import Action
-from fathom.schemas.feedback import UserGuidance, VerifierFeedback
+from fathom.schemas.feedback import (
+    ActionFeedback,
+    CompletionFeedback,
+    UserGuidance,
+    VerifierFeedback,
+)
 
 logger = getLogger(__name__)
 
@@ -62,6 +67,12 @@ class ContextManager:
 
         # System-sourced verifier rejection messages (use-once, planner clears after consuming for the next planning iteration)
         self.__verifier_feedback: List[VerifierFeedback] = []
+
+        # System-sourced no-op notices (use-once, planner clears after consuming for the next planning iteration)
+        self.__action_feedback: List[ActionFeedback] = []
+
+        # System-sourced completion refute reasons (use-once, planner clears after consuming next iteration)
+        self.__completion_feedback: List[CompletionFeedback] = []
 
         # Async Lifecycle
         self.__background_tasks: Set[asyncio.Task[None]] = set()
@@ -306,7 +317,9 @@ class ContextManager:
             "milestones": engine_context.get("milestones", []),
             "active_count": engine_context.get("active_count", 0),
             "guidance": [entry.render() for entry in self.__active_user_guidance()],
+            "action_feedback": [entry.content for entry in self.__action_feedback],
             "verifier_feedback": [entry.content for entry in self.__verifier_feedback],
+            "completion_feedback": [entry.content for entry in self.__completion_feedback],
         }
 
     def set_roadmap(self, *, intent: str) -> None:
@@ -377,6 +390,52 @@ class ContextManager:
         """
 
         self.__verifier_feedback.clear()
+
+    async def inject_action_feedback(self, *, feedback: str, step: Optional[int] = None) -> None:
+        """
+        Append a no-op notice to the use-once action-feedback channel; the planner
+        consumes and clears it on the next iteration.
+        """
+
+        self.__action_feedback.append(ActionFeedback(content=feedback, step_number=step))
+        await self.__enqueue_persist()
+
+    def get_action_feedback(self) -> List[ActionFeedback]:
+        """
+        Return the current action-feedback entries (copy).
+        """
+
+        return self.__action_feedback.copy()
+
+    def clear_action_feedback(self) -> None:
+        """
+        Drop all action-feedback entries; called by the planner after one consumption cycle.
+        """
+
+        self.__action_feedback.clear()
+
+    async def inject_completion_feedback(self, *, feedback: str, step: Optional[int] = None) -> None:
+        """
+        Append a vision refute reason to the use-once completion-feedback channel; the planner
+        consumes and clears it on the next iteration.
+        """
+
+        self.__completion_feedback.append(CompletionFeedback(content=feedback, step_number=step))
+        await self.__enqueue_persist()
+
+    def get_completion_feedback(self) -> List[CompletionFeedback]:
+        """
+        Return the current completion-feedback entries (copy).
+        """
+
+        return self.__completion_feedback.copy()
+
+    def clear_completion_feedback(self) -> None:
+        """
+        Drop all completion-feedback entries; called by the planner after one consumption cycle.
+        """
+
+        self.__completion_feedback.clear()
 
     @property
     def workflow_id(self) -> str:

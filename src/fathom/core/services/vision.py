@@ -5,7 +5,9 @@ import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, NotRequired, Optional, TypedDict
+from typing import Any, Dict, List, Optional
+
+from typing_extensions import NotRequired, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH

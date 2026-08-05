@@ -82,3 +82,18 @@ class VerifierFeedback(FeedbackEntry):
     a completion claim invalid. Use-once: consumed by the next planner
     iteration so the LLM can adjust the next action against the rejection.
     """
+
+
+class ActionFeedback(FeedbackEntry):
+    """
+    Observed no-op notice: the last device action dispatched but left the screen
+    unchanged. Use-once: consumed by the next planner iteration so the LLM knows
+    the target was correct and the action may simply be repeated.
+    """
+
+
+class CompletionFeedback(FeedbackEntry):
+    """
+    Post-action completion refute: vision judged the active sub-goal not satisfied and cited a reason.
+    Use-once: consumed by the next planner iteration so the LLM can correct its approach.
+    """

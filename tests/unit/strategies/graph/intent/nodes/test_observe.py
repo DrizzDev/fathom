@@ -192,6 +192,8 @@ class ObserveNodeExecutedWiringTest(unittest.IsolatedAsyncioTestCase):
         provider.workflow_id = "run-test"
         provider.context.workflow_id = "run-test"
         provider.context.catalog = CommandCatalogProvider().build()
+        provider.context.telemetry.info = AsyncMock()
+        provider.context.context_manager.inject_action_feedback = AsyncMock()
         provider.is_cancelled = AsyncMock(return_value=False)
         provider.persistence.persist = MagicMock()
         provider.observer.fallback_observation = AsyncMock(return_value=None)

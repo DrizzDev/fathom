@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional
+
+from typing_extensions import TypedDict
 
 from fathom.schemas.binding import Binding
 from fathom.schemas.effect import EffectReading

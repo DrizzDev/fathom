@@ -216,7 +216,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</USER_OVERRIDE>"
             )
 
-        # 5. Verifier Feedback (system-internal rejection — adjust the next action)
+        # 5. Verifier Feedback (VERIFY-node rejection — adjust the next action)
         if verifier_feedback := context.get("verifier_feedback", []):
             entries = [
                 f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in verifier_feedback
@@ -238,7 +238,36 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</VERIFIER_FEEDBACK>"
             )
 
-        # 5. Interaction Cadence (Deterministic Repetition Tracking)
+        # 5b. Completion Feedback (post-action vision refuted the sub-goal — correct the approach)
+        if completion_feedback := context.get("completion_feedback", []):
+            notes = [
+                f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in completion_feedback
+            ]
+            parts.append(
+                "<COMPLETION_FEEDBACK>\n"
+                "The screen was checked after your last action and the active sub-goal is NOT satisfied "
+                "yet. Do not assume it is done and do not re-assert completion — take the next concrete UI "
+                "action that actually advances it, correcting your approach using the reason below.\n"
+                + "\n".join(notes)
+                + "\n</COMPLETION_FEEDBACK>"
+            )
+
+        # 5b. Action Feedback (system-internal no-op notice — the last action did not change the screen)
+        if action_feedback := context.get("action_feedback", []):
+            notices = [
+                f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in action_feedback
+            ]
+            parts.append(
+                "<ACTION_FEEDBACK>\n"
+                "Your last action dispatched but no change was detected on screen. This can mean either the "
+                "action was correct and the app/device was slow to respond (repeating the same action may "
+                "work), or the action did not have its intended effect (it may need adjusting). Reassess the "
+                "current screen and decide whether to repeat the same action or adjust it; do not switch to "
+                "an unrelated goal because of this.\n" + "\n".join(notices) + "\n"
+                "</ACTION_FEEDBACK>"
+            )
+
+        # 6. Interaction Cadence (Deterministic Repetition Tracking)
         # Placed LAST to ensure maximum recency bias and adherence when stuck
         if tracking_note:
             parts.append(f"<SYSTEM_ALERT>\nCRITICAL: {tracking_note}\n</SYSTEM_ALERT>")

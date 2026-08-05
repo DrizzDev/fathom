@@ -120,6 +120,7 @@ select = [
     "SIM",    # flake8-simplify
     "TCH",    # flake8-type-checking
     "PTH",    # flake8-use-pathlib
+    "TID",    # flake8-tidy-imports (banned-api below)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
@@ -143,6 +144,11 @@ ignore = [
 # 4. Adapters (adapters/) can import from anywhere (they're at the edge)
 # 5. Processing (processing/) can only import from schemas/ and utils/
 # 6. Runtime (runtime/) wires everything together and can import adapters
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# pydantic rejects typing.TypedDict on Python < 3.12 (stag runs 3.11); enforce typing_extensions.
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict — pydantic rejects typing.TypedDict on Python < 3.12."
+"typing.NotRequired".msg = "Use typing_extensions.NotRequired with typing_extensions.TypedDict for pydantic on Python < 3.12."
 
 [tool.ruff.lint.isort]
 known-first-party = ["fathom", "governance"]

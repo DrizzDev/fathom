@@ -50,7 +50,7 @@ class AdvancementPolicy:
         decision = self.__adjudicate(success=success, evidence=evidence)
 
         if decision.kind is AdvanceKind.RETAIN and self.__stalled(evidence=evidence):
-            return self.__escalation(success=success, evidence=evidence)
+            return self.__escalation()
 
         return decision
 
@@ -147,15 +147,11 @@ class AdvancementPolicy:
             and capture.step == execution.step.step_number
         )
 
-    def __escalation(self, *, success: Success, evidence: TurnEvidence) -> Advancement:
+    @staticmethod
+    def __escalation() -> Advancement:
         """
-        Close a stalled retain: a refuted own-observation is unsatisfiable, anything else escalates.
+        Close a stalled retain by escalating for help; a vision refute may be a false negative, never terminal.
         """
-
-        if isinstance(success, ObservedSuccess) and self.__refutes(
-            evidence=evidence, observation=success.observation
-        ):
-            return Advancement(kind=AdvanceKind.UNSATISFIABLE, redispatch=False)
 
         return Advancement(kind=AdvanceKind.ESCALATE, redispatch=False)
 
@@ -168,21 +164,12 @@ class AdvancementPolicy:
             evidence=evidence, observation=observation, outcome=CriterionVerdict.SATISFIED
         )
 
-    def __refutes(self, *, evidence: TurnEvidence, observation: ObservationRequirement) -> bool:
-        """
-        Return whether the turn adjudicated this exact observation and found it refuted.
-        """
-
-        return self.__reads(
-            evidence=evidence, observation=observation, outcome=CriterionVerdict.UNSATISFIED
-        )
-
     def __reads(
         self,
         *,
         evidence: TurnEvidence,
-        observation: ObservationRequirement,
         outcome: CriterionVerdict,
+        observation: ObservationRequirement,
     ) -> bool:
         """
         Read the outcome for this observation from the settled-screen visual evidence, else the oracle verdict.

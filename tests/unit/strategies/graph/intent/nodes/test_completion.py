@@ -112,6 +112,7 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         context.agent_state = state
         context.workflow_id = "wf"
         context.phase = AsyncMock()
+        context.context_manager = AsyncMock()
         return context
 
     def __evaluator(

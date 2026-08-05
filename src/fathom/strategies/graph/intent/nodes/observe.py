@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 from fathom.constants import ActionExecutionKind, ActionType
+from fathom.constants.events import FathomEvent
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.constants.timing import TimingPhase
@@ -168,6 +169,11 @@ class ObserveNode:
             },
         )
 
+        if self.__is_noop(
+            context=context, screen_changed=screen_changed, executed=execution_result.success
+        ):
+            await self.__emit_noop(context=context)
+
         plan_observation = PostAction.plan_observation(state=state)
         step_result = StepResult(
             step=context.step,
@@ -250,19 +256,57 @@ class ObserveNode:
             return False
 
         return self.__provider.effects.changed(
-            screen_diff=screen_diff,
             pre_hash=pre_hash,
             post_hash=post_hash,
+            screen_diff=screen_diff,
             threshold=ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD,
+        )
+
+    def __is_noop(self, *, context: ExecutionContext, screen_changed: bool, executed: bool) -> bool:
+        """
+        Return whether a dispatched, screen-mutating device action left the screen unchanged (a no-op).
+
+        Control-channel commands (validate, wait, store, complete, ask_user) never move the screen by
+        design, so they are excluded — only a real device interaction that should have changed the screen but did not counts as a no-op.
+        """
+
+        action_type = context.step.action.action_type
+
+        return (
+            executed
+            and not screen_changed
+            and context.step.action.execution_kind is ActionExecutionKind.DEVICE
+            and not self.__provider.context.catalog.is_control(action_type=action_type)
+        )
+
+    async def __emit_noop(self, *, context: ExecutionContext) -> None:
+        """
+        Surface a no-op to the client and hand the planner a use-once repeat hint.
+        """
+
+        action = context.step.action.action_type.value
+        target = context.step.action.script_target or "the target"
+        notice = f"The last {action} on '{target}' had no visible effect on screen"
+
+        await self.__provider.context.telemetry.info(
+            notice,
+            action=action,
+            target=target,
+            step=context.step.step_number,
+            type=FathomEvent.ACTION_NO_EFFECT,
+        )
+        await self.__provider.context.context_manager.inject_action_feedback(
+            step=context.step.step_number,
+            feedback=f"Your last {action} on '{target}' produced no detectable change on screen.",
         )
 
     def __step_success(
         self,
         *,
+        execution_success: bool,
         action_type: ActionType,
         action_effect: ActionEffect,
         action_execution_kind: ActionExecutionKind,
-        execution_success: bool,
     ) -> bool:
         """
         Return the canonical success bit for one recorded step.
