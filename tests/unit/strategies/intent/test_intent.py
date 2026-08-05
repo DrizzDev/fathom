@@ -15,17 +15,20 @@ from fathom.adapters.checkpoint import SqliteCheckpointStore
 from fathom.adapters.evidence.history import HistoryEvidenceSource
 from fathom.authoring.application import StepDraftComposer
 from fathom.authoring.evidence import AuthoringEvidenceBuilder
+from fathom.constants import ActionType
 from fathom.constants.authoring import AuthoringArtifactKind, AuthoringKind, AuthoringStatus
 from fathom.constants.dialect import DialectName
 from fathom.constants.events import FathomEvent
 from fathom.constants.flow import AssertionSource, CheckKind, IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.state import RunOutcome
+from fathom.core.exceptions import DecompositionError
 from fathom.core.services.decomposer import IntentDecomposer
 from fathom.core.services.history import HistoryService
 from fathom.interfaces.authoring import AuthoringPort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
+from fathom.interfaces.plan import PlanStore
 from fathom.runtime.checkpoint_serde import CheckpointSerdeFactory
 from fathom.schemas.authoring import AuthoringArtifact, AuthoringResponse, AuthoringTask
 from fathom.schemas.authoring.draft import AuthoringDraft
@@ -45,12 +48,17 @@ from fathom.schemas.generation import (
     ScriptFileMetadata,
     ScriptReview,
 )
+from fathom.schemas.plan import Plan
+from fathom.schemas.requirement import PressRequirement
+from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import CommandSuccess
 from fathom.strategies.graph.intent.builder import IntentGraphBuilder
 from fathom.strategies.intent import (
     CHECKPOINT_ALLOWED_JSON_MODULES,
     CHECKPOINT_ALLOWED_MSGPACK_MODULES,
     IntentStrategy,
 )
+from tests.builders import SuccessFixtures
 from tests.builders.intent import (
     DeterministicDecomposer,
     IntentCancellationConfigurationBuilder,
@@ -1395,3 +1403,200 @@ class TestIntentStrategyCancelledScriptDelivery:
         assert script_event["message"] == "tap continue"
         assert script_event["source"] == ScriptSource.BASELINE.value
         assert script_event["run_outcome"] == RunOutcome.CANCELLED.value
+
+
+class TestIntentStrategyPlanResolution:
+    """
+    Covers checkpoint-first plan resolution: resume reuses the plan; a fresh run seeds it.
+    """
+
+    class __FakePlanStore(PlanStore):
+        """
+        Plan-store port double: records reads/seeds, returns a configured plan, optionally fails.
+        """
+
+        def __init__(self, *, plan: Optional[Plan], fail: bool = False) -> None:
+            self.__plan = plan
+            self.__fail = fail
+            self.reads: List[object] = []
+            self.seeds: List[Plan] = []
+
+        async def read(self, *, run: object, workflow: str) -> Optional[Plan]:
+            _ = workflow
+            self.reads.append(run)
+            return self.__plan
+
+        async def seed(self, *, run: object, workflow: str, plan: Plan) -> None:
+            _ = (run, workflow)
+            if self.__fail:
+                raise RuntimeError("checkpoint write failed")
+            self.seeds.append(plan)
+
+    class __SpyDecomposer:
+        """
+        Decomposer double recording whether decompose was invoked.
+        """
+
+        def __init__(self, *, plan: List[SubGoal]) -> None:
+            self.__plan = plan
+            self.called = False
+
+        async def decompose(self, intent: str, *, augmentation: Any = None) -> List[SubGoal]:
+            _ = (intent, augmentation)
+            self.called = True
+            return self.__plan
+
+    @staticmethod
+    def __planned_sub_goal() -> SubGoal:
+        """
+        Build one accepted sub-goal for the persisted or fresh plan.
+        """
+
+        return SubGoal(
+            index=0,
+            objective="Tap the login button",
+            success=SuccessFixtures.command(
+                requirement=PressRequirement(operation=ActionType.TAP, target="login"),
+                quote="Tap",
+                intent="Tap the login button",
+            ),
+        )
+
+    def __plan(self) -> Plan:
+        """
+        Build an accepted plan carrying one sub-goal.
+        """
+
+        return Plan(intent="Tap the login button", cursor=0, goals=(self.__planned_sub_goal(),))
+
+    def __strategy(
+        self,
+        *,
+        tmp_path: Path,
+        plans: PlanStore,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+    ) -> IntentStrategy:
+        """
+        Build a real IntentStrategy, injecting the plan-store port and a bare run sentinel.
+        """
+
+        harness = IntentStrategyHarnessBuilder.build(
+            tmp_path=tmp_path,
+            llm=llm_port_stub,
+            memory=memory_port_stub,
+            configuration=IntentCancellationConfigurationBuilder.build(),
+        )
+        strategy = harness.strategy
+        strategy.__setattr__("_IntentStrategy__plans", plans)
+        strategy.__setattr__("_IntentStrategy__graph", object())
+        return strategy
+
+    async def test_resume_reuses_persisted_plan_without_decomposing(
+        self,
+        tmp_path: Path,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        A resumed run reuses the plan from the port and never calls the decomposer or seeds.
+        """
+
+        store = self.__FakePlanStore(plan=self.__plan())
+        strategy = self.__strategy(
+            plans=store,
+            tmp_path=tmp_path,
+            llm_port_stub=llm_port_stub,
+            memory_port_stub=memory_port_stub,
+        )
+        spy = self.__SpyDecomposer(plan=[self.__planned_sub_goal()])
+        monkeypatch.setattr(IntentDecomposer, "with_configuration", staticmethod(lambda **_: spy))
+
+        await strategy.__getattribute__("_IntentStrategy__resolve_plan")()
+
+        agent_state = strategy.__getattribute__("_IntentStrategy__graph_context").agent_state
+        assert spy.called is False
+        assert store.seeds == []
+        assert len(store.reads) == 1
+        assert len(agent_state.sub_goal_list) == 1
+        assert agent_state.sub_goal_list[0].objective == "Tap the login button"
+        assert isinstance(agent_state.sub_goal_list[0].success, CommandSuccess)
+
+    async def test_fresh_run_decomposes_and_seeds_plan_through_the_port(
+        self,
+        tmp_path: Path,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        A fresh run decomposes once and seeds the accepted plan through the port before graph entry.
+        """
+
+        store = self.__FakePlanStore(plan=None)
+        strategy = self.__strategy(
+            plans=store,
+            tmp_path=tmp_path,
+            llm_port_stub=llm_port_stub,
+            memory_port_stub=memory_port_stub,
+        )
+        spy = self.__SpyDecomposer(plan=[self.__planned_sub_goal()])
+        monkeypatch.setattr(IntentDecomposer, "with_configuration", staticmethod(lambda **_: spy))
+
+        await strategy.__getattribute__("_IntentStrategy__resolve_plan")()
+
+        assert spy.called is True
+        assert len(store.seeds) == 1
+        assert isinstance(store.seeds[0].goals[0].success, CommandSuccess)
+
+    async def test_persistence_failure_fails_closed_and_executes_nothing(
+        self,
+        tmp_path: Path,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        A durable-persistence failure raises a typed DecompositionError before the graph runs.
+        """
+
+        store = self.__FakePlanStore(plan=None, fail=True)
+        strategy = self.__strategy(
+            plans=store,
+            tmp_path=tmp_path,
+            llm_port_stub=llm_port_stub,
+            memory_port_stub=memory_port_stub,
+        )
+        spy = self.__SpyDecomposer(plan=[self.__planned_sub_goal()])
+        monkeypatch.setattr(IntentDecomposer, "with_configuration", staticmethod(lambda **_: spy))
+
+        with pytest.raises(DecompositionError):
+            await strategy.__getattribute__("_IntentStrategy__resolve_plan")()
+
+    async def test_consumes_only_the_plan_store_port(
+        self,
+        tmp_path: Path,
+        llm_port_stub: LLMPort,
+        memory_port_stub: MemoryPort,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        The strategy delegates all persistence to the port, passing the opaque run handle untouched.
+        """
+
+        store = self.__FakePlanStore(plan=None)
+        strategy = self.__strategy(
+            plans=store,
+            tmp_path=tmp_path,
+            llm_port_stub=llm_port_stub,
+            memory_port_stub=memory_port_stub,
+        )
+        spy = self.__SpyDecomposer(plan=[self.__planned_sub_goal()])
+        monkeypatch.setattr(IntentDecomposer, "with_configuration", staticmethod(lambda **_: spy))
+
+        await strategy.__getattribute__("_IntentStrategy__resolve_plan")()
+
+        run_handle = strategy.__getattribute__("_IntentStrategy__graph")
+        assert store.reads == [run_handle]
+        assert len(store.seeds) == 1

@@ -6,12 +6,18 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.constants import StrategyStatus
+from fathom.constants.retries import RetryBranch, RetryKind
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import ScreenArtifact
+from fathom.schemas.assessment import VisualAssessment
+from fathom.schemas.base.common import NonBlank
 from fathom.schemas.capture import Capture
 from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.planner import PlannerEvent, PlannerMetrics
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.shadow import ShadowTurnDraft
 from fathom.schemas.steps import Step, StepResult
+from fathom.schemas.supervision import BlockReason
 from fathom.schemas.swipe import SwipeExecution
 from fathom.schemas.tools import StateUpdate, ToolArtifact, ToolData, ToolDiagnostic, ToolResponse
 from fathom.schemas.validation import Validation
@@ -88,6 +94,18 @@ class AnalysisResult(BaseModel):
     tool_response: Optional[ToolResponse] = Field(
         default=None,
         description="Parsed model-tool response. Consumed by the planner boundary only.",
+    )
+    visual_assessment: Optional[VisualAssessment] = Field(
+        default=None,
+        description="Shadow visual assessment of the active observed goal; recorded, not yet enforced.",
+    )
+    assessment_malformed: bool = Field(
+        default=False,
+        description="True when the turn carried an assessment payload that failed its schema; never fabricated.",
+    )
+    planner: Optional[PlannerMetrics] = Field(
+        default=None,
+        description="Producer-owned planner latency and call count for the turn, measured at the vision boundary.",
     )
 
     outcome: AnalysisOutcome = Field(
@@ -300,6 +318,44 @@ class ExecutionResult(BaseModel):
     )
 
 
+class PlannerRetry(BaseModel):
+    """
+    Typed retry directive the planner stamps when a turn must replan instead of executing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: RetryKind = Field(description="Retry family that drives budget consumption.")
+    branch: RetryBranch = Field(description="Specific branch that produced the retry.")
+    action: Optional[NonBlank] = Field(
+        default=None, description="Descriptor of the blocked action, when the retry blocked one."
+    )
+    block: Optional[BlockReason] = Field(
+        default=None, description="Structured block reason, when a guard blocked the action."
+    )
+
+
+class PlanContext(BaseModel):
+    """
+    Typed context a planned turn carries for downstream nodes; the sole replacement for plan metadata.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    analysis: Optional["AnalysisResult"] = Field(
+        default=None, description="The turn's analysis, published to state for downstream reasoning."
+    )
+    observation: Optional[NonBlank] = Field(
+        default=None, description="Screen description the effect stage correlates against."
+    )
+    retry: Optional[PlannerRetry] = Field(
+        default=None, description="Retry directive when the turn replans instead of executing."
+    )
+    shadow: Optional[ShadowTurnDraft] = Field(
+        default=None, description="Pre-dispatch shadow draft Analyze carries to Completion for finalization."
+    )
+
+
 class PlanResult(BaseModel):
     """
     Result of step planning.
@@ -314,7 +370,9 @@ class PlanResult(BaseModel):
     memories: int = Field(default=0, description="Count of memories used")
     should_retry: bool = Field(default=False, description="Whether to retry analysis")
 
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    context: PlanContext = Field(
+        default_factory=PlanContext, description="Typed context the turn carries for downstream nodes."
+    )
     metrics: Dict[str, float] = Field(default_factory=dict, description="Performance metrics")
 
     is_valid_action: bool = Field(default=True, description="Whether the planned action is valid")
@@ -345,6 +403,34 @@ class PlanResult(BaseModel):
         """
 
         return bool(self.updates or self.data or self.artifacts or self.diagnostics)
+
+
+class PlanTurn(BaseModel):
+    """
+    The sole planner boundary result: the planned outcome plus the observability events the turn produced.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    plan: PlanResult = Field(description="The planned outcome for the turn.")
+    events: Tuple[PlannerEvent, ...] = Field(
+        default_factory=tuple, description="Structured observability events for the graph boundary to log."
+    )
+
+
+class PlanDecision(BaseModel):
+    """
+    A collaborator's transient decision: an optional short-circuit plan plus the local events it produced.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    plan: Optional[PlanResult] = Field(
+        default=None, description="Short-circuit plan the collaborator returns, or None to proceed."
+    )
+    events: Tuple[PlannerEvent, ...] = Field(
+        default_factory=tuple, description="Local events the coordinator aggregates into the turn."
+    )
 
 
 class GenerateResult(BaseModel):

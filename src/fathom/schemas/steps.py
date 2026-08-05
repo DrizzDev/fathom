@@ -8,6 +8,7 @@ from fathom.constants import StepEvent
 from fathom.schemas.actions import Action
 from fathom.schemas.artifacts import StepArtifacts
 from fathom.schemas.capture import Capture, CaptureRequest
+from fathom.schemas.requirement import CommandRequirement
 
 
 class StepGoal(BaseModel):
@@ -34,6 +35,10 @@ class Step(BaseModel):
     action: Action = Field(description="The action to be executed in this step")
     screen_hash: str = Field(description="Visual hash of the screen state before the action")
 
+    requirement: Optional[CommandRequirement] = Field(
+        default=None,
+        description="Canonical command requirement admitted for this step, bound at the pre-dispatch gate.",
+    )
     step_number: int = Field(ge=0, description="The sequence number of this step")
     is_conditional: bool = Field(
         default=False, description="Whether this step is a recovery attempt"

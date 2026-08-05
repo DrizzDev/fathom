@@ -143,7 +143,9 @@ class DataclassRuleTest(unittest.TestCase):
         The ban is implementation-agnostic: a Pydantic dataclass is flagged too.
         """
 
-        code = "from pydantic.dataclasses import dataclass\n\n\n@dataclass\nclass Point:\n    x: int\n"
+        code = (
+            "from pydantic.dataclasses import dataclass\n\n\n@dataclass\nclass Point:\n    x: int\n"
+        )
         violations = DataclassRule().check(module=self.__module(code=code))
 
         self.assertEqual([violation.selector.detail for violation in violations], ["Point"])

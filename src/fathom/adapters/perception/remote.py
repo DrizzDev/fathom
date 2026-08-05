@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import time
 from logging import getLogger
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
+from fathom.adapters.perception.breaker import HierarchyBreaker
+from fathom.constants.screen import HierarchyProvenance
 from fathom.core.exceptions import DeviceError
 from fathom.core.perception.orientation import CaptureOrientationResolver
 from fathom.interfaces.device import DevicePort
@@ -27,6 +29,8 @@ class RemotePerceptionAdapter(PerceptionPort):
         self.__device = device
         self.__include_hierarchy = include_hierarchy
 
+        self.__breaker = HierarchyBreaker()
+
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
         """
@@ -41,9 +45,17 @@ class RemotePerceptionAdapter(PerceptionPort):
         """
 
         capture_start = time.time()
+        provenance: Optional[HierarchyProvenance] = None
 
         if self.__include_hierarchy:
-            screenshot_bytes, hierarchy_content = await self.__capture()
+            snapshot = await self.__breaker.snapshot(
+                dump=self.__capture,
+                screenshot=self.__device.capture_screen,
+            )
+
+            provenance = snapshot.provenance
+            screenshot_bytes = snapshot.image
+            hierarchy_content = snapshot.hierarchy
         else:
             hierarchy_content = None
             screenshot_bytes = await self.__device.capture_screen()
@@ -59,21 +71,23 @@ class RemotePerceptionAdapter(PerceptionPort):
         )
         application_identifier = await self.__device.get_current_package()
 
+        elapsed = time.time() - capture_start
+        metadata: Dict[str, object] = {"capture_duration": elapsed}
+
+        if hierarchy_content is not None:
+            metadata["hierarchy_dump_duration"] = elapsed
+
+        if provenance is not None:
+            metadata["hierarchy_fallback"] = provenance.value
+
         return ScreenCapture(
             width=width,
             height=height,
+            metadata=metadata,
             image=screenshot_bytes,
             xml_content=hierarchy_content,
             activity=application_identifier,
             timestamp=int(time.time() * 1000),
-            metadata={
-                "capture_duration": time.time() - capture_start,
-                **(
-                    {"hierarchy_dump_duration": time.time() - capture_start}
-                    if hierarchy_content is not None
-                    else {}
-                ),
-            },
         )
 
     async def __capture(self) -> Tuple[bytes, Optional[str]]:

@@ -17,9 +17,7 @@ class PurityRule(Rule):
     the taxonomy configuration, not hardcoded.
     """
 
-    __FORBIDDEN_ROOTS: FrozenSet[str] = frozenset(
-        {"logging", "structlog", "cv2", "numpy", "PIL"}
-    )
+    __FORBIDDEN_ROOTS: FrozenSet[str] = frozenset({"logging", "structlog", "cv2", "numpy", "PIL"})
 
     def __init__(self, *, domain: Tuple[str, ...]) -> None:
         """

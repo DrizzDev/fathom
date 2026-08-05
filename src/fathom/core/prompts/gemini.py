@@ -91,30 +91,50 @@ class GeminiPromptBuilder(PromptBuilder):
             index = sub_goal_info.get("index")
             total = sub_goal_info.get("total", 0)
             description = sub_goal_info.get("description")
+            assertion = sub_goal_info.get("assertion")
 
             if index is not None and total > 1:
                 progress_text = f"[{index + 1}/{total}]"
-                proof_clause = (
-                    "5. This step changes persistent state (adds, saves, submits, pays, deletes). "
-                    "Do NOT signal completion until the resulting state is VISIBLE on screen "
-                    "(e.g. the item is shown in the cart). A claim without a visible result is not "
-                    "completion.\n"
-                    if sub_goal_info.get("durable")
-                    else ""
-                )
+                if assertion:
+                    directives = (
+                        f"Completion condition (must be visibly true on the current screen): "
+                        f"{assertion}\n\n"
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "1. Focus EXCLUSIVELY on this task; do NOT attempt future steps.\n"
+                        "2. Judge the completion condition ONLY from what is visible on the current "
+                        "screen now, and report it as a 'visual_assessment' object (verdict SATISFIED, "
+                        "NOT_SATISFIED, or UNCLEAR; confidence 0..1; concise visible evidence).\n"
+                        "3. The 'visual_assessment' verdict is the ONLY completion signal for this "
+                        "task. Set goal_completed and sub_goal_completed to false — they are required "
+                        "by the schema but ignored for this goal — and do NOT return a COMPLETE action.\n"
+                        "4. If the condition is SATISFIED, do NOT also propose an action this turn; "
+                        "otherwise propose the single best action to make progress.\n"
+                    )
+                else:
+                    proof_clause = (
+                        "5. This step changes persistent state (adds, saves, submits, pays, deletes). "
+                        "Do NOT signal completion until the resulting state is VISIBLE on screen "
+                        "(e.g. the item is shown in the cart). A claim without a visible result is not "
+                        "completion.\n"
+                        if sub_goal_info.get("durable")
+                        else ""
+                    )
+                    directives = (
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "1. Focus EXCLUSIVELY on completing this task\n"
+                        "2. Do NOT attempt to complete future steps\n"
+                        "3. When this task is FULLY COMPLETED, signal completion by:\n"
+                        "   - Setting 'is_goal_complete: true' in your response, OR\n"
+                        "   - Returning a COMPLETE action\n"
+                        "4. The system will automatically advance to the next step\n"
+                        f"{proof_clause}"
+                    )
 
                 parts.append(
                     f"<CURRENT_STEP>\n"
                     f"Progress: {progress_text}\n"
                     f"Task: {description}\n\n"
-                    f"CRITICAL INSTRUCTIONS:\n"
-                    f"1. Focus EXCLUSIVELY on completing this task\n"
-                    f"2. Do NOT attempt to complete future steps\n"
-                    f"3. When this task is FULLY COMPLETED, signal completion by:\n"
-                    f"   - Setting 'is_goal_complete: true' in your response, OR\n"
-                    f"   - Returning a COMPLETE action\n"
-                    f"4. The system will automatically advance to the next step\n"
-                    f"{proof_clause}"
+                    f"{directives}"
                     f"</CURRENT_STEP>"
                 )
                 logger.info(

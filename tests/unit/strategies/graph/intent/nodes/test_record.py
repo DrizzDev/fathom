@@ -9,12 +9,11 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.record import RecordNode
+from tests.builders import SubGoalFixtures
 
 
 class RecordNodeFailureTest(unittest.IsolatedAsyncioTestCase):
@@ -88,20 +87,6 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
 
         return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
 
-    @staticmethod
-    def __signal() -> SubGoalCompletionSignal:
-        """
-        Return a valid signal for advancing sub-goals.
-        """
-
-        return SubGoalCompletionSignal(
-            llm_confidence=1.0,
-            screen_verified=True,
-            action_executed=True,
-            flagged_complete=True,
-            rationale_verified=True,
-            evidence="unit test",
-        )
 
     @staticmethod
     def __step_result() -> StepResult:
@@ -171,7 +156,7 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
         agent_state.record_complete_deferral()
         agent_state.record_verify_rejection(
             screen=self.__screen(), activity="com.test/.MainActivity"
@@ -215,16 +200,14 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap on the current address or change address"),
-                SubGoal(index=1, description="Type HSR Layout into the address search field"),
-                SubGoal(index=2, description="Tap HSR Layout from the search results"),
-                SubGoal(
-                    index=3, description="Tap the button to confirm or save the address change"
-                ),
+                SubGoalFixtures.make(index=0, description="Tap on the current address or change address"),
+                SubGoalFixtures.make(index=1, description="Type HSR Layout into the address search field"),
+                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
+                SubGoalFixtures.make(index=3, description="Tap the button to confirm or save the address change"),
             ]
         )
         for _ in range(3):
-            agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+            agent_state.advance_current_sub_goal()
 
         provider = self.__provider(agent_state=agent_state)
         node = RecordNode(provider=provider)
@@ -292,8 +275,8 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
-        agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
+        agent_state.advance_current_sub_goal()
         agent_state.record_complete_deferral()
         provider = self.__provider(agent_state=agent_state)
         node = RecordNode(provider=provider)

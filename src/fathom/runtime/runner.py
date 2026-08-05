@@ -17,6 +17,7 @@ from typing import (
 
 from pydantic import JsonValue
 
+from fathom.adapters.checkpoint import LangGraphPlanStore
 from fathom.adapters.signing.noop import NoopSigner
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
@@ -439,6 +440,7 @@ class FathomRunner:
             execution_id=execution_id,
             recorder=self.__recorder,
             package_name=package_name,
+            requested_package=requested_package,
             telemetry=self.__telemetry,
             configuration=self.__config,
             summarizer=self.__summarizer,
@@ -446,6 +448,7 @@ class FathomRunner:
             path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
             runtime_configuration=self.__runtime_configuration,
+            plans=LangGraphPlanStore(),
             max_steps=max_steps or self.__config.intent.max_steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )

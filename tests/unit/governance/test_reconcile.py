@@ -24,7 +24,9 @@ class ReconcilerTest(unittest.TestCase):
     __PATH = "src/fathom/schemas/state.py"
 
     @classmethod
-    def __selector(cls, *, rule: RuleId = RuleId.DOMAIN_PURITY, detail: str = "logging") -> Selector:
+    def __selector(
+        cls, *, rule: RuleId = RuleId.DOMAIN_PURITY, detail: str = "logging"
+    ) -> Selector:
         """
         Build a selector fixture.
         """
@@ -39,11 +41,18 @@ class ReconcilerTest(unittest.TestCase):
         Build a finding fixture.
         """
 
-        return Violation(selector=cls.__selector(rule=rule, detail=detail), line=line, message="message")
+        return Violation(
+            selector=cls.__selector(rule=rule, detail=detail), line=line, message="message"
+        )
 
     @classmethod
     def __record(
-        cls, *, reference: str = "ARCH-1", rule: RuleId = RuleId.DOMAIN_PURITY, detail: str = "logging", **overrides: object
+        cls,
+        *,
+        reference: str = "ARCH-1",
+        rule: RuleId = RuleId.DOMAIN_PURITY,
+        detail: str = "logging",
+        **overrides: object,
     ) -> DebtRecord:
         """
         Build a record fixture matching the finding fixture by default.
@@ -150,7 +159,10 @@ class ReconcilerTest(unittest.TestCase):
 
         finding = self.__violation(rule=RuleId.DATACLASS_FORBIDDEN, detail="Point")
         record = self.__record(
-            rule=RuleId.DATACLASS_FORBIDDEN, detail="Point", state=DebtState.APPROVED, expires=date(2026, 12, 31)
+            rule=RuleId.DATACLASS_FORBIDDEN,
+            detail="Point",
+            state=DebtState.APPROVED,
+            expires=date(2026, 12, 31),
         )
         report = self.__reconcile(findings=[finding], records=[record])
 

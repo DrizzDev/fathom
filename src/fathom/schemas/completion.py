@@ -9,7 +9,6 @@ from fathom.constants.completion import (
     RetainReason,
     VerifyEvidenceDimension,
 )
-from fathom.schemas.tasks import ExecutionTaskState
 
 
 class CompletionVerdict(BaseModel):
@@ -20,8 +19,6 @@ class CompletionVerdict(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     complete: bool = Field(description="Whether the task is observably complete.")
-    next_state: ExecutionTaskState = Field(description="Target lifecycle state for the task.")
-
     reason: str = Field(description="Actionable reason for the verdict.")
     missing: List[VerifyEvidenceDimension] = Field(
         default_factory=list,

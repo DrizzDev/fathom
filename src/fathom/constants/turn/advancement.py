@@ -15,6 +15,15 @@ class AdvanceKind(StrEnum):
     SATISFIED_PRIOR = "SATISFIED_PRIOR"
 
 
+class ObservationPhase(StrEnum):
+    """
+    Whether a turn's observation was read before or after the action was dispatched.
+    """
+
+    PRE_DISPATCH = "PRE_DISPATCH"
+    POST_DISPATCH = "POST_DISPATCH"
+
+
 class AdvanceThreshold(IntEnum):
     """
     Bounded-retention limits consumed by the advancement policy.

@@ -212,6 +212,59 @@ class PlanningError(AgentError):
         super().__init__(message, retryable=False)
 
 
+class TranslationError(AgentError):
+    """
+    A decomposition proposal could not be translated into a canonical success; fail closed.
+    """
+
+    def __init__(self, *, reason: str) -> None:
+        """
+        Bind the fail-closed reason the caller surfaces.
+        """
+
+        super().__init__(f"Proposal translation failed: {reason}", retryable=False)
+        self.__reason = reason
+
+    @property
+    def reason(self) -> str:
+        """
+        Machine-readable cause of the translation failure.
+        """
+
+        return self.__reason
+
+
+class DecompositionError(AgentError):
+    """
+    Intent decomposition could not produce one accepted plan; the run must execute nothing.
+    """
+
+    def __init__(self, *, intent: str, reason: str) -> None:
+        """
+        Bind the offending intent and the fail-closed reason for the caller to surface.
+        """
+
+        super().__init__(f"Decomposition failed for intent: {reason}", retryable=False)
+        self.__intent = intent
+        self.__reason = reason
+
+    @property
+    def intent(self) -> str:
+        """
+        Intent whose decomposition failed closed.
+        """
+
+        return self.__intent
+
+    @property
+    def reason(self) -> str:
+        """
+        Machine-readable cause of the decomposition failure.
+        """
+
+        return self.__reason
+
+
 class StuckLoopError(AgentError):
     """
     Agent is stuck in a loop.

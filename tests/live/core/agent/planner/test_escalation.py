@@ -110,7 +110,7 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
         )
 
         state = self.__validate_only_stuck_state()
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             reasoner=Mock(),
             screen_width=1080,
@@ -118,7 +118,7 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=True,
             capture=self.__capture(),
             context_manager=self.__context(),
-        )
+        )).plan
 
         # Two NO_PROGRESS validates with tolerance=1 → escalate.
         self.assertIsNotNone(result.step)
@@ -141,7 +141,7 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
         )
 
         state = self.__validate_only_stuck_state()
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             reasoner=Mock(),
             screen_width=1080,
@@ -149,7 +149,7 @@ class EscalationGateWiringTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=True,
             capture=self.__capture(),
             context_manager=self.__context(),
-        )
+        )).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None

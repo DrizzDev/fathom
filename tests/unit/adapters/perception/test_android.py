@@ -70,3 +70,27 @@ class AndroidPerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(capture.width, 1080)
         self.assertEqual(capture.height, 2340)
+
+    async def test_failed_hierarchy_dump_opens_breaker_and_skips_next_dumps(self) -> None:
+        """
+        A timed-out hierarchy dump must not be re-attempted every capture: the breaker skips it for a bounded cooldown, recording fallback provenance.
+        """
+
+        screenshot = self.__screenshot(width=1080, height=2340)
+        device = self.__device(reported=(1080, 2340))
+        device.capture_screen = AsyncMock(return_value=screenshot)
+        device.get_snapshot = AsyncMock(return_value=(screenshot, None))
+
+        adapter = AndroidPerceptionAdapter(device=device, include_hierarchy=True)
+
+        first = await adapter.capture()
+        self.assertEqual(first.metadata.get("hierarchy_fallback"), "ATTEMPT_FAILED")
+        self.assertEqual(device.get_snapshot.await_count, 1)
+
+        for _ in range(3):
+            follow = await adapter.capture()
+            self.assertEqual(follow.metadata.get("hierarchy_fallback"), "CIRCUIT_OPEN")
+
+        # The failing dump was attempted once, not once per capture.
+        self.assertEqual(device.get_snapshot.await_count, 1)
+        self.assertEqual(device.capture_screen.await_count, 3)

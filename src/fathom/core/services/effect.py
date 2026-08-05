@@ -22,11 +22,14 @@ class EffectClassifier:
         effect: ActionEffect,
         diff: Optional[ScreenDiff],
         bounds: Optional[Bounds],
-        package: str,
+        package: Optional[str],
         foreground: str,
     ) -> EffectReading:
         """
         Return the trial reading derived from region scope and foreground direction.
+
+        An unbound target (``package is None``) yields ``departed=None`` — never a
+        regression — so the fallback starting foreground can never be scored as the target.
         """
 
         scoped, overlap = self.__scoped(diff=diff, bounds=bounds)
@@ -95,7 +98,7 @@ class EffectClassifier:
         return (width * height) / (bounds.width * bounds.height)
 
     @staticmethod
-    def __departed(*, package: str, foreground: str) -> Optional[bool]:
+    def __departed(*, package: Optional[str], foreground: str) -> Optional[bool]:
         """
         Return whether the foreground left the target application, None when unknown.
         """
@@ -125,7 +128,7 @@ class EffectRecorder:
         effect: ActionEffect,
         diff: Optional[ScreenDiff],
         bounds: Optional[Bounds],
-        package: str,
+        package: Optional[str],
         foreground: str,
     ) -> Optional[EffectReading]:
         """

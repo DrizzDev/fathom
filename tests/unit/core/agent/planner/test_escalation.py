@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
+from fathom.constants.retries import RetryKind
 from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
@@ -29,7 +30,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         """
 
         state = AgentState(intent="finish onboarding", capabilities=capabilities)
-        state.set_sub_goals([SubGoalFixtures.make(description="Validate something", max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="Validate something")])
 
         detector = state.runtime.screen.detector
         screen = ScreenFixtures.state(activity="app")
@@ -103,7 +104,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         """
 
         state = AgentFixtures.state(intent="x", hitl_enabled=True)
-        state.set_sub_goals([SubGoalFixtures.make(description="v", max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="v")])
         detector = state.runtime.screen.detector
         screen = ScreenFixtures.state(activity="app")
         for _ in range(3):
@@ -144,7 +145,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
         state.record_deferral()
 
         planner = StepPlanner(vision_tool=Mock())
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             reasoner=Mock(),
             screen_width=100,
@@ -152,7 +153,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=True,
             capture=ScreenFixtures.capture(activity="app"),
             context_manager=AgentFixtures.context_manager(),
-        )
+        )).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -198,7 +199,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             vision_tool=Mock(),
             escalation_policy=EscalationPolicy(enabled=False),
         )
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             reasoner=Mock(),
             screen_width=100,
@@ -206,7 +207,7 @@ class StepPlannerEscalationTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=True,
             capture=ScreenFixtures.capture(activity="app"),
             context_manager=AgentFixtures.context_manager(),
-        )
+        )).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -276,7 +277,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         """
 
         state = AgentFixtures.state(intent="x", hitl_enabled=True)
-        state.set_sub_goals([SubGoalFixtures.make(description="v", max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="v")])
         detector = state.runtime.screen.detector
         screen = ScreenFixtures.state(activity="app", activity_hash="ah")
         for _ in range(detector.threshold):
@@ -307,7 +308,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             screen_width=100,
             screen_height=200,
@@ -315,7 +316,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=False,
             capture=ScreenFixtures.capture(activity="app"),
             context_manager=AgentFixtures.context_manager(),
-        )
+        )).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -344,7 +345,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
         planner = StepPlanner(vision_tool=vision)
         context = AgentFixtures.context_manager(user_guidance=[Mock(active=True)])
 
-        result = await planner.plan_step(
+        result = (await planner.plan_step(
             state=state,
             screen_width=100,
             screen_height=200,
@@ -352,7 +353,7 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
             prompt_if_stuck=True,
             context_manager=context,
             capture=ScreenFixtures.capture(activity="app"),
-        )
+        )).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.should_retry)
@@ -361,5 +362,5 @@ class StepPlannerLlmAskUserGateTest(unittest.IsolatedAsyncioTestCase):
 
         context.inject_user_guidance.assert_awaited()
 
-        self.assertTrue(result.metadata.get("escalation.suppressed"))
-        self.assertEqual(result.metadata.get("escalation.path"), "llm_tool")
+        assert result.context.retry is not None
+        self.assertIs(result.context.retry.kind, RetryKind.ESCALATION_DEFERRED)

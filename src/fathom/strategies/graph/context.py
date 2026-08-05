@@ -94,6 +94,7 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.target import TargetAuthority
 from fathom.schemas.tools import ToolPolicyContext, ToolScopeMatrixExpansion
 
 logger = getLogger(__name__)
@@ -126,6 +127,7 @@ class GraphContext:
         execution_id: str,
         workflow_id: str,
         package_name: str,
+        requested_package: Optional[str] = None,
         tenant: str,
         thread: str,
         requester: str,
@@ -224,6 +226,11 @@ class GraphContext:
             capabilities=self.__capabilities,
             retries=configuration.intent.retries,
             realignment_budget=self.__realignment.budget,
+            target_authority=(
+                TargetAuthority.requested(package=requested_package)
+                if requested_package
+                else TargetAuthority.unbound()
+            ),
         )
 
         self.__signal = signal
@@ -687,6 +694,14 @@ class GraphContext:
         """
 
         return self.__package_name
+
+    @property
+    def target_authority(self) -> TargetAuthority:
+        """
+        Read-only projection of the run's durable target authority owned by AgentState.
+        """
+
+        return self.__agent_state.target_authority
 
     @property
     def artifact_catalog(self) -> ArtifactCatalog:

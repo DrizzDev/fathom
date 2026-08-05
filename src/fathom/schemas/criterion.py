@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fathom.schemas.base.common import NonBlank as NonBlankText
 from fathom.schemas.base.common import SealedModel
 
 
@@ -92,4 +93,21 @@ class Verdict(SealedModel):
     evidence: str = Field(
         default="",
         description="Visible screen detail supporting the outcome.",
+    )
+
+
+class CriterionAssessment(SealedModel):
+    """
+    The model's structured judgment of whether an observation holds on the settled screen.
+
+    Gemini-compatible structured output: a bare enum verdict plus a grounded reason, no unions or
+    numeric bounds. The host maps it to a :class:`CriterionDecision`; the model — never a token
+    heuristic — is the semantic interpreter of the observation.
+    """
+
+    verdict: CriterionVerdict = Field(
+        description="Whether the observation is satisfied, refuted, or unclear on the current screen."
+    )
+    reason: NonBlankText = Field(
+        description="One-sentence justification grounded only in the observable post-state."
     )

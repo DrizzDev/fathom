@@ -4,7 +4,33 @@ from typing import Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from fathom.constants.success import CaptureNameProvenance
 from fathom.schemas.base import SealedModel
+from fathom.schemas.base.common import NonBlank
+
+
+class CaptureIdentity(SealedModel):
+    """
+    Canonical capture identity: the variable name is the sole identity key, plus how it was authored.
+    """
+
+    name: NonBlank = Field(
+        description="Variable name the captured value is stored under; the sole identity key."
+    )
+    provenance: CaptureNameProvenance = Field(
+        description="Whether the user supplied the name or the model proposed it."
+    )
+
+    @model_validator(mode="after")
+    def __syntax(self) -> "CaptureIdentity":
+        """
+        A model-authored name must be a valid identifier; a user-supplied name is preserved verbatim.
+        """
+
+        if self.provenance is CaptureNameProvenance.MODEL and not self.name.isidentifier():
+            raise ValueError("Model-authored capture name must be a valid identifier.")
+
+        return self
 
 
 class CaptureRequest(SealedModel):

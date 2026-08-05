@@ -9,6 +9,7 @@ from fathom.constants import ActionType, StepEvent
 from fathom.constants.tools import DiagnosticSeverity, StateNamespace
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.schemas.actions import Action
+from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
@@ -113,6 +114,14 @@ class ToolResponseParser:
                 arguments=primary_call.args,
             )
 
+            # Shadow visual assessment is a common optional field on any primary response, parsed
+            # separately from the live action so a malformed assessment never rejects a valid action.
+            assessment, malformed = self.__extract_visual_assessment(arguments=primary_call.args)
+            if assessment is not None or malformed:
+                result = result.model_copy(
+                    update={"visual_assessment": assessment, "assessment_malformed": malformed}
+                )
+
             # Process non-command tool calls into the typed model-tool response envelope.
             if non_command_calls:
                 tool_response = result.tool_response or ToolResponse()
@@ -148,6 +157,21 @@ class ToolResponseParser:
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
+
+    @staticmethod
+    def __extract_visual_assessment(*, arguments: Any) -> Tuple[Optional[VisualAssessment], bool]:
+        """
+        Extract the optional shadow visual assessment, returning (assessment, malformed) and never fabricating one.
+        """
+
+        raw = arguments.get("visual_assessment") if isinstance(arguments, Mapping) else None
+        if raw is None:
+            return None, False
+
+        try:
+            return VisualAssessment.model_validate(raw), False
+        except ValidationError:
+            return None, True
 
     def __dispatch_parse(self, name: str, arguments: Any) -> AnalysisResult:
         """

@@ -5,8 +5,7 @@ from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, Dict, Optional, cast
 
-from fathom.constants import ActionType
-from fathom.constants.collaboration import TaskKind
+from fathom.constants.collaboration import TaskCode, TaskKind, TaskState
 from fathom.constants.messages import HITL_UNAVAILABLE_REPLAN_DIAGNOSTIC
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.conversation.identity import InteractionIdentity
@@ -14,6 +13,7 @@ from fathom.core.exceptions import HITLNotAvailableError, HITLTimeoutError
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.recording import Step as RecordedStep
+from fathom.schemas.recording import StepCompletion
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
@@ -112,18 +112,25 @@ class ExecuteNode:
             step.action.action_type.value,
         )
 
+        is_control = self.__provider.context.catalog.is_control(action_type=step.action.action_type)
+
+        # A control intervention with no runtime to service it must not open a persisted step:
+        # consult the same authority ask() honours and replan up front, leaving no dangling RUNNING task.
+        if is_control and not self.__hitl_available():
+            return self.__route_back_for_replan()
+
         await self.__record_step_started(step=step, created=start_time)
 
-        if step.action.action_type == ActionType.ASK_USER:
+        if is_control:
             try:
                 execution_result = await self.__provider.hitl.ask(
                     step=step,
                     start_time=start_time,
                 )
             except HITLNotAvailableError:
-                return self.__route_back_for_replan()
+                return await self.__abort_unavailable(step=step, start_time=start_time)
             except HITLTimeoutError:
-                return self.__terminate_unanswered()
+                return await self.__terminate_unanswered(step=step, start_time=start_time)
         else:
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
             resolved_observation = (
@@ -253,11 +260,26 @@ class ExecuteNode:
                 step=step.step_number + 1,
             )
 
-    def __terminate_unanswered(self) -> IntentGraphState:
+    def __hitl_available(self) -> bool:
         """
-        Close the run typed when the interactive ask exhausted its deadline without a response.
+        Return the single HITL authority ask() honours, so an unavailable intervention never opens a persisted step.
         """
 
+        return self.__provider.hitl.available()
+
+    async def __terminate_unanswered(self, *, step: Step, start_time: float) -> IntentGraphState:
+        """
+        Close the opened intervention step as timed-out, then terminate as INTERVENTION_REQUIRED.
+        """
+
+        await self.__close_step(
+            step=step,
+            start_time=start_time,
+            state=TaskState.EXPIRED,
+            code=TaskCode.TIMEOUT,
+            summary="Interactive request timed out without a response.",
+            reason="Human intervention deadline exceeded.",
+        )
         self.__provider.context.agent_state.mark_complete(
             reason=CompletionReason.INTERVENTION_REQUIRED.value
         )
@@ -271,6 +293,80 @@ class ExecuteNode:
         self.__provider.persistence.persist(result=result)
 
         return result
+
+    async def __abort_unavailable(self, *, step: Step, start_time: float) -> IntentGraphState:
+        """
+        Close an opened intervention whose runtime vanished as a failed control dispatch, then replan.
+        """
+
+        await self.__close_step(
+            step=step,
+            start_time=start_time,
+            state=TaskState.FAILED,
+            code=TaskCode.UNKNOWN_ERROR,
+            summary="Interactive request could not be serviced.",
+            reason="Human-in-the-loop became unavailable after the step opened.",
+        )
+        return self.__route_back_for_replan()
+
+    async def __close_step(
+        self,
+        *,
+        step: Step,
+        start_time: float,
+        state: TaskState,
+        code: TaskCode,
+        summary: str,
+        reason: str,
+    ) -> None:
+        """
+        Finish a started intervention step with the given outcome so no persisted task dangles RUNNING.
+        """
+
+        elapsed = max(0, int((time.time() - start_time) * 1000))
+        context = self.__provider.context
+        recorder = getattr(context, "recorder", None)
+        tenant = getattr(context, "tenant", None)
+        thread = getattr(context, "thread", None)
+        workflow_id = getattr(context, "workflow_id", None)
+        execution_id = getattr(context, "execution_id", None)
+
+        if recorder is None:
+            return
+
+        if (
+            not isinstance(tenant, str)
+            or not isinstance(thread, str)
+            or not isinstance(workflow_id, str)
+            or not isinstance(execution_id, str)
+        ):
+            return
+
+        identity = InteractionIdentity(execution=execution_id)
+        try:
+            await recorder.record_step_finished(
+                completion=StepCompletion(
+                    tenant=tenant,
+                    thread=thread,
+                    workflow=workflow_id,
+                    elapsed=elapsed,
+                    finished=datetime.now(tz=timezone.utc),
+                    task=identity.step_task(
+                        step_number=step.step_number,
+                        action_descriptor=step.action.to_description(),
+                    ),
+                    state=state,
+                    code=code,
+                    summary=summary,
+                    reason=reason,
+                )
+            )
+        except Exception as exception:
+            await context.telemetry.warning(
+                "Conversation step finish recording failed",
+                error=str(exception),
+                step=step.step_number + 1,
+            )
 
     def __route_back_for_replan(self) -> IntentGraphState:
         """

@@ -21,7 +21,9 @@ class CheckerScanTest(unittest.TestCase):
     Pins rule application over the git-reported first-party modules of a repository.
     """
 
-    __DATACLASS = "from pydantic.dataclasses import dataclass\n\n\n@dataclass\nclass Sample:\n    x: int\n"
+    __DATACLASS = (
+        "from pydantic.dataclasses import dataclass\n\n\n@dataclass\nclass Sample:\n    x: int\n"
+    )
 
     @staticmethod
     def __repo(*, root: Path) -> None:
@@ -63,11 +65,15 @@ class CheckerScanTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.__repo(root=root)
-            self.__write(root=root, relative="src/fathom/schemas/example.py", code="import logging\n")
+            self.__write(
+                root=root, relative="src/fathom/schemas/example.py", code="import logging\n"
+            )
 
             findings = self.__checker().scan(repo=root)
 
-            self.assertEqual([finding.selector.rule for finding in findings], [RuleId.DOMAIN_PURITY])
+            self.assertEqual(
+                [finding.selector.rule for finding in findings], [RuleId.DOMAIN_PURITY]
+            )
 
     def test_scan_flags_pydantic_dataclass_across_first_party_roots(self) -> None:
         """
@@ -92,7 +98,9 @@ class CheckerAuditTest(unittest.TestCase):
     """
 
     @staticmethod
-    def __repository(*, root: Path, mode: GovernanceMode, provisional: bool, records: List[DebtRecord]) -> None:
+    def __repository(
+        *, root: Path, mode: GovernanceMode, provisional: bool, records: List[DebtRecord]
+    ) -> None:
         """
         Lay out a git repository with one domain violation and governance configuration.
         """
@@ -108,7 +116,9 @@ class CheckerAuditTest(unittest.TestCase):
         (governance / "taxonomy.json").write_text(
             Taxonomy(provisional=provisional, domain=("fathom.schemas",)).model_dump_json()
         )
-        (governance / "debt.json").write_text(Manifest(mode=mode, records=records).model_dump_json())
+        (governance / "debt.json").write_text(
+            Manifest(mode=mode, records=records).model_dump_json()
+        )
 
     @staticmethod
     def __record() -> DebtRecord:

@@ -58,7 +58,18 @@ class AssertionSource(StrEnum):
 
 class ScrollDirection(StrEnum):
     """
-    Direction of a scroll gesture.
+    Direction the content travels during a scroll.
+    """
+
+    UP = "UP"
+    DOWN = "DOWN"
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+
+
+class SwipeDirection(StrEnum):
+    """
+    Direction the finger travels during a swipe.
     """
 
     UP = "UP"

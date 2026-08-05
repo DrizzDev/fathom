@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,31 +12,11 @@ from fathom.constants.perception import (
 from fathom.interfaces.localization import TargetLocalizerPort
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
-from fathom.schemas.localization import LocalizationProposal
+from fathom.schemas.localization import LocalizationProposal, MemberOutcome, ProposalCollection
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.screens import ScreenCapture
 
 logger = getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _MemberOutcome:
-    """
-    Result of invoking one localization member.
-    """
-
-    proposal: Optional[LocalizationProposal]
-    failed: bool = False
-
-
-@dataclass(frozen=True)
-class _ProposalCollection:
-    """
-    Aggregated localizer proposals and member health.
-    """
-
-    proposals: List[LocalizationProposal]
-    failed_members: int = 0
 
 
 class EnsembleLocalizerService:
@@ -165,7 +144,7 @@ class EnsembleLocalizerService:
         observation: ScreenObservation,
         capture: ScreenCapture,
         budget: LocalizationBudget,
-    ) -> _ProposalCollection:
+    ) -> ProposalCollection:
         """
         Invoke every member concurrently and retain member failure state.
         """
@@ -181,7 +160,7 @@ class EnsembleLocalizerService:
             for member in self.__members
         ]
         outcomes = await asyncio.gather(*coroutines, return_exceptions=False)
-        return _ProposalCollection(
+        return ProposalCollection(
             proposals=[outcome.proposal for outcome in outcomes if outcome.proposal is not None],
             failed_members=sum(1 for outcome in outcomes if outcome.failed),
         )
@@ -215,7 +194,7 @@ class EnsembleLocalizerService:
         observation: ScreenObservation,
         capture: ScreenCapture,
         budget: LocalizationBudget,
-    ) -> _MemberOutcome:
+    ) -> MemberOutcome:
         """
         Call one member with its own wait_for window, isolating its failures.
         """
@@ -232,7 +211,7 @@ class EnsembleLocalizerService:
                 ),
                 timeout=timeout,
             )
-            return _MemberOutcome(proposal=proposal)
+            return MemberOutcome(proposal=proposal)
         except asyncio.TimeoutError:
             logger.warning(
                 "Ensemble member timed out",
@@ -243,7 +222,7 @@ class EnsembleLocalizerService:
                     "event": "ensemble.member.timeout",
                 },
             )
-            return _MemberOutcome(proposal=None, failed=True)
+            return MemberOutcome(proposal=None, failed=True)
         except Exception:
             # Localization is an optional, fail-soft enrichment;
             # log the full traceback and let other members vote.
@@ -255,7 +234,7 @@ class EnsembleLocalizerService:
                     "event": "ensemble.member.error",
                 },
             )
-            return _MemberOutcome(proposal=None, failed=True)
+            return MemberOutcome(proposal=None, failed=True)
 
     def __strongest_cluster(
         self,

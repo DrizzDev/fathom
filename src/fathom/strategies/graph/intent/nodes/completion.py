@@ -3,68 +3,75 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, List, Optional, cast
 
-from fathom.constants.capability import CompletionMode
-from fathom.constants.completion import GateOutcome
+from pydantic import BaseModel, ConfigDict, Field
+
+from fathom.constants.completion import RetainReason
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.state import (
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
-    PlanMetadataKey,
     VerifyMode,
 )
-from fathom.constants.turn.advancement import AdvanceKind
+from fathom.constants.turn.advancement import AdvanceKind, ObservationPhase
 from fathom.core.agent.advancement import AdvancementPolicy
-from fathom.core.agent.capture import StoreCaptureCompletionPolicy
+from fathom.core.agent.eligibility import Eligibility
 from fathom.core.agent.stall import StallPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.core.services.criterion import CriterionObserver
-from fathom.core.services.directive import DirectivePolicy
-from fathom.schemas.advancement import Advancement, RetainHistory
+from fathom.schemas.advancement import Advancement
 from fathom.schemas.binding import Binding
-from fathom.schemas.completion import (
-    ActionEvidence,
-    ClaimEvidence,
-    CompletionEvidence,
-    GateDecision,
-    ScreenEvidence,
-    ValidationEvidence,
-)
-from fathom.schemas.criterion import CriterionDecision
-from fathom.schemas.effect import ActionEffect, ActionEffectStatus, EffectReading
+from fathom.schemas.completion import ActionEvidence, ClaimEvidence
+from fathom.schemas.criterion import CriterionDecision, Verdict
+from fathom.schemas.effect import EffectReading
 from fathom.schemas.observability import CompletionLogContext
 from fathom.schemas.observation import ScreenObservation
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.shadow import GoalCursor, ShadowTurn, ShadowTurnDraft
 from fathom.schemas.steps import StepResult
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.subgoal import GoalState
+from fathom.schemas.success import (
+    ObservationRequirement,
+    ObservedSuccess,
+    Success,
+)
 from fathom.schemas.turn import TurnEvidence
-from fathom.schemas.vision import ActionKind, ActionKindResolver
 from fathom.strategies.graph.context import GraphContext
+from fathom.strategies.graph.intent.nodes.shadow import ShadowRunner
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = getLogger(__name__)
 
 
+class ProbeResult(BaseModel):
+    """
+    The pre-dispatch live decision and, when it advanced, the graph transition it produced.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    advancement: Advancement = Field(description="The live pre-dispatch advancement decision.")
+    transition: Optional[IntentGraphState] = Field(
+        default=None, description="Graph transition when the probe advanced, else None."
+    )
+
+
 class SubGoalEvaluator:
     """
-    Decide whether the executed step satisfies the active sub-goal.
+    Decide whether the executed step satisfies the active sub-goal's canonical success.
 
-    Each turn assembles the typed TurnEvidence for the sub-goal (claim,
-    action, binding, effect, validation, verdict, stall) and the
-    AdvancementPolicy adjudicates it against the sub-goal's projected
-    completion mode:
+    Each turn assembles a typed TurnEvidence correlated to the active goal's Success
+    variant and hands it to the single AdvancementPolicy:
 
-      - Observed satisfaction (the vision verdict, or a canonical
-        validation) advances; a model claim only advances when the effect
-        corroborates it, and never against an observed refutation.
-      - Consecutive retention is bounded by the policy backstop: once the
-        retain streak is exhausted the turn escalates, terminating the run
-        instead of looping.
+      - ObservedSuccess advances on a fresh satisfied verdict for its own observation;
+        pre-dispatch satisfaction advances as SATISFIED_PRIOR.
+      - CommandSuccess advances only on a matching executed action (plus its
+        postcondition when present); a visible postcondition never advances before
+        the command runs.
+      - CaptureSuccess advances only on the correlated executed STORE.
 
-    Capture sub-goals are decided upstream by the StoreCaptureCompletionPolicy
-    and never reach the advancement policy. The CriterionObserver stays as an
-    additive RCA-grade signal, logged on every decision but never gating.
+    Momentum is owned solely by StallPolicy: a retaining turn escalates only when the
+    stall signal is STALLED.
     """
 
     def __init__(
@@ -73,31 +80,16 @@ class SubGoalEvaluator:
         context: GraphContext,
         criterion_observer: CriterionObserver,
         policy: Optional[AdvancementPolicy] = None,
-        capture_policy: Optional[StoreCaptureCompletionPolicy] = None,
     ) -> None:
         """
-        Bind the evaluator to its graph context, criterion observer, advancement policy, and capture policy.
+        Bind the evaluator to its graph context, criterion observer, and advancement policy.
         """
 
         self.__context = context
         self.__criterion_observer = criterion_observer
         self.__policy = policy if policy is not None else AdvancementPolicy()
-        self.__capture_policy = (
-            capture_policy if capture_policy is not None else StoreCaptureCompletionPolicy()
-        )
-
         self.__stall = StallPolicy()
-        self.__projection: Optional[DirectivePolicy] = None
-
-    def __projector(self) -> DirectivePolicy:
-        """
-        Build the task projection lazily against the live catalog.
-        """
-
-        if self.__projection is None:
-            self.__projection = DirectivePolicy(catalog=self.__context.catalog)
-
-        return self.__projection
+        self.__runner = ShadowRunner()
 
     async def evaluate(
         self,
@@ -116,234 +108,189 @@ class SubGoalEvaluator:
         agent_state = self.__context.agent_state
         current = agent_state.get_current_sub_goal()
 
-        if not self.__is_evaluable(current=current, has_sub_goals=agent_state.has_sub_goals()):
+        if current is None or not agent_state.has_sub_goals():
             return None
 
         if not step_result.success:
             self.__log_skipped(reason="step.failed", step_result=step_result)
+            self.__record_failed(
+                plan=plan, active=current, receipt=step_result, observation=observation
+            )
             return None
 
         analysis = self.__analysis_from(plan=plan)
         if analysis is None:
             return None
 
-        active = cast("SubGoal", current)
-        emitted_kind = ActionKindResolver.resolve(action_type=step_result.step.action.action_type)
+        active = current
 
-        if self.__requires_capture_completion(active=active):
-            gate_decision = self.__capture_policy.evaluate(
-                step_result=step_result,
-                capture_store=self.__context.capture_store,
-            )
-            evidence = self.__capture_evidence(step_result=step_result, decision=gate_decision)
-            advancement = self.__from_capture(decision=gate_decision)
-        else:
-            criterion_decision = await self.__observe_criterion(
-                active=active,
-                observation=observation,
-                step_result=step_result,
-            )
-
-            last_effect = agent_state.get_last_action_effect()
-
-            evidence = self.__context.reasoner.assess_completion(
-                sub_goal=active,
-                analysis=analysis,
-                effect=last_effect,
-                execution_success=step_result.executed,
-                criterion_decision=criterion_decision,
-                screen_changed=step_result.screen_changed,
-                screen_description=step_result.observation or step_result.step.action.target or "",
-            )
-            self.__log_evidence_assessed(
-                active=active,
-                evidence=evidence,
-                effect=last_effect,
-                step_result=step_result,
-            )
-
-            turn = TurnEvidence(
-                effect=reading,
-                binding=binding,
-                claim=evidence.claim,
-                action=evidence.action,
-                validation=analysis.validation,
-                stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
-            )
-            advancement = self.__policy.decide(
-                task=self.__projector().project(sub_goal=active),
-                evidence=turn,
-                history=RetainHistory(consecutive=agent_state.subgoal_retain_streak),
-            )
-            self.__reconcile_streak(advancement=advancement)
-            self.__log_adjudicated(
-                active=active,
-                evidence=evidence,
-                advancement=advancement,
-                effect=last_effect,
-                step_result=step_result,
-            )
+        turn = await self.__post_dispatch_evidence(
+            active=active,
+            analysis=analysis,
+            binding=binding,
+            reading=reading,
+            step_result=step_result,
+            observation=observation,
+        )
+        advancement = self.__policy.decide(success=active.success, evidence=turn)
+        self.__log_adjudicated(active=active, advancement=advancement, step_result=step_result)
 
         if advancement.kind in (AdvanceKind.ADVANCE, AdvanceKind.SATISFIED_PRIOR):
-            signal = self.__build_storage_signal(
-                active=active,
-                analysis=analysis,
-                step_result=step_result,
+            patch: Optional[IntentGraphState] = self.__advance_or_complete(
+                current=active, accumulated=accumulated
             )
-            return self.__advance_or_complete(
-                signal=signal,
-                current=active,
-                kind=emitted_kind,
-                evidence=evidence,
-                accumulated=accumulated,
-            )
+        elif advancement.kind in (AdvanceKind.ESCALATE, AdvanceKind.UNSATISFIABLE):
+            patch = self.__escalate(active=active, advancement=advancement, accumulated=accumulated)
+        else:
+            self.__log_retained(active=active, advancement=advancement, step_result=step_result)
+            patch = None
 
-        if advancement.kind in (AdvanceKind.ESCALATE, AdvanceKind.UNSATISFIABLE):
-            return self.__escalate(
-                active=active,
-                advancement=advancement,
-                accumulated=accumulated,
-            )
-
-        self.__log_retained(
-            active=active,
-            evidence=evidence,
-            advancement=advancement,
-            step_result=step_result,
+        self.__record_executed(
+            plan=plan, active=active, receipt=step_result, observation=observation, live=advancement
         )
-        return None
+        return patch
 
-    async def __observe_criterion(
-        self,
-        *,
-        active: SubGoal,
-        step_result: StepResult,
-        observation: Optional[ScreenObservation],
-    ) -> Optional[CriterionDecision]:
+    async def probe(self, *, observation: Optional[ScreenObservation]) -> ProbeResult:
         """
-        Run the criterion observer for RCA telemetry; never used to gate.
+        Return the real pre-dispatch live decision for the active goal, advancing an already-satisfied
+        ObservedSuccess as SATISFIED_PRIOR; command and capture goals always retain until they execute.
         """
 
-        if observation is None:
-            return None
+        agent_state = self.__context.agent_state
+        active = agent_state.get_current_sub_goal()
+        if active is None or not agent_state.has_sub_goals():
+            return ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
 
-        decision = await self.__criterion_observer.check(
-            sub_goal=active,
-            observation=observation,
-            workflow_id=self.__context.workflow_id,
+        success = active.success
+        verdict = (
+            await self.__observe(
+                index=active.index, requirement=success.observation, observation=observation
+            )
+            if isinstance(success, ObservedSuccess)
+            else None
         )
+        turn = TurnEvidence(
+            claim=ClaimEvidence(asserted=False),
+            action=ActionEvidence(dispatched=False, executed=False),
+            phase=ObservationPhase.PRE_DISPATCH,
+            execution=None,
+            observation=self.__observed_requirement(success=success),
+            verdict=verdict,
+        )
+        advancement = self.__policy.decide(success=success, evidence=turn)
+        if advancement.kind is not AdvanceKind.SATISFIED_PRIOR:
+            return ProbeResult(advancement=advancement)
+
         logger.info(
-            "Criterion observer reported verdict",
+            "Sub-goal satisfied before dispatch; advancing via SATISFIED_PRIOR",
             extra={
                 **self.__log_context(),
                 "sub_goal.index": active.index,
-                "sub_goal.kind": active.kind.value,
-                "criterion.source": decision.source.value,
-                "criterion.verdict": decision.verdict.value,
-                "criterion.confidence": decision.confidence,
-                "criterion.evidence": list(decision.evidence),
-                "sub_goal.description": active.description[:80],
-                "step.screen_changed": step_result.screen_changed,
                 "event": CompletionEvent.CRITERION_OBSERVED.value,
             },
         )
-        return decision
+        return ProbeResult(
+            advancement=advancement,
+            transition=self.__advance_or_complete(current=active, accumulated=[]),
+        )
 
-    def __build_storage_signal(
+    async def __post_dispatch_evidence(
         self,
         *,
-        active: SubGoal,
-        step_result: StepResult,
+        active: GoalState,
         analysis: AnalysisResult,
-    ) -> SubGoalCompletionSignal:
+        step_result: StepResult,
+        binding: Optional[Binding],
+        reading: Optional[EffectReading],
+        observation: Optional[ScreenObservation],
+    ) -> TurnEvidence:
         """
-        Compute the legacy SubGoalCompletionSignal used by mark_current_sub_goal_complete.
+        Build the correlated post-dispatch evidence for the active goal's success variant.
+
+        The observer is consulted only for an ObservedSuccess observation or a CommandSuccess
+        postcondition; command-without-postcondition and capture goals rely on the StepResult.
         """
 
-        return self.__context.reasoner.analyze_subgoal_completion(
-            analysis=analysis,
-            sub_goal_description=active.description,
-            screen_changed=step_result.screen_changed,
-            screen_description=step_result.observation or step_result.step.action.target or "",
+        success = active.success
+        requirement = self.__observed_requirement(success=success)
+        verdict = (
+            await self.__observe(
+                index=active.index, requirement=requirement, observation=observation
+            )
+            if requirement is not None
+            else None
+        )
+
+        agent_state = self.__context.agent_state
+        return TurnEvidence(
+            claim=ClaimEvidence(
+                asserted=analysis.is_sub_goal_complete or analysis.is_goal_complete
+            ),
+            action=ActionEvidence(dispatched=True, executed=step_result.executed),
+            phase=ObservationPhase.POST_DISPATCH,
+            execution=step_result,
+            observation=requirement,
+            binding=binding,
+            effect=reading,
+            verdict=verdict,
+            validation=analysis.validation,
+            stall=self.__stall.assess(effects=agent_state.get_recent_effects()),
         )
 
     @staticmethod
-    def __is_evaluable(*, current: Optional[SubGoal], has_sub_goals: bool) -> bool:
+    def __observed_requirement(*, success: Success) -> Optional[ObservationRequirement]:
         """
-        Whether a sub-goal context exists for evaluation this turn.
-        """
-
-        return current is not None and has_sub_goals
-
-    def __requires_capture_completion(self, *, active: SubGoal) -> bool:
-        """
-        Return whether the active directive can only advance through captured evidence.
+        Return the exact observation identity to adjudicate for this success, if any.
         """
 
-        if active.directive is None:
-            return False
+        return Eligibility.observation(success=success)
 
-        directed = self.__context.catalog.profile(action_type=active.directive).completion
-        return directed is CompletionMode.CAPTURE_VERIFIED
-
-    @staticmethod
-    def __capture_evidence(
-        *, step_result: StepResult, decision: GateDecision
-    ) -> CompletionEvidence:
+    async def __observe(
+        self,
+        *,
+        index: int,
+        requirement: Optional[ObservationRequirement],
+        observation: Optional[ScreenObservation],
+    ) -> Optional[Verdict]:
         """
-        Build observability-only evidence for a capture turn; the decision itself comes from the policy.
+        Observe exactly the given requirement on the settled screen and project it to a verdict.
         """
 
-        request = step_result.step.action.capture
+        if requirement is None or observation is None:
+            return None
 
-        if decision.outcome is GateOutcome.ADVANCE and request is not None:
-            note = f"capture.verified: stored '{request.name}'"
-
-        elif decision.retain_reason is not None:
-            note = f"capture.retained: {decision.retain_reason.value}"
-
-        else:
-            note = "capture.retained"
-
-        return CompletionEvidence(
-            notes=(note,),
-            screen=ScreenEvidence(evolved=False),
-            claim=ClaimEvidence(asserted=False),
-            action=ActionEvidence(dispatched=False, executed=step_result.executed),
-            validation=ValidationEvidence(executed=False),
+        decision = await self.__criterion_observer.check(
+            index=index,
+            requirement=requirement,
+            observation=observation,
+            workflow_id=self.__context.workflow_id,
         )
+        return self.__verdict_from(decision=decision)
 
     @staticmethod
-    def __from_capture(*, decision: GateDecision) -> Advancement:
+    def __verdict_from(*, decision: Optional[CriterionDecision]) -> Optional[Verdict]:
         """
-        Project a capture-policy gate decision onto the shared advancement vocabulary.
-        """
-
-        if decision.outcome is GateOutcome.ADVANCE:
-            return Advancement(kind=AdvanceKind.ADVANCE)
-
-        return Advancement(kind=AdvanceKind.RETAIN, reason=decision.retain_reason)
-
-    def __reconcile_streak(self, *, advancement: Advancement) -> None:
-        """
-        Persist the active sub-goal's retain streak so the backstop survives a checkpoint resume.
+        Project a fresh criterion decision onto the policy's typed verdict.
         """
 
-        if advancement.kind is AdvanceKind.RETAIN:
-            self.__context.agent_state.record_subgoal_retain()
-            return
+        if decision is None:
+            return None
 
-        self.__context.agent_state.reset_subgoal_retain()
+        return Verdict(
+            outcome=decision.verdict,
+            confidence=decision.confidence,
+            evidence="; ".join(decision.evidence),
+        )
 
     def __escalate(
         self,
         *,
-        active: SubGoal,
+        active: GoalState,
         advancement: Advancement,
         accumulated: List[StepResult],
     ) -> IntentGraphState:
         """
-        Terminate the run when the retain backstop is exhausted instead of looping.
+        Terminate the run when momentum stalls (StallPolicy) instead of looping.
         """
 
         agent_state = self.__context.agent_state
@@ -353,18 +300,16 @@ class SubGoalEvaluator:
             else CompletionReason.STUCK
         )
 
-        agent_state.reset_subgoal_retain()
         agent_state.mark_complete(reason=reason.value)
 
         logger.error(
-            "Sub-goal retain backstop exhausted; terminating run",
+            "Momentum stalled; terminating run",
             extra={
                 **self.__log_context(),
                 "sub_goal.index": active.index,
-                "sub_goal.kind": active.kind.value,
                 "advancement.kind": advancement.kind.value,
                 "completion.reason": reason.value,
-                "sub_goal.description": active.description[:80],
+                "sub_goal.objective": active.objective[:80],
                 "event": "subgoal.escalated",
             },
         )
@@ -382,32 +327,22 @@ class SubGoalEvaluator:
     def __advance_or_complete(
         self,
         *,
-        current: SubGoal,
-        kind: ActionKind,
-        evidence: CompletionEvidence,
+        current: GoalState,
         accumulated: List[StepResult],
-        signal: SubGoalCompletionSignal,
     ) -> IntentGraphState:
         """
-        Mark non-final sub-goals complete; defer final commit to VERIFY.
+        Mark non-final sub-goals complete; defer the final commit to VERIFY.
         """
 
         agent_state = self.__context.agent_state
 
         if agent_state.has_active_final_sub_goal():
-            return self.__route_final_sub_goal_to_verify(
-                kind=kind,
-                current=current,
-                evidence=evidence,
-                accumulated=accumulated,
-            )
+            return self.__route_final_sub_goal_to_verify(current=current, accumulated=accumulated)
 
-        has_more = agent_state.mark_current_sub_goal_complete(completion_signal=signal)
+        has_more = agent_state.advance_current_sub_goal()
 
         if has_more:
-            return self.__retry_for_next_sub_goal(
-                current=current, evidence=evidence, accumulated=accumulated, kind=kind
-            )
+            return self.__retry_for_next_sub_goal(current=current, accumulated=accumulated)
 
         raise InvariantViolation(
             "Sub-goal cursor drift: non-final cursor reported no remaining sub-goals."
@@ -416,9 +351,7 @@ class SubGoalEvaluator:
     def __retry_for_next_sub_goal(
         self,
         *,
-        current: SubGoal,
-        kind: ActionKind,
-        evidence: CompletionEvidence,
+        current: GoalState,
         accumulated: List[StepResult],
     ) -> IntentGraphState:
         """
@@ -435,17 +368,13 @@ class SubGoalEvaluator:
             "Sub-goal advanced; looping back to GROUND for next sub-goal",
             extra={
                 **self.__log_context(),
-                "kind": kind.value,
                 "sub_goal.index": current.index,
-                "sub_goal.kind": current.kind.value,
-                "evidence.notes": list(evidence.notes),
-                "sub_goal.description": current.description[:80],
+                "sub_goal.objective": current.objective[:80],
                 "event": CompletionEvent.SUBGOAL_ADVANCED.value,
                 "next.sub_goal.index": next_sub_goal.index if next_sub_goal else None,
-                "next.sub_goal.description": (
-                    next_sub_goal.description[:80] if next_sub_goal else None
+                "next.sub_goal.objective": (
+                    next_sub_goal.objective[:80] if next_sub_goal else None
                 ),
-                "next.sub_goal.kind": (next_sub_goal.kind.value if next_sub_goal else None),
             },
         )
         return cast(
@@ -460,9 +389,7 @@ class SubGoalEvaluator:
     def __route_final_sub_goal_to_verify(
         self,
         *,
-        current: SubGoal,
-        kind: ActionKind,
-        evidence: CompletionEvidence,
+        current: GoalState,
         accumulated: List[StepResult],
     ) -> IntentGraphState:
         """
@@ -477,12 +404,9 @@ class SubGoalEvaluator:
             "Final sub-goal satisfied by gate; routing to VERIFY without commit",
             extra={
                 **self.__log_context(),
-                "kind": kind.value,
                 "sub_goal.index": current.index,
-                "sub_goal.kind": current.kind.value,
-                "evidence.notes": list(evidence.notes),
                 "event": CompletionEvent.INTENT_PENDING.value,
-                "sub_goal.description": current.description[:80],
+                "sub_goal.objective": current.objective[:80],
                 "verify.mode": VerifyMode.PENDING_FINAL_COMMIT.value,
             },
         )
@@ -500,68 +424,129 @@ class SubGoalEvaluator:
     @staticmethod
     def __analysis_from(*, plan: Any) -> Optional[AnalysisResult]:
         """
-        Reconstruct the :class:`AnalysisResult` attached to plan metadata.
+        Return the :class:`AnalysisResult` the plan carries in its typed context.
         """
 
-        if not isinstance(plan, PlanResult) or not plan.metadata:
+        if not isinstance(plan, PlanResult):
             return None
 
-        raw = plan.metadata.get(PlanMetadataKey.ANALYSIS.value)
-        if raw is None:
-            return None
+        return plan.context.analysis
 
-        return raw if isinstance(raw, AnalysisResult) else AnalysisResult.model_validate(raw)
-
-    def __log_evidence_assessed(
+    def __record_executed(
         self,
         *,
-        active: SubGoal,
-        step_result: StepResult,
-        evidence: CompletionEvidence,
-        effect: Optional[ActionEffect],
+        plan: Any,
+        active: GoalState,
+        receipt: StepResult,
+        observation: Optional[ScreenObservation],
+        live: Advancement,
     ) -> None:
         """
-        Structured log: per-turn evidence bundle assembled by the reasoner.
+        Emit the finalized record for a successful dispatch, carrying the real receipt and post-dispatch decision.
+        """
+
+        draft = self.__draft(plan=plan)
+        if draft is None:
+            return
+        self.__emit(
+            record=self.__runner.finalize_executed(
+                draft=draft,
+                active=active,
+                receipt=receipt,
+                live=live,
+                screen=self.__post_screen(observation=observation),
+                foreground=self.__post_foreground(observation=observation),
+                cursor_after=self.__cursor(active=active),
+            )
+        )
+
+    def __record_failed(
+        self,
+        *,
+        plan: Any,
+        active: GoalState,
+        receipt: StepResult,
+        observation: Optional[ScreenObservation],
+    ) -> None:
+        """
+        Emit the finalized record for a failed dispatch, whose short-circuited live decision is never comparable.
+        """
+
+        draft = self.__draft(plan=plan)
+        if draft is None:
+            return
+        self.__emit(
+            record=self.__runner.finalize_failed(
+                draft=draft,
+                active=active,
+                receipt=receipt,
+                live=Advancement(kind=AdvanceKind.RETAIN, reason=RetainReason.STEP_EXECUTION_FAILED),
+                screen=self.__post_screen(observation=observation),
+                foreground=self.__post_foreground(observation=observation),
+                cursor_after=self.__cursor(active=active),
+            )
+        )
+
+    @staticmethod
+    def __draft(*, plan: Any) -> Optional[ShadowTurnDraft]:
+        """
+        Return the pre-dispatch draft Analyze attached to the plan, when one is present.
+        """
+
+        if not isinstance(plan, PlanResult) or not isinstance(plan.context.shadow, ShadowTurnDraft):
+            return None
+        return plan.context.shadow
+
+    def __cursor(self, *, active: GoalState) -> GoalCursor:
+        """
+        Read the active cursor from state after the live decision applied.
+        """
+
+        progress = self.__context.agent_state.get_sub_goal_progress()
+        if progress is None:
+            return GoalCursor(index=active.index, total=active.index + 1)
+        index, total = progress
+        return GoalCursor(index=index, total=total)
+
+    @staticmethod
+    def __post_screen(*, observation: Optional[ScreenObservation]) -> Optional[str]:
+        """
+        Return the post-dispatch settled-screen identity, never the pre-dispatch screen.
+        """
+
+        return observation.hashes.visual_hash if observation is not None else None
+
+    @staticmethod
+    def __post_foreground(*, observation: Optional[ScreenObservation]) -> Optional[str]:
+        """
+        Return the post-dispatch foreground package, when a post observation exists.
+        """
+
+        return observation.activity if observation is not None else None
+
+    def __emit(self, *, record: ShadowTurn) -> None:
+        """
+        Emit a finalized shadow turn through the debug boundary.
         """
 
         logger.info(
-            "Completion evidence assessed",
+            "Shadow advancement comparison",
             extra={
                 **self.__log_context(),
-                "sub_goal.index": active.index,
-                "sub_goal.kind": active.kind.value,
-                "screen.evolved": evidence.screen.evolved,
-                "claim.asserted": evidence.claim.asserted,
-                "action.dispatched": evidence.action.dispatched,
-                "validation.executed": evidence.validation.executed,
-                "sub_goal.description": active.description[:80],
-                "event": CompletionEvent.EVIDENCE_ASSESSED.value,
-                "criterion.observed": (
-                    evidence.criterion.observed if evidence.criterion is not None else None
-                ),
-                "evidence.notes": list(evidence.notes),
-                "step.screen_changed": step_result.screen_changed,
-                "planner.emitted_action_type": step_result.step.action.action_type.value,
-                "effect.status": (effect.status.value if effect is not None else None),
-                "veto.applied": self.__no_progress_vetoed(
-                    effect=effect,
-                    screen_evolved=evidence.screen.evolved,
-                    screen_changed=step_result.screen_changed,
-                ),
+                "event": "shadow.turn.comparison",
+                "shadow.record": record.model_dump(mode="json"),
             },
         )
 
     def __log_adjudicated(
         self,
         *,
-        active: SubGoal,
+        active: GoalState,
         advancement: Advancement,
         step_result: StepResult,
-        evidence: CompletionEvidence,
-        effect: Optional[ActionEffect],
     ) -> None:
         """
-        Structured log: advancement decision for this turn and the typed signals behind it.
+        Structured log: advancement decision for this turn.
         """
 
         logger.info(
@@ -569,52 +554,23 @@ class SubGoalEvaluator:
             extra={
                 **self.__log_context(),
                 "sub_goal.index": active.index,
-                "sub_goal.kind": active.kind.value,
+                "success.kind": active.success.kind.value,
                 "advancement.kind": advancement.kind.value,
                 "advancement.redispatch": advancement.redispatch,
-                "screen.evolved": evidence.screen.evolved,
-                "claim.asserted": evidence.claim.asserted,
-                "action.dispatched": evidence.action.dispatched,
-                "validation.executed": evidence.validation.executed,
                 "event": CompletionEvent.GATE_ADJUDICATED.value,
                 "step.screen_changed": step_result.screen_changed,
                 "advancement.reason": (
                     advancement.reason.value if advancement.reason is not None else None
                 ),
-                "retain.streak": self.__context.agent_state.subgoal_retain_streak,
-                "effect.status": (effect.status.value if effect is not None else None),
-                "veto.applied": self.__no_progress_vetoed(
-                    effect=effect,
-                    screen_evolved=evidence.screen.evolved,
-                    screen_changed=step_result.screen_changed,
-                ),
             },
-        )
-
-    @staticmethod
-    def __no_progress_vetoed(
-        *, screen_changed: bool, screen_evolved: bool, effect: Optional[ActionEffect]
-    ) -> bool:
-        """
-        Return True iff NO_PROGRESS overrode the high-sensitivity screen_changed signal on this turn.
-        """
-
-        if effect is None:
-            return False
-
-        return (
-            effect.status is ActionEffectStatus.NO_PROGRESS
-            and screen_changed
-            and not screen_evolved
         )
 
     def __log_retained(
         self,
         *,
-        active: SubGoal,
+        active: GoalState,
         advancement: Advancement,
         step_result: StepResult,
-        evidence: CompletionEvidence,
     ) -> None:
         """
         Structured log: sub-goal retained for another planner turn.
@@ -625,13 +581,10 @@ class SubGoalEvaluator:
             extra={
                 **self.__log_context(),
                 "sub_goal.index": active.index,
-                "sub_goal.kind": active.kind.value,
-                "evidence.notes": list(evidence.notes),
-                "sub_goal.description": active.description[:80],
+                "sub_goal.objective": active.objective[:80],
                 "event": CompletionEvent.SUBGOAL_RETAINED.value,
                 "step.screen_changed": step_result.screen_changed,
                 "planner.emitted_action_type": step_result.step.action.action_type.value,
-                "retain.streak": self.__context.agent_state.subgoal_retain_streak,
                 "advancement.reason": (
                     advancement.reason.value if advancement.reason is not None else None
                 ),

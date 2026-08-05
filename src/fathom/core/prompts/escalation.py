@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Final, Mapping, Optional
 
 from fathom.schemas.escalation import EscalationPrompt, StuckSource
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.subgoal import GoalState
 
 
 class EscalationPromptBuilder:
@@ -49,7 +49,7 @@ class EscalationPromptBuilder:
         cls,
         *,
         source: StuckSource,
-        current_sub_goal: Optional[SubGoal],
+        current_sub_goal: Optional[GoalState],
         last_action_description: Optional[str],
     ) -> EscalationPrompt:
         """
@@ -67,15 +67,15 @@ class EscalationPromptBuilder:
         return EscalationPrompt(rationale=rationale, question=question)
 
     @classmethod
-    def __step_clause(cls, *, current_sub_goal: Optional[SubGoal]) -> str:
+    def __step_clause(cls, *, current_sub_goal: Optional[GoalState]) -> str:
         """
         Render the user-facing step context, or empty when no step is active.
         """
 
-        if current_sub_goal is None or not current_sub_goal.description.strip():
+        if current_sub_goal is None or not current_sub_goal.objective.strip():
             return ""
 
-        return cls.__STEP_CLAUSE.format(description=current_sub_goal.description.strip())
+        return cls.__STEP_CLAUSE.format(description=current_sub_goal.objective.strip())
 
     @classmethod
     def __action_clause(cls, *, last_action_description: Optional[str]) -> str:

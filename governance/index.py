@@ -53,7 +53,13 @@ class GitIndex(SourceIndex):
                 check=True,
             )
         except (OSError, subprocess.SubprocessError) as exception:
-            raise GovernanceError(f"git file discovery failed in {repo}: {exception}") from exception
+            raise GovernanceError(
+                f"git file discovery failed in {repo}: {exception}"
+            ) from exception
 
         relatives = sorted({entry for entry in completed.stdout.split("\0") if entry})
-        return [repo / relative for relative in relatives]
+        # ``git ls-files --cached`` reports tracked paths, including files deleted from the
+        # working tree. A tracked deletion is absent from the current source tree, so it is
+        # excluded at discovery here. A path that exists now but disappears before the checker
+        # reads it stays a fail-closed read error at parse time, never a silent skip.
+        return [path for relative in relatives if (path := repo / relative).is_file()]

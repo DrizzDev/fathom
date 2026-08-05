@@ -4,7 +4,7 @@ import unittest
 
 from fathom.core.prompts.escalation import EscalationPromptBuilder
 from fathom.schemas.escalation import StuckSource
-from fathom.schemas.subgoal import SubGoal
+from tests.builders import SubGoalFixtures
 
 
 class EscalationPromptBuilderTest(unittest.TestCase):
@@ -47,7 +47,7 @@ class EscalationPromptBuilderTest(unittest.TestCase):
         The active sub-goal description must surface in the user-facing question.
         """
 
-        sub_goal = SubGoal(description="Press the Play button", index=0)
+        sub_goal = SubGoalFixtures.state(description="Press the Play button", index=0)
         prompt = EscalationPromptBuilder.build(
             current_sub_goal=sub_goal,
             last_action_description=None,

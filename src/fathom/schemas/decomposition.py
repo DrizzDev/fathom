@@ -2,41 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Union
+from typing import List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fathom.constants import ActionType
-from fathom.constants.subgoal import TaskProof
+from fathom.constants.reasoning import MAXIMUM_DECOMPOSITION_SUB_GOALS
+from fathom.schemas.base.common import NonBlank, SealedModel
+from fathom.schemas.proposal import DecompositionProposal
 
 
-class DecomposedTask(BaseModel):
+class DecomposedTask(SealedModel):
     """
-    Decomposed task with an observable terminal criterion and the structured action directive.
+    One decomposed sub-goal: an imperative objective and its untrusted typed success proposal.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    description: str = Field(min_length=1, description="Imperative task description.")
-    criterion: str = Field(
-        min_length=1,
-        description="Observable screen state criterion satisfied when the task is complete.",
-    )
-    directive: ActionType = Field(
-        description=(
-            "Action type the planner must emit to satisfy this task. The "
-            "completion gate compares the planner-emitted action_type "
-            "against this directive; divergence prevents advancement and "
-            "guards against the LLM short-circuiting action sub-goals with "
-            "stray validate emits."
-        ),
-    )
-    proof: TaskProof = Field(
-        default=TaskProof.DURABLE,
-        description=(
-            "Whether the task mutates persistent state whose outcome must be observed before "
-            "advancing. Defaults to DURABLE so an omission can never lose outcome protection."
-        ),
+    objective: NonBlank = Field(description="Imperative objective this sub-goal must achieve.")
+    proposal: DecompositionProposal = Field(
+        description="Untrusted per-goal success proposal, translated to canonical Success at the boundary."
     )
 
 
@@ -45,47 +27,33 @@ class DecompositionSchema(BaseModel):
     Schema for intent decomposition output.
     """
 
-    confidence: Optional[float] = 0.9
-    sub_goals: List[Union[str, DecomposedTask]]
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("sub_goals", mode="before")
+    # Non-nullable: Gemini structured output rejects a nullable number carrying minimum/maximum
+    # bounds (an Optional[float] with ge/le), so confidence is a plain bounded float with a default.
+    confidence: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="Decomposer self-reported confidence in the produced plan.",
+    )
+    # No ``min_length``/``max_length``: Gemini structured output rejects ``minItems``/``maxItems`` on
+    # a list of union-typed items. The bounds are enforced by the validator below instead.
+    sub_goals: List[DecomposedTask] = Field(
+        description="Ordered, non-empty typed tasks; raw strings are rejected at the boundary.",
+    )
+
+    @field_validator("sub_goals")
     @classmethod
-    def __coerce_sub_goals(cls, value: Any) -> List[Union[str, DecomposedTask]]:
+    def __bounded_non_empty(cls, value: List[DecomposedTask]) -> List[DecomposedTask]:
         """
-        Normalize entries to strings or DecomposedTask objects.
+        Reject an empty plan or one exceeding the decomposition ceiling.
         """
-
-        if not isinstance(value, list):
-            raise ValueError("sub_goals must be a list")
 
         if not value:
-            raise ValueError("sub_goals must not be empty")
-
-        if len(value) > 50:
-            raise ValueError("sub_goals must not exceed 50 items")
-
-        normalized: List[Union[str, DecomposedTask]] = []
-
-        for entry in value:
-            if isinstance(entry, str):
-                if stripped := entry.strip():
-                    normalized.append(stripped)
-
-                continue
-
-            if isinstance(entry, dict):
-                normalized.append(DecomposedTask.model_validate(entry))
-                continue
-
-            if isinstance(entry, DecomposedTask):
-                normalized.append(entry)
-                continue
-
+            raise ValueError("decomposition must contain at least one sub-goal")
+        if len(value) > MAXIMUM_DECOMPOSITION_SUB_GOALS:
             raise ValueError(
-                f"sub_goals entries must be string or task object, got {type(entry).__name__}"
+                f"decomposition exceeds the {MAXIMUM_DECOMPOSITION_SUB_GOALS}-sub-goal ceiling"
             )
-
-        if not normalized:
-            raise ValueError("sub_goals must contain at least one non-empty entry")
-
-        return normalized
+        return value

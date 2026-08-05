@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fathom.constants import ActionType
+from fathom.constants.collaboration import TaskCode, TaskState
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
-from fathom.core.exceptions import HITLNotAvailableError
+from fathom.core.capability.catalog import CommandCatalogProvider
+from fathom.core.exceptions import HITLNotAvailableError, HITLTimeoutError
 from fathom.schemas.actions import Action
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
@@ -40,6 +42,7 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         provider = MagicMock(name="IntentNodeProvider")
         provider.is_cancelled = AsyncMock(return_value=cancelled)
         provider.context.workflow_id = "run-test"
+        provider.context.catalog = CommandCatalogProvider().build()
         provider.persistence.persist = MagicMock()
         return provider
 
@@ -116,10 +119,22 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
             package="app",
         )
 
-    async def test_ask_user_with_hitl_unavailable_routes_back_to_ground(self) -> None:
-        """HITLNotAvailableError must clear the planned step and set SHOULD_RETRY."""
+    async def test_ask_user_unavailable_after_start_closes_task_failed_then_replans(self) -> None:
+        """
+        A post-start HITLNotAvailableError closes the opened step as FAILED/UNKNOWN_ERROR (no dangling RUNNING task), then replans rather than terminating.
+        """
 
         provider = self.__provider(cancelled=False)
+        provider.hitl.available = Mock(return_value=True)
+        provider.context.tenant = "tenant"
+        provider.context.thread = "thread"
+        provider.context.responder = "responder"
+        provider.context.workspace = None
+        provider.context.workflow_id = "run-test"
+        provider.context.execution_id = "exec"
+        provider.context.recorder.record_step_started = AsyncMock()
+        provider.context.recorder.record_step_finished = AsyncMock()
+        provider.context.telemetry.warning = AsyncMock()
         provider.hitl.ask = AsyncMock(side_effect=HITLNotAvailableError())
         node = ExecuteNode(provider=provider)
 
@@ -131,11 +146,92 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.get(IntentStateKey.PLAN))
         self.assertIsNone(result.get(IntentStateKey.PLANNED_STEP))
         self.assertIsNone(result.get(IntentStateKey.EXECUTION_CONTEXT))
-        self.assertIn(
-            CommonStateKey.FAILURE_DIAGNOSTIC,
-            result,
-        )
+        self.assertIn(CommonStateKey.FAILURE_DIAGNOSTIC, result)
+        # The task was opened once and closed once — nothing left RUNNING.
+        provider.context.recorder.record_step_started.assert_awaited_once()
+        provider.context.recorder.record_step_finished.assert_awaited_once()
+        completion = provider.context.recorder.record_step_finished.await_args.kwargs["completion"]
+        self.assertEqual(completion.state, TaskState.FAILED)
+        self.assertEqual(completion.code, TaskCode.UNKNOWN_ERROR)
+        # A failed dispatch replans; it does not terminate the run.
+        provider.context.agent_state.mark_complete.assert_not_called()
         provider.persistence.persist.assert_called()
+
+    async def test_ask_user_unavailable_replans_without_opening_step(self) -> None:
+        """
+        With HITL unavailable, EXECUTE must replan before opening a persisted step so no task dangles.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.hitl.available = Mock(return_value=False)
+        provider.context.recorder.record_step_started = AsyncMock()
+        provider.hitl.ask = AsyncMock()
+        node = ExecuteNode(provider=provider)
+
+        result: Any = await node(
+            state={IntentStateKey.EXECUTION_CONTEXT: self.__ask_user_execution_context()},
+        )
+
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        provider.context.recorder.record_step_started.assert_not_called()
+        provider.hitl.ask.assert_not_called()
+
+    async def test_ask_user_follows_bridge_authority_on_capability_mismatch(self) -> None:
+        """
+        Single authority: when the bridge (the same authority ask() uses) reports unavailable, EXECUTE replans without opening a task even though agent_state's capabilities disagree — so no RUNNING task can dangle.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.context.agent_state.capabilities.hitl.enabled = True  # disagrees with the bridge
+        provider.hitl.available = Mock(return_value=False)
+        provider.context.recorder.record_step_started = AsyncMock()
+        provider.hitl.ask = AsyncMock(side_effect=HITLNotAvailableError())
+        node = ExecuteNode(provider=provider)
+
+        result: Any = await node(
+            state={IntentStateKey.EXECUTION_CONTEXT: self.__ask_user_execution_context()},
+        )
+
+        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
+        provider.context.recorder.record_step_started.assert_not_called()
+        provider.hitl.ask.assert_not_called()
+
+    async def test_ask_user_timeout_closes_step_and_terminates(self) -> None:
+        """
+        A timed-out intervention closes the opened step as EXPIRED/TIMEOUT and terminates the run.
+        """
+
+        provider = self.__provider(cancelled=False)
+        provider.hitl.available = Mock(return_value=True)
+        provider.context.tenant = "tenant"
+        provider.context.thread = "thread"
+        provider.context.workflow_id = "run-test"
+        provider.context.execution_id = "exec"
+        provider.context.recorder.record_step_started = AsyncMock()
+        provider.context.recorder.record_step_finished = AsyncMock()
+        provider.context.telemetry.warning = AsyncMock()
+        provider.hitl.ask = AsyncMock(side_effect=HITLTimeoutError())
+        node = ExecuteNode(provider=provider)
+
+        with patch(
+            "fathom.strategies.graph.intent.nodes.execute.time.time",
+            side_effect=[1000.0, 1002.5],
+        ):
+            result: Any = await node(
+                state={IntentStateKey.EXECUTION_CONTEXT: self.__ask_user_execution_context()},
+            )
+
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+        self.assertEqual(
+            result.get(CommonStateKey.COMPLETION_REASON),
+            CompletionReason.INTERVENTION_REQUIRED.value,
+        )
+        provider.context.recorder.record_step_finished.assert_awaited_once()
+        completion = provider.context.recorder.record_step_finished.await_args.kwargs["completion"]
+        self.assertEqual(completion.state, TaskState.EXPIRED)
+        self.assertEqual(completion.code, TaskCode.TIMEOUT)
+        # Timing honesty: the elapsed reflects the real wait, not a hardcoded zero.
+        self.assertEqual(completion.elapsed, 2500)
 
     async def test_missing_execution_context_fails_terminally(self) -> None:
         """

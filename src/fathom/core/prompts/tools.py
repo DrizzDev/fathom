@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, FrozenSet, List
 
+from fathom.constants.assessment import VisualVerdict
 from fathom.constants.tools import ToolName
 
 
@@ -10,13 +11,24 @@ class ToolRegistry:
     Registry for tool definitions used by the Vision Language Model.
     """
 
+    # Primary tools carry the common optional visual-assessment field; non-command tools do not.
+    __PRIMARY: FrozenSet[ToolName] = frozenset(
+        {ToolName.ASK_USER, ToolName.EXECUTE_UI, ToolName.VERIFY_GOAL, ToolName.VALIDATE_STATE}
+    )
+
     @classmethod
     def get_all_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
         """
         Returns all tool definitions in a format compatible with Gemini API.
         """
 
-        return {"function_declarations": [factory() for factory in cls.__factories().values()]}
+        factories = cls.__factories()
+        return {
+            "function_declarations": [
+                cls.__with_assessment(name=name, declaration=factory())
+                for name, factory in factories.items()
+            ]
+        }
 
     @classmethod
     def definitions(
@@ -29,9 +41,55 @@ class ToolRegistry:
         """
 
         factories = cls.__factories()
-        ordered = [factories[name]() for name in factories if name in names]
+        ordered = [
+            cls.__with_assessment(name=name, declaration=factories[name]())
+            for name in factories
+            if name in names
+        ]
 
         return {"function_declarations": ordered}
+
+    @classmethod
+    def __with_assessment(
+        cls, *, name: ToolName, declaration: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Attach the common visual-assessment field to a primary tool declaration, leaving others untouched.
+        """
+
+        if name not in cls.__PRIMARY:
+            return declaration
+
+        parameters = declaration.get("parameters")
+        if not isinstance(parameters, dict):
+            return declaration
+
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict) or "visual_assessment" in properties:
+            return declaration
+
+        merged = {**properties, "visual_assessment": cls.__visual_assessment_property()}
+        return {**declaration, "parameters": {**parameters, "properties": merged}}
+
+    @staticmethod
+    def __visual_assessment_property() -> Dict[str, Any]:
+        """
+        The single reusable visual-assessment schema fragment; verdicts come from :class:`VisualVerdict`.
+        """
+
+        return {
+            "type": "object",
+            "description": (
+                "Optional judgement of the active observed goal on the current screen. Include only "
+                "for a visual/observed goal; omit for command and capture goals."
+            ),
+            "properties": {
+                "verdict": {"type": "string", "enum": [verdict.value for verdict in VisualVerdict]},
+                "confidence": {"type": "number", "description": "Confidence in the verdict, 0..1."},
+                "evidence": {"type": "string", "description": "Concise visible evidence cited."},
+            },
+            "required": ["verdict", "confidence", "evidence"],
+        }
 
     @classmethod
     def __factories(cls) -> Dict[ToolName, Callable[[], Dict[str, Any]]]:

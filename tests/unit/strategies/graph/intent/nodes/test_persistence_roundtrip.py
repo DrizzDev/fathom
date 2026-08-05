@@ -11,7 +11,9 @@ from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.steps import Step, StepGoal, StepResult
 from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import CaptureSuccess, CommandSuccess, ObservedSuccess
 from fathom.strategies.graph.intent.nodes.persistence import GraphStatePersistence
+from tests.builders import SubGoalFixtures, SuccessFixtures
 
 
 class _StubContext:
@@ -76,9 +78,15 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
         """
 
         return [
-            SubGoal(index=0, description="Open the app"),
-            SubGoal(index=1, description="Tap on search"),
-            SubGoal(index=2, description="Type the query"),
+            SubGoalFixtures.make(
+                index=0, description="Open the app", success=SuccessFixtures.observed()
+            ),
+            SubGoalFixtures.make(
+                index=1, description="Tap on search", success=SuccessFixtures.command()
+            ),
+            SubGoalFixtures.make(
+                index=2, description="Type the query", success=SuccessFixtures.capture()
+            ),
         ]
 
     def __build_state(self, *, intent: str = "search masala dosa") -> AgentState:
@@ -138,8 +146,13 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
 
         self.assertIsNotNone(restore_target.replaced_state)
         assert restore_target.replaced_state is not None
-        self.assertEqual(restore_target.replaced_state.intent, "search masala dosa")
-        self.assertEqual(restore_target.replaced_state.current_sub_goal_action_count, 2)
+        restored = restore_target.replaced_state
+        self.assertEqual(restored.intent, "search masala dosa")
+        self.assertEqual(restored.current_sub_goal_action_count, 2)
+        # Restore preserves the cursor and the exact per-goal success variant.
+        self.assertEqual(restored.current_sub_goal_index, 0)
+        variants = [type(goal.success) for goal in restored.sub_goal_list]
+        self.assertEqual(variants, [ObservedSuccess, CommandSuccess, CaptureSuccess])
 
     def test_restore_advances_subgoal_index_when_only_index_survives(self) -> None:
         """
@@ -182,10 +195,8 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
         )
         state.set_sub_goals(
             [
-                SubGoal(
-                    index=0,
-                    description="Check whether customer rating is >= 4.2",
-                    directive=ActionType.VALIDATE,
+                SubGoalFixtures.make(
+                    index=0, description="Check whether customer rating is >= 4.2"
                 )
             ]
         )
@@ -222,6 +233,6 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
             StepGoal(
                 index=0,
                 description="Check whether customer rating is >= 4.2",
-                directive="validate",
+                directive=None,
             ),
         )

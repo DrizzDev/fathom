@@ -104,6 +104,37 @@ class GitIndexTest(unittest.TestCase):
 
             self.assertIn("src/fathom/naïve.py", self.__relatives(root=root))
 
+    def test_excludes_tracked_file_deleted_from_working_tree(self) -> None:
+        """
+        A file tracked in the index but deleted from disk is absent from discovery, never opened.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.__init_repo(root=root)
+            self.__write(root=root, relative="src/fathom/keep.py")
+            self.__write(root=root, relative="src/fathom/gone.py")
+            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+            (root / "src/fathom/gone.py").unlink()
+
+            relatives = self.__relatives(root=root)
+
+            self.assertIn("src/fathom/gone.py", self.__git_ls_files(root=root))
+            self.assertIn("src/fathom/keep.py", relatives)
+            self.assertNotIn("src/fathom/gone.py", relatives)
+
+    def test_includes_new_untracked_existing_file(self) -> None:
+        """
+        A new, untracked, on-disk first-party module is still discovered for scanning.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.__init_repo(root=root)
+            self.__write(root=root, relative="src/fathom/fresh.py")
+
+            self.assertIn("src/fathom/fresh.py", self.__relatives(root=root))
+
     def test_fails_closed_outside_a_git_repository(self) -> None:
         """
         Discovery raises rather than scanning nothing when git cannot enumerate.
@@ -111,3 +142,27 @@ class GitIndexTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(GovernanceError):
             GitIndex().paths(repo=Path(directory))
+
+    @staticmethod
+    def __git_ls_files(*, root: Path) -> Set[str]:
+        """
+        Return the raw tracked-plus-untracked paths git reports, before existence filtering.
+        """
+
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                "*.py",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return {entry for entry in completed.stdout.splitlines() if entry}

@@ -67,7 +67,7 @@ from fathom.schemas.interaction import (
     ThreadQuery,
 )
 from fathom.schemas.signing import SigningOutcome, SigningRequest
-from tests.unit.infrastructure.interaction.orm.support import PostgresSchema
+from tests.unit.infrastructure.interaction.orm.support import LoopDrain, PostgresSchema
 
 
 class SigningProbe(SigningPort):
@@ -123,6 +123,9 @@ class ConversationStoreTestCase(unittest.IsolatedAsyncioTestCase):
             )
         )
         await interaction.initialize()
+        # Registered first so it runs last (LIFO): drains asyncpg transport-close callbacks on
+        # this loop after the pool closes, so no connection lingers to be GC'd on a later test.
+        self.addAsyncCleanup(LoopDrain.settle)
         self.addAsyncCleanup(interaction.aclose)
         self.addAsyncCleanup(
             schema.__aexit__,

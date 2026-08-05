@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Optional, Type
 from uuid import uuid4
@@ -19,6 +20,29 @@ ACTIVE_RUNTIME: ContextVar[Optional[PostgresInteractionRuntime]] = ContextVar(
     "active_interaction_runtime",
     default=None,
 )
+
+
+class LoopDrain:
+    """
+    Test-only teardown shim; it must never migrate into ``src/``.
+
+    Production connection owners close their pools explicitly and run on a long-lived loop, so
+    ``asyncpg``'s ``loop.call_soon`` socket-close callback always fires. This shim only covers the
+    ``IsolatedAsyncioTestCase`` teardown race, where the test loop can close before that callback
+    runs and the connection is otherwise garbage-collected on a later test's loop. Yielding lets
+    the queued callbacks drain on the loop that created the connection.
+    """
+
+    __YIELD_ROUNDS: int = 2
+
+    @classmethod
+    async def settle(cls) -> None:
+        """
+        Yield to the running loop enough times to flush queued connection-close callbacks.
+        """
+
+        for _ in range(cls.__YIELD_ROUNDS):
+            await asyncio.sleep(0)
 
 
 class InteractionRuntimeRegistry:
@@ -83,6 +107,7 @@ class PostgresSchema:
 
         await self.connection.execute(f"DROP SCHEMA IF EXISTS {self.name} CASCADE")
         await self.connection.close()
+        await LoopDrain.settle()
 
 
 class InteractionPostgresSchema:
@@ -153,3 +178,4 @@ class InteractionPostgresSchema:
             exception=exception,
             traceback=traceback,
         )
+        await LoopDrain.settle()

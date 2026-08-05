@@ -35,6 +35,14 @@ class HITLService:
         self.__telemetry = telemetry
         self.__capabilities = capabilities
 
+    @property
+    def available(self) -> bool:
+        """
+        Return whether this service can currently service an intervention; the sole authority ``ask()`` also honours.
+        """
+
+        return self.__capabilities.hitl.enabled
+
     async def check_signal(self) -> Optional[str]:
         """
         Return the current control signal, if any.
@@ -115,7 +123,7 @@ class HITLService:
         Request human input; raise HITLNotAvailableError when the runtime cannot service HITL.
         """
 
-        if not self.__capabilities.hitl.enabled:
+        if not self.available:
             raise HITLNotAvailableError()
 
         await self.__telemetry.info(

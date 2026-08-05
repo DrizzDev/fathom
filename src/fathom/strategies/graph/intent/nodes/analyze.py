@@ -3,16 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Tuple, cast
 
 from fathom.constants import FathomEvent
+from fathom.constants.planner import PlannerEventKind
 from fathom.constants.retries import (
     PLANNER_RETRY_CONSUMED,
     PLANNER_RETRY_EXHAUSTED,
-    PLANNER_RETRY_METADATA_INVALID,
     RetryBranch,
     RetryKind,
-    RetryMetadataField,
 )
 from fathom.constants.runtime import DEFAULT_COMPLETE_DEFERRAL_BUDGET
 from fathom.constants.state import (
@@ -20,12 +19,20 @@ from fathom.constants.state import (
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
-    PlanMetadataKey,
 )
 from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.observation import ScreenObservation
+from fathom.schemas.planner import (
+    EscalationEvent,
+    GuardEvent,
+    PlannerEvent,
+    ToolScopeEvent,
+)
+from fathom.schemas.results import AnalysisResult, PlannerRetry, PlanResult
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.shadow import GoalCursor, ShadowTurn
 from fathom.strategies.graph.intent.nodes.provider import IntentNodeProvider
+from fathom.strategies.graph.intent.nodes.shadow import ShadowRunner
 from fathom.strategies.graph.intent.tool_update import ToolUpdateRouter
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
@@ -46,6 +53,7 @@ class AnalyzeNode:
         self.__provider = provider
         self.__verification_modes = VerificationModePolicy()
         self.__tool_update_router = ToolUpdateRouter(memory=provider.context.memory)
+        self.__runner = ShadowRunner()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
@@ -176,7 +184,7 @@ class AnalyzeNode:
             )
             observation = state.get(CommonStateKey.SCREEN_OBSERVATION)
 
-            plan = await self.__provider.context.planner.plan_step(
+            turn = await self.__provider.context.planner.plan_step(
                 capture=capture,
                 elements=elements,
                 screen_observation=(
@@ -190,9 +198,59 @@ class AnalyzeNode:
                 state=self.__provider.context.agent_state,
                 context_manager=self.__provider.context.context_manager,
             )
+            self.__emit_planner_events(events=turn.events)
+            plan = turn.plan
 
             duration = time.time() - start_time
             self.__provider.context.metrics.record(operation="analysis", duration=duration)
+
+            # Honest pre-dispatch shadow: candidate and live probe adjudicate the SAME settled screen.
+            agent_state = self.__provider.context.agent_state
+            active = agent_state.get_current_sub_goal()
+            cursor_before = agent_state.get_sub_goal_progress()
+            probe_result = await self.__provider.completion.probe(
+                observation=observation if isinstance(observation, ScreenObservation) else None
+            )
+            if (
+                active is not None
+                and cursor_before is not None
+                and plan.context.analysis is not None
+                and plan.context.analysis.planner is not None
+            ):
+                draft = self.__runner.draft(
+                    workflow_id=self.__provider.context.workflow_id,
+                    active=active,
+                    analysis=plan.context.analysis,
+                    metrics=plan.context.analysis.planner,
+                    screen=capture.identity,
+                    foreground=capture.activity,
+                    authority=agent_state.target_authority,
+                    live_pre=probe_result.advancement,
+                    cursor_before=self.__cursor(progress=cursor_before),
+                )
+                plan = plan.model_copy(
+                    update={"context": plan.context.model_copy(update={"shadow": draft})}
+                )
+                if plan.step is None or probe_result.transition is not None:
+                    self.__emit_shadow(
+                        record=self.__runner.finalize_undispatched(
+                            draft=draft,
+                            cursor_after=self.__cursor(
+                                progress=agent_state.get_sub_goal_progress() or cursor_before
+                            ),
+                        )
+                    )
+            if probe_result.transition is not None:
+                logger.info(
+                    "Active sub-goal satisfied on the settled screen; advancing before dispatch",
+                    extra={
+                        "event": "analyze.satisfied_prior",
+                        "component": "graph.intent.analyze",
+                        "workflow.id": self.__provider.context.workflow_id,
+                    },
+                )
+                self.__provider.persistence.persist(result=probe_result.transition)
+                return probe_result.transition
 
             await self.__tool_update_router.route(
                 updates=getattr(plan, "updates", ()),
@@ -347,7 +405,7 @@ class AnalyzeNode:
             elif plan.should_retry:
                 terminate_result = self.__consume_planner_retry(
                     base_result=result,
-                    plan_metadata=plan.metadata,
+                    retry=plan.context.retry,
                 )
                 if terminate_result is not None:
                     self.__provider.persistence.persist(result=terminate_result)
@@ -462,16 +520,12 @@ class AnalyzeNode:
         return terminate
 
     @staticmethod
-    def __analysis_from_plan(*, plan: Any) -> Any:
+    def __analysis_from_plan(*, plan: PlanResult) -> Optional[AnalysisResult]:
         """
-        Extract the analyzer's AnalysisResult from planner metadata for downstream state.
+        Extract the analyzer's AnalysisResult from the plan's typed context for downstream state.
         """
 
-        metadata = getattr(plan, "metadata", None)
-        if not isinstance(metadata, dict):
-            return None
-
-        return metadata.get(PlanMetadataKey.ANALYSIS.value)
+        return plan.context.analysis
 
     def __verify_mode(
         self,
@@ -541,11 +595,7 @@ class AnalyzeNode:
 
         terminate_result = self.__consume_planner_retry(
             base_result=result,
-            plan_metadata={
-                RetryMetadataField.BLOCK_REASON.value: diagnostic,
-                RetryMetadataField.BRANCH.value: RetryBranch.UNKNOWN.value,
-                RetryMetadataField.KIND.value: RetryKind.LLM_FEEDBACK.value,
-            },
+            retry=PlannerRetry(kind=RetryKind.LLM_FEEDBACK, branch=RetryBranch.UNKNOWN),
         )
         final_result = terminate_result or result
         self.__provider.persistence.persist(result=final_result)
@@ -567,17 +617,18 @@ class AnalyzeNode:
         self,
         *,
         base_result: IntentGraphState,
-        plan_metadata: Optional[Dict[str, Any]],
+        retry: Optional[PlannerRetry],
     ) -> Optional[IntentGraphState]:
         """
-        Consume planner-retry budget; return a terminal state on exhaustion or None to continue.
+        Consume planner-retry budget from the typed retry directive; terminal state on exhaustion else None.
         """
 
-        metadata = plan_metadata or {}
-        agent_state = self.__provider.context.agent_state
+        if retry is None:
+            return None
 
-        kind = self.__coerce_retry_kind(raw=metadata.get(RetryMetadataField.KIND.value))
-        branch = self.__coerce_retry_branch(raw=metadata.get(RetryMetadataField.BRANCH.value))
+        agent_state = self.__provider.context.agent_state
+        kind = retry.kind
+        branch = retry.branch
 
         # ESCALATION_DEFERRED is bounded by the per-sub-goal ``deferral_count``
         # when a sub-goal is active; bypass the planner-retry budget in that
@@ -586,9 +637,7 @@ class AnalyzeNode:
         if kind is RetryKind.ESCALATION_DEFERRED and agent_state.get_current_sub_goal() is not None:
             return None
 
-        action = metadata.get(RetryMetadataField.BLOCKED_ACTION.value)
-        action = action if isinstance(action, str) else None
-
+        action = retry.action
         count = agent_state.tick_planner_retry(kind=kind, branch=branch, action=action)
         planner = agent_state.retries.planner
 
@@ -633,65 +682,98 @@ class AnalyzeNode:
 
         return cast("IntentGraphState", terminate)
 
-    def __coerce_retry_kind(self, *, raw: object) -> RetryKind:
+    @staticmethod
+    def __cursor(*, progress: Tuple[int, int]) -> GoalCursor:
         """
-        Map planner-stamped KIND metadata onto :class:`RetryKind`; warn and default to ``SILENT_REJECTION`` on missing or unrecognized values.
-        """
-
-        if isinstance(raw, str):
-            try:
-                return RetryKind(raw)
-            except ValueError:
-                self.__log_invalid_metadata(
-                    raw=raw,
-                    field=RetryMetadataField.KIND.value,
-                    default=RetryKind.SILENT_REJECTION.value,
-                )
-                return RetryKind.SILENT_REJECTION
-
-        self.__log_invalid_metadata(
-            raw=raw,
-            field=RetryMetadataField.KIND.value,
-            default=RetryKind.SILENT_REJECTION.value,
-        )
-        return RetryKind.SILENT_REJECTION
-
-    def __coerce_retry_branch(self, *, raw: object) -> RetryBranch:
-        """
-        Map planner-stamped BRANCH metadata onto :class:`RetryBranch`; warn and default to ``UNKNOWN`` on missing or unrecognized values.
+        Map the active sub-goal progress reading to a typed cursor value object.
         """
 
-        if isinstance(raw, str):
-            try:
-                return RetryBranch(raw)
-            except ValueError:
-                self.__log_invalid_metadata(
-                    raw=raw,
-                    default=RetryBranch.UNKNOWN.value,
-                    field=RetryMetadataField.BRANCH.value,
-                )
-                return RetryBranch.UNKNOWN
+        index, total = progress
+        return GoalCursor(index=index, total=total)
 
-        self.__log_invalid_metadata(
-            raw=raw,
-            default=RetryBranch.UNKNOWN.value,
-            field=RetryMetadataField.BRANCH.value,
-        )
-        return RetryBranch.UNKNOWN
-
-    def __log_invalid_metadata(self, *, field: str, raw: object, default: str) -> None:
+    def __emit_shadow(self, *, record: ShadowTurn) -> None:
         """
-        Emit a structured warning whenever planner-retry metadata is missing or unrecognized so contract drift surfaces in logs.
+        Emit a finalized shadow turn through the debug boundary; used for turns that never dispatch.
         """
 
-        logger.warning(
-            "Invalid planner-retry metadata; falling back to default",
+        logger.info(
+            "Shadow advancement comparison",
             extra={
-                "event": PLANNER_RETRY_METADATA_INVALID,
                 "component": "graph.intent.analyze",
-                "metadata.field": field,
-                "metadata.raw": repr(raw),
-                "metadata.default": default,
+                "event": "shadow.turn.comparison",
+                "shadow.record": record.model_dump(mode="json"),
                 "workflow.id": self.__provider.context.workflow_id,
             },
         )
+
+    def __emit_planner_events(self, *, events: Tuple[PlannerEvent, ...]) -> None:
+        """
+        Emit each typed planner event as a structured log at the graph boundary.
+        """
+
+        for event in events:
+            name, warning, extra = self.__render_planner_event(event=event)
+            payload: Dict[str, Any] = {
+                "component": "core.agent.planner",
+                "event": name,
+                "workflow.id": self.__provider.context.workflow_id,
+                **extra,
+            }
+            if warning:
+                logger.warning(name, extra=payload)
+            else:
+                logger.info(name, extra=payload)
+
+    @staticmethod
+    def __render_planner_event(*, event: PlannerEvent) -> Tuple[str, bool, Dict[str, Any]]:
+        """
+        Map a typed planner event to its external dotted name, severity, and log fields.
+        """
+
+        if isinstance(event, EscalationEvent):
+            names = {
+                PlannerEventKind.ESCALATION_DETECTED: "planner.escalation.detected",
+                PlannerEventKind.ESCALATION_ALLOWED: "planner.escalation.allowed",
+                PlannerEventKind.ESCALATION_DEFERRED: "planner.escalation.deferred",
+                PlannerEventKind.ASK_USER_EMITTED: "planner.ask_user.emitted",
+            }
+            return (
+                names[event.kind],
+                False,
+                {
+                    "escalation.path": event.path.value,
+                    "escalation.stuck_source": (
+                        event.stuck_source.value if event.stuck_source is not None else None
+                    ),
+                    "escalation.reason": event.reason.value if event.reason is not None else None,
+                    "escalation.deferrals": event.deferrals,
+                    "sub_goal.index": event.goal.index if event.goal is not None else None,
+                },
+            )
+
+        if isinstance(event, GuardEvent):
+            blocked = event.kind is PlannerEventKind.ACTION_BLOCKED
+            return (
+                "planner.block" if blocked else "planner.guard.bypassed",
+                blocked,
+                {
+                    "action": event.action,
+                    "block.reason": (
+                        event.block_reason.value if event.block_reason is not None else None
+                    ),
+                    "sub_goal.index": event.goal.index if event.goal is not None else None,
+                },
+            )
+
+        if isinstance(event, ToolScopeEvent):
+            return (
+                "tool_scope.resolved",
+                False,
+                {
+                    "tool_scope.modes": [mode.value for mode in event.modes],
+                    "tool_scope.tools_allowed": [tool.value for tool in event.tools],
+                    "sub_goal.index": event.goal.index if event.goal is not None else None,
+                },
+            )
+
+        return ("planner.command.rejected", True, {"reason": event.reason})

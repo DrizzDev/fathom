@@ -110,6 +110,40 @@ class EffectClassifierTest(unittest.TestCase):
         self.assertIsNone(reading.departed)
         self.assertEqual(reading.trial, ActionEffectStatus.PROGRESS)
 
+    def test_unbound_target_launch_is_not_regression(self) -> None:
+        """
+        Run 73efe46d regression: with no requested target (package=None), opening the app
+        (foreground changes to it, scoped in-app progress) must NOT be scored a departure.
+        """
+
+        reading = self.classifier.classify(
+            effect=self.__effect(status=ActionEffectStatus.PROGRESS),
+            diff=self.__diff(regions=[ScreenChangeRegion(x=410, y=1210, width=180, height=100)]),
+            bounds=self.bounds,
+            package=None,
+            foreground="com.meesho.supply",
+        )
+
+        self.assertIsNone(reading.departed)
+        self.assertIsNot(reading.trial, ActionEffectStatus.REGRESSION)
+        self.assertEqual(reading.trial, ActionEffectStatus.PROGRESS)
+
+    def test_explicit_target_departure_remains_regression(self) -> None:
+        """
+        With an explicitly requested target, leaving it for an unexpected package stays REGRESSION.
+        """
+
+        reading = self.classifier.classify(
+            effect=self.__effect(status=ActionEffectStatus.PROGRESS),
+            diff=self.__diff(regions=[]),
+            bounds=self.bounds,
+            package="com.meesho.supply",
+            foreground="com.google.android.gms",
+        )
+
+        self.assertIs(reading.departed, True)
+        self.assertEqual(reading.trial, ActionEffectStatus.REGRESSION)
+
     @staticmethod
     def __effect(*, status: ActionEffectStatus) -> ActionEffect:
         """

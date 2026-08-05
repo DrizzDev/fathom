@@ -118,13 +118,15 @@ class IntentGraphBuilder(GraphBuilder):
         """
         Route after ground based on completion status.
 
-        Note: We check context.agent_state instead of state dict because
-        LangGraph routing happens before node return values are merged into state.
+        Reads the completion fields GROUND returns into graph state, exactly as
+        the other routers do. The router must consume the merged node return
+        because AgentState restoration is node-scoped — ``GraphStatePersistence.restore``
+        runs inside nodes, not before this conditional edge — so ``context.agent_state``
+        is not guaranteed to reflect the checkpoint at routing time; the returned patch is.
         """
 
-        # Check AgentState directly (updated by node before return)
-        if self.__context.agent_state.is_complete:
-            reason = self.__context.agent_state.completion_reason
+        if state.get(cast("str", CommonStateKey.IS_COMPLETE)):
+            reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON))
             logger.info(f"[ROUTING] After GROUND: is_complete=True, reason={reason}")
 
             # Fatal/terminal reasons should end immediately

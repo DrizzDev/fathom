@@ -13,7 +13,7 @@ from fathom.constants.execution import POST_ACTION_OBSERVATION_TIMEOUT_SECONDS
 from fathom.constants.perception import ACTION_REGION_HALF_SIDE, ACTION_REGION_STATIC_HAMMING_FLOOR
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.screen import ZERO_HASH
-from fathom.constants.state import IntentStateKey, PlanMetadataKey
+from fathom.constants.state import IntentStateKey
 from fathom.constants.storage import StorageBackend
 from fathom.core.perception.hashing import VisualHashEngine
 from fathom.core.services.settlement import ScreenSettlementService
@@ -228,8 +228,7 @@ class PostAction:
         plan = state.get(IntentStateKey.PLAN)
 
         if isinstance(plan, PlanResult):
-            value = plan.metadata.get(PlanMetadataKey.OBSERVATION.value)
-            return value if isinstance(value, str) else None
+            return plan.context.observation
 
         return None
 
@@ -762,7 +761,7 @@ class PostAction:
         """
 
         sub_goal = self.__context.agent_state.get_current_sub_goal()
-        return sub_goal.criterion if sub_goal is not None else None
+        return sub_goal.objective if sub_goal is not None else None
 
     def __log_context(self) -> Dict[str, Any]:
         """

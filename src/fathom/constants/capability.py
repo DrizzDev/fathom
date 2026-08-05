@@ -82,3 +82,12 @@ NON_INTERACTIVE_CHANNELS: Final[FrozenSet[ExecutionChannel]] = frozenset(
         ExecutionChannel.OBSERVATION,
     }
 )
+
+# Channels an explicit user-requested command requirement may run on. Excludes control,
+# memory, observation, capture, and terminal so those can never become a CommandSuccess.
+COMMAND_REQUIREMENT_CHANNELS: Final[FrozenSet[ExecutionChannel]] = frozenset(
+    {
+        ExecutionChannel.DEVICE,
+        ExecutionChannel.WAIT,
+    }
+)

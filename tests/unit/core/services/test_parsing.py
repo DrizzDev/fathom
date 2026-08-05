@@ -8,12 +8,9 @@ from pydantic import BaseModel, Field
 from fathom.constants import ActionType, StepEvent
 from fathom.constants.tools import StateNamespace
 from fathom.constants.turn.validation import ValidationSource
-from fathom.core.agent.opener import OpenerSignalPolicy
-from fathom.core.agent.reasoner import Reasoner
 from fathom.core.exceptions import ToolValidationError
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.schemas.results import GenerateResult
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
 
 
 class _Call(BaseModel):
@@ -576,55 +573,6 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         self.assertEqual(result.action.action_type, ActionType.COMPLETE)
         self.assertEqual(result.action.validation_subject, "The final step is complete.")
 
-    def test_verify_goal_complete_advances_validation_subgoal_contract(self) -> None:
-        """
-        verify_goal COMPLETE carries validation evidence through parser, reasoner, and gate.
-        """
-
-        parser = ToolResponseParser()
-        result = parser.parse(
-            response=GenerateResult(
-                content="",
-                metrics={},
-                tool_calls=[
-                    _Call(
-                        name="verify_goal",
-                        args={
-                            "assistant_message": "The Home screen is visible.",
-                            "goal_completed": True,
-                            "sub_goal_completed": True,
-                            "goal_completion_reason": "The Home screen is visible.",
-                            "subgoal_completion_reason": "The Home screen is visible.",
-                            "current_screen": "Home screen",
-                            "completion_criteria_met": ["Home screen is visible"],
-                        },
-                    )
-                ],
-            )
-        )
-        assert result.action is not None
-        sub_goal = SubGoal(
-            index=5,
-            kind=SubGoalKind.VALIDATION,
-            directive=ActionType.VALIDATE,
-            description="Validate the Home screen is visible",
-        )
-
-        evidence = Reasoner(
-            intent="Validate the Home screen is visible",
-            opener_policy=OpenerSignalPolicy(),
-        ).assess_completion(
-            execution_success=True,
-            analysis=result,
-            sub_goal=sub_goal,
-            screen_changed=False,
-        )
-
-        self.assertEqual(result.action.action_type, ActionType.COMPLETE)
-        self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
-        self.assertTrue(evidence.validation.executed)
-
-
 class ToolResponseParserBoundaryTest(unittest.TestCase):
     """
     Covers the model-tool response boundary.
@@ -987,3 +935,86 @@ if __name__ == "__main__":
         assert result.validation is not None
         self.assertEqual(result.validation.subject, "Cart contains Diet Coke x1")
         self.assertEqual(result.action.validation_subject, "Cart contains Diet Coke x1")
+
+
+class ToolResponseParserVisualAssessmentTest(unittest.TestCase):
+    """
+    Covers the shadow visual assessment riding the same primary response as the live action.
+    """
+
+    __ACTION = {
+        "action_type": "swipe_up",
+        "target_name": "Restaurant list area",
+        "scroll_target": "Restaurant list area",
+        "confidence": 0.84,
+        "bbox": {
+            "x": 0,
+            "y": 858,
+            "width": 1206,
+            "height": 1396,
+            "coordinate_system": "normalized",
+        },
+    }
+
+    @staticmethod
+    def __response(*, args: Dict[str, Any]) -> GenerateResult:
+        return GenerateResult(
+            content="", tool_calls=[_Call(name="execute_ui", args=args)], metrics={}
+        )
+
+    def test_assessment_and_action_decode_from_same_response(self) -> None:
+        result = ToolResponseParser().parse(
+            response=self.__response(
+                args={
+                    "assistant_message": "scroll",
+                    "goal_completed": False,
+                    "sub_goal_completed": False,
+                    "action": self.__ACTION,
+                    "visual_assessment": {
+                        "verdict": "SATISFIED",
+                        "confidence": 0.9,
+                        "evidence": "results visible",
+                    },
+                }
+            )
+        )
+
+        assert result.tool_response is not None
+        assert result.tool_response.command is not None  # live action preserved
+        assert result.visual_assessment is not None
+        self.assertEqual(result.visual_assessment.verdict.value, "SATISFIED")
+        self.assertFalse(result.assessment_malformed)
+
+    def test_malformed_assessment_preserves_live_action(self) -> None:
+        # Missing required 'evidence' -> malformed. The live action must still parse; no fabrication.
+        result = ToolResponseParser().parse(
+            response=self.__response(
+                args={
+                    "assistant_message": "scroll",
+                    "goal_completed": False,
+                    "sub_goal_completed": False,
+                    "action": self.__ACTION,
+                    "visual_assessment": {"verdict": "SATISFIED", "confidence": 0.9},
+                }
+            )
+        )
+
+        assert result.tool_response is not None
+        assert result.tool_response.command is not None  # live action preserved
+        self.assertIsNone(result.visual_assessment)  # never fabricated
+        self.assertTrue(result.assessment_malformed)
+
+    def test_absent_assessment_is_clean(self) -> None:
+        result = ToolResponseParser().parse(
+            response=self.__response(
+                args={
+                    "assistant_message": "scroll",
+                    "goal_completed": False,
+                    "sub_goal_completed": False,
+                    "action": self.__ACTION,
+                }
+            )
+        )
+
+        self.assertIsNone(result.visual_assessment)
+        self.assertFalse(result.assessment_malformed)

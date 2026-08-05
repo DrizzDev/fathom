@@ -125,7 +125,7 @@ class ObserveNode:
         reading = self.__recorder.observe(
             diff=screen_diff,
             effect=action_effect,
-            package=context.package,
+            package=self.__provider.context.target_authority.package,
             foreground=post_activity,
             bounds=context.step.action.bounds,
             workflow_id=self.__provider.context.workflow_id,
@@ -265,6 +265,12 @@ class ObserveNode:
         """
         Return the canonical success bit for one recorded step.
         """
+
+        if self.__provider.context.catalog.is_control(action_type=action_type):
+            # A control command's postcondition is not a screen change: a delivered-and-answered
+            # ASK_USER, for example, succeeds without moving the screen. Its recorded success is
+            # the handler's execution result. The run may still replan afterwards.
+            return execution_success
 
         if action_execution_kind is not ActionExecutionKind.DEVICE:
             return False

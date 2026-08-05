@@ -7,9 +7,10 @@ import pytest
 from fathom.constants import ActionType
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.services.decomposer import IntentDecomposer
-from fathom.core.services.directive import DirectivePolicy
+from fathom.core.services.translation import ProposalTranslator
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import CaptureSuccess, CommandSuccess, ObservedSuccess
 
 pytestmark = pytest.mark.release
 
@@ -37,7 +38,7 @@ class DecompositionAssertions:
         Return normalized sub-goal descriptions for invariant matching.
         """
 
-        return " ".join(goal.description for goal in sub_goals).casefold()
+        return " ".join(goal.objective for goal in sub_goals).casefold()
 
     @staticmethod
     def assert_contains_in_order(*, text: str, phrases: Sequence[str]) -> None:
@@ -54,11 +55,16 @@ class DecompositionAssertions:
     @staticmethod
     def index_of_directive(*, sub_goals: Sequence[SubGoal], directive: ActionType) -> int:
         """
-        Return the first sub-goal index carrying the requested directive.
+        Return the first sub-goal index whose canonical success matches the requested directive.
         """
 
         for index, sub_goal in enumerate(sub_goals):
-            if sub_goal.directive is directive:
+            success = sub_goal.success
+            if directive is ActionType.STORE and isinstance(success, CaptureSuccess):
+                return index
+            if directive is ActionType.VALIDATE and isinstance(success, ObservedSuccess):
+                return index
+            if isinstance(success, CommandSuccess) and success.requirement.operation is directive:
                 return index
 
         raise AssertionError(f"Missing directive {directive!r}: {sub_goals!r}")
@@ -75,7 +81,7 @@ class TestIntentDecomposer:
         """
 
         decomposer = IntentDecomposer(
-            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+            llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         )
 
         sub_goals = await decomposer.decompose(intent=VARO_ONBOARDING_INTENT)
@@ -98,7 +104,7 @@ class TestIntentDecomposer:
         """
 
         decomposer = IntentDecomposer(
-            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+            llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         )
 
         sub_goals = await decomposer.decompose(
@@ -118,7 +124,7 @@ class TestIntentDecomposer:
         """
 
         decomposer = IntentDecomposer(
-            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+            llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         )
 
         sub_goals = await decomposer.decompose(intent=CONDITIONAL_STORE_INTENT)
@@ -140,6 +146,6 @@ class TestIntentDecomposer:
         assert "item_price" in descriptions
         assert "proceed to buy" in descriptions or "login screen" in descriptions
 
-        store_description = sub_goals[store_index].description.casefold()
+        store_description = sub_goals[store_index].objective.casefold()
         assert "check whether customer rating" not in store_description
         assert "store" in store_description or "capture" in store_description

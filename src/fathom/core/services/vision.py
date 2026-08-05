@@ -23,6 +23,7 @@ from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.observation import LoopObservation, ScreenObservation
+from fathom.schemas.planner import PlannerMetrics
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.tools import AllowedTools, ToolPolicyContext
@@ -41,6 +42,7 @@ class SubGoalContext(TypedDict):
     total: int
     description: str
     durable: NotRequired[bool]
+    assertion: NotRequired[str]
 
 
 class VisionService:
@@ -431,6 +433,7 @@ class VisionService:
 
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
+        analysis.planner = PlannerMetrics(latency=duration, calls=attempt + 1)
         analysis.metrics["memory_retrieval"] = retrieval
         analysis.metrics["tool_scope_ms"] = tool_scope_duration * 1000
         analysis.metrics["manifest_ms"] = manifest_duration * 1000

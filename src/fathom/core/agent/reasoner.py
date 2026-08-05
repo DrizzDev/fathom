@@ -5,7 +5,6 @@ from logging import getLogger
 from typing import List, Optional, Set, Tuple
 
 from fathom.constants import (
-    ACTION_EXECUTED_TYPES,
     ActionType,
     StepEvent,
 )
@@ -22,19 +21,9 @@ from fathom.constants.reasoning import (
 from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.actions import Action
-from fathom.schemas.completion import (
-    ActionEvidence,
-    ClaimEvidence,
-    CompletionEvidence,
-    CriterionEvidence,
-    ScreenEvidence,
-    ValidationEvidence,
-)
-from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
-from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
+from fathom.schemas.reasoning import CompletionSignal
 from fathom.schemas.results import AnalysisResult
-from fathom.schemas.subgoal import SubGoal
 
 logger = getLogger(name=__name__)
 
@@ -162,161 +151,6 @@ class Reasoner:
             llm_confidence=llm_confidence,
             success_indicator=is_complete,
             expected_screen=analysis.is_goal_complete,
-        )
-
-    def analyze_subgoal_completion(
-        self,
-        analysis: AnalysisResult,
-        sub_goal_description: str,
-        *,
-        screen_changed: bool = False,
-        screen_description: Optional[str] = None,
-    ) -> SubGoalCompletionSignal:
-        """
-        Multi-signal verification for sub-goal completion.
-        """
-
-        evidence: List[str] = []
-        action = self.__require_action(analysis=analysis)
-        target = sub_goal_description.lower()
-
-        # Flag 1: model explicitly raised the completion flag via tool output
-        # or recommended the COMPLETE action.
-        if flagged_complete := (
-            analysis.is_sub_goal_complete
-            or analysis.is_goal_complete
-            or action.action_type == ActionType.COMPLETE
-        ):
-            evidence.append("Model flagged sub-goal completion via tool output")
-
-        # Flag 2: rationale-side verification. Prefer the model's explicit
-        # completion reason; fall back to a keyword + similarity heuristic
-        # so non-explicit narrations are not silently dropped.
-        rationale_verified, rationale_evidence, keyword_match, similarity = self.__verify_rationale(
-            target=target,
-            analysis=analysis,
-            flagged_complete=flagged_complete,
-            screen_description=screen_description,
-        )
-        if rationale_evidence:
-            evidence.append(rationale_evidence)
-
-        # Flag 3: an action that actually ran (planning-only actions excluded).
-        action_executed = action.action_type in ACTION_EXECUTED_TYPES
-
-        if action_executed:
-            evidence.append(f"Action executed: {action.action_type.value}")
-
-        # Flag 4: post-action screen change was observed.
-        screen_verified, screen_evidence = self.__verify_screen_change(
-            screen_changed=screen_changed,
-        )
-        if screen_verified:
-            evidence.append(screen_evidence)
-
-        elif flagged_complete:
-            evidence.append(f"WARNING: model flagged complete but {screen_evidence}")
-
-        llm_confidence = self.__derive_llm_confidence(
-            analysis=analysis, keyword_match=keyword_match, similarity=similarity
-        )
-
-        signal = SubGoalCompletionSignal(
-            trace_verified=False,
-            keyword_match=keyword_match,
-            llm_confidence=llm_confidence,
-            action_executed=action_executed,
-            screen_verified=screen_verified,
-            flagged_complete=flagged_complete,
-            rationale_verified=rationale_verified,
-            evidence="; ".join(evidence) if evidence else "No sub-goal completion signals detected",
-        )
-
-        logger.info(
-            "[Reasoner] Sub-goal verdict",
-            extra={
-                "component": "reasoner",
-                "event": "subgoal_signals",
-                "sub_goal": sub_goal_description[:80],
-                "flagged_complete": flagged_complete,
-                "rationale_verified": rationale_verified,
-                "action_executed": action_executed,
-                "screen_verified": screen_verified,
-                "signal.count": signal.count_signals(),
-                "similarity": round(similarity, 3),
-                "llm_confidence": round(llm_confidence, 3),
-            },
-        )
-        return signal
-
-    def assess_completion(
-        self,
-        *,
-        sub_goal: SubGoal,
-        screen_changed: bool,
-        execution_success: bool,
-        analysis: AnalysisResult,
-        effect: Optional[ActionEffect] = None,
-        screen_description: Optional[str] = None,
-        criterion_decision: Optional[CriterionDecision] = None,
-    ) -> CompletionEvidence:
-        """
-        Assemble this turn's typed completion signals for the advancement policy.
-        NO_PROGRESS effect vetoes screen.evolved so animation noise alone cannot satisfy the policy.
-        """
-
-        notes: List[str] = []
-        action = self.__require_action(analysis=analysis)
-
-        asserted = (
-            analysis.is_sub_goal_complete
-            or analysis.is_goal_complete
-            or action.action_type == ActionType.COMPLETE
-        )
-        if asserted:
-            notes.append("claim.asserted: model flagged completion via tool output")
-
-        dispatched = action.action_type in ACTION_EXECUTED_TYPES
-        if dispatched:
-            notes.append(f"action.dispatched: {action.action_type.value}")
-
-        evolved, screen_note = self.__verify_screen_change(
-            effect=effect,
-            screen_changed=screen_changed,
-        )
-
-        if evolved:
-            notes.append(f"screen.evolved: {screen_note}")
-
-        elif asserted:
-            notes.append(f"screen.unchanged_despite_claim: {screen_note}")
-
-        criterion_evidence: Optional[CriterionEvidence] = None
-
-        if criterion_decision is not None:
-            criterion_observed = criterion_decision.verdict is CriterionVerdict.SATISFIED
-            criterion_evidence = CriterionEvidence(observed=criterion_observed)
-
-            notes.append(
-                f"criterion.{'observed' if criterion_observed else 'not_observed'}: "
-                f"verdict={criterion_decision.verdict.value} "
-                f"confidence={criterion_decision.confidence:.2f}"
-            )
-
-        return CompletionEvidence(
-            notes=tuple(notes),
-            criterion=criterion_evidence,
-            screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(
-                dispatched=dispatched,
-                executed=execution_success,
-            ),
-            validation=ValidationEvidence(
-                executed=self.__validation_executed(
-                    action=action, execution_success=execution_success
-                )
-            ),
-            claim=ClaimEvidence(asserted=asserted),
         )
 
     @staticmethod

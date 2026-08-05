@@ -20,10 +20,8 @@ from fathom.core.prompts.templates import (
 from fathom.schemas.artifact import ArtifactRecord, VerificationPayload
 from fathom.schemas.completion import CompletionVerdict
 from fathom.schemas.flow import CompletionAssertion
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.subgoal import SubGoal
-from fathom.schemas.tasks import ExecutionTaskState
+from fathom.schemas.subgoal import GoalState
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
 from fathom.strategies.graph.state import IntentGraphState
 from fathom.utils.parsing import strip_code_fences
@@ -376,7 +374,7 @@ class VerifyNode:
         self,
         *,
         mode: VerifyMode,
-        current_sub_goal: Optional[SubGoal],
+        current_sub_goal: Optional[GoalState],
     ) -> None:
         """
         Validate VERIFY mode contracts that cannot be inferred safely.
@@ -416,7 +414,7 @@ class VerifyNode:
         self,
         *,
         mode: VerifyMode,
-        current_sub_goal: Optional[SubGoal],
+        current_sub_goal: Optional[GoalState],
         user_guidance: list[str],
     ) -> Tuple[str, str]:
         """
@@ -434,13 +432,13 @@ class VerifyNode:
                     "event": "verify.subgoal.started",
                     "sub_goal.index": current_sub_goal.index,
                     "workflow.id": self.__provider.context.workflow_id,
-                    "sub_goal.description": current_sub_goal.description[:80],
+                    "sub_goal.description": current_sub_goal.objective[:80],
                 },
             )
             return (
                 SUBGOAL_VERIFICATION_SYSTEM,
                 build_subgoal_verification_user_prompt(
-                    intent=current_sub_goal.description,
+                    intent=current_sub_goal.objective,
                     user_guidance=user_guidance,
                     recent_trace=(recent_trace if isinstance(recent_trace, (list, tuple)) else []),
                 ),
@@ -469,7 +467,7 @@ class VerifyNode:
         self,
         *,
         reason: str,
-        current_sub_goal: SubGoal,
+        current_sub_goal: GoalState,
     ) -> IntentGraphState:
         """
         Commit the accepted active sub-goal before marking final intent success.
@@ -478,16 +476,8 @@ class VerifyNode:
         agent_state = self.__provider.context.agent_state
         accepted_reason = self.__accepted_reason(reason=reason)
         # PENDING_FINAL_COMMIT emits the final sub-goal lifecycle event from VERIFY, not the gate.
-        has_more = agent_state.mark_current_sub_goal_complete(
-            completion_signal=SubGoalCompletionSignal(
-                llm_confidence=1.0,
-                screen_verified=True,
-                action_executed=True,
-                flagged_complete=True,
-                rationale_verified=bool(reason.strip()),
-                evidence=self.__verification_evidence(reason=reason),
-            )
-        )
+        # Completion is adjudicated by AdvancementPolicy upstream; VERIFY only commits the transition.
+        has_more = agent_state.advance_current_sub_goal()
         agent_state.clear_verification_loop()
         agent_state.reset_completion()
         self.__provider.context.context_manager.clear_verifier_feedback()
@@ -527,7 +517,7 @@ class VerifyNode:
                 "sub_goal.index": current_sub_goal.index,
                 "workflow.id": self.__provider.context.workflow_id,
                 "verify.mode": VerifyMode.PENDING_FINAL_COMMIT.value,
-                "sub_goal.description": current_sub_goal.description[:80],
+                "sub_goal.description": current_sub_goal.objective[:80],
             },
         )
         return cast(
@@ -555,17 +545,6 @@ class VerifyNode:
         """
 
         return mode in {VerifyMode.FULL_INTENT, VerifyMode.PENDING_FINAL_COMMIT}
-
-    @staticmethod
-    def __verification_evidence(*, reason: str) -> str:
-        """
-        Return evidence text that preserves whether the verifier supplied a rationale.
-        """
-
-        if not reason.strip():
-            return DEFAULT_ACCEPTED_VERIFICATION_REASON
-
-        return f"Verified by screenshot: {reason[:MAX_VERIFICATION_EVIDENCE_CHARS]}"
 
     def __assertions(
         self, *, data: object, capture: ScreenCapture, reason: str
@@ -764,7 +743,6 @@ class VerifyNode:
             missing=[],
             reason=reason,
             complete=complete,
-            next_state=ExecutionTaskState.SUCCEEDED if complete else ExecutionTaskState.FAILED,
         )
         await pipeline.emit(
             record=ArtifactRecord(

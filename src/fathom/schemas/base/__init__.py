@@ -1,3 +1,3 @@
-from fathom.schemas.base.common import SealedModel, ThresholdConfiguration
+from fathom.schemas.base.common import NonBlank, SealedModel, ThresholdConfiguration
 
-__all__ = ["SealedModel", "ThresholdConfiguration"]
+__all__ = ["NonBlank", "SealedModel", "ThresholdConfiguration"]

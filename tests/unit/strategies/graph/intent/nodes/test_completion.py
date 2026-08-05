@@ -1,40 +1,19 @@
 from __future__ import annotations
 
 import unittest
-from typing import Optional, Tuple
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
-from fathom.constants.state import (
-    CommonStateKey,
-    CompletionReason,
-    IntentStateKey,
-    PlanMetadataKey,
-    VerifyMode,
-)
-from fathom.constants.turn.advancement import AdvanceThreshold
-from fathom.constants.turn.validation import ValidationSource
-from fathom.core.capability.catalog import CommandCatalogProvider
-from fathom.core.capture.store import CaptureStore
-from fathom.core.exceptions import InvariantViolation
+from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
+from fathom.constants.turn.advancement import AdvanceKind
+from fathom.core.agent.state import AgentState
 from fathom.core.services.criterion import CriterionObserver
 from fathom.schemas.actions import Action, Bounds
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.capture import Capture, CaptureRequest
-from fathom.schemas.completion import (
-    ActionEvidence,
-    ClaimEvidence,
-    CompletionEvidence,
-    CriterionEvidence,
-    ScreenEvidence,
-    ValidationEvidence,
-)
-from fathom.schemas.criterion import (
-    CriterionDecision,
-    CriterionSource,
-    CriterionVerdict,
-)
-from fathom.schemas.effect import ActionEffectStatus, EffectReading
+from fathom.schemas.criterion import CriterionDecision, CriterionSource, CriterionVerdict
 from fathom.schemas.observation import (
     ElementRole,
     ElementSource,
@@ -42,335 +21,107 @@ from fathom.schemas.observation import (
     PerceivedElement,
     ScreenObservation,
 )
-from fathom.schemas.reasoning import SubGoalCompletionSignal
-from fathom.schemas.results import AnalysisResult, PlanResult
+from fathom.schemas.requirement import CommandRequirement, PressRequirement
+from fathom.schemas.results import AnalysisResult, PlanContext, PlanResult
 from fathom.schemas.screens import ScreenHashBundle
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
-from fathom.schemas.validation import Validation
+from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import Success
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
+from tests.builders import SubGoalFixtures, SuccessFixtures
 
 
 class _StubCriterionChecker(CriterionObserver):
     """
-    Deterministic criterion checker returning a pre-staged decision per call.
+    Deterministic criterion observer returning a fixed decision and counting calls.
     """
 
-    def __init__(self, *, decisions: Tuple[CriterionDecision, ...]) -> None:
-        self.__decisions = list(decisions)
+    def __init__(self, *, decision: CriterionDecision) -> None:
+        self.__decision = decision
         self.calls: int = 0
 
     async def check(
         self,
         *,
         workflow_id: str,
-        sub_goal: SubGoal,
+        index: int,
+        requirement: object,
         observation: ScreenObservation,
     ) -> CriterionDecision:
         """
-        Return the next pre-staged decision, repeating the last one if exhausted.
+        Return the configured decision, counting each invocation.
         """
 
+        _ = (workflow_id, index, requirement, observation)
         self.calls += 1
-        index = min(self.calls - 1, len(self.__decisions) - 1)
-        return self.__decisions[index]
-
-
-class _StubReasoner:
-    """
-    Deterministic reasoner that yields a configured CompletionEvidence and signal.
-    """
-
-    def __init__(
-        self,
-        *,
-        evidence: CompletionEvidence,
-        signal: SubGoalCompletionSignal,
-    ) -> None:
-        self.__evidence = evidence
-        self.__signal = signal
-
-    def assess_completion(self, **_: object) -> CompletionEvidence:
-        """
-        Return the configured evidence regardless of inputs.
-        """
-
-        return self.__evidence
-
-    def analyze_subgoal_completion(self, **_: object) -> SubGoalCompletionSignal:
-        """
-        Return the configured legacy signal used by mark_current_sub_goal_complete.
-        """
-
-        return self.__signal
+        return self.__decision
 
 
 class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
     """
-    Pins :meth:`SubGoalEvaluator.evaluate` multi-signal decision matrix.
+    Pins SubGoalEvaluator against canonical Success: pre/post-dispatch evidence and advancement.
     """
 
-    @staticmethod
-    def __sub_goal(
-        *,
-        kind: SubGoalKind = SubGoalKind.ACTION,
-        directive: Optional[ActionType] = ActionType.TAP,
-        description: str = "Tap on Show results",
-        criterion: Optional[str] = "Show results visible on the screen.",
-        index: int = 0,
-    ) -> SubGoal:
+    __LOGIN = "tap the Login button"
+
+    def __agent_state(self, goals: List[SubGoal]) -> AgentState:
         """
-        Build a SubGoal with the requested kind and directive.
+        Build a real AgentState seeded with the given canonical sub-goals.
         """
 
-        return SubGoal(
-            index=index,
-            description=description,
-            directive=directive,
-            criterion=criterion,
-            kind=kind,
+        state = AgentState(
+            intent="test intent",
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
+        state.set_sub_goals(goals)
+        return state
 
     @staticmethod
-    def __evidence(
-        *,
-        asserted: bool,
-        dispatched: bool = True,
-        evolved: bool = True,
-        validation: bool = False,
-        criterion_observed: Optional[bool] = None,
-    ) -> CompletionEvidence:
+    def __context(state: AgentState) -> MagicMock:
         """
-        Build a CompletionEvidence with the requested signal truth table.
+        Wrap a real AgentState in a graph-context surface.
         """
 
-        criterion = (
-            CriterionEvidence(observed=criterion_observed)
-            if criterion_observed is not None
-            else None
+        context = MagicMock(name="GraphContext")
+        context.agent_state = state
+        context.workflow_id = "wf"
+        return context
+
+    def __evaluator(
+        self, *, state: AgentState, verdict: Optional[CriterionVerdict]
+    ) -> SubGoalEvaluator:
+        """
+        Build an evaluator whose observer returns the given verdict (or SATISFIED by default).
+        """
+
+        decision = CriterionDecision(
+            verdict=verdict if verdict is not None else CriterionVerdict.SATISFIED,
+            source=CriterionSource.SYMBOLIC,
+            confidence=0.95,
+            evidence=(),
+            notes=None,
         )
-        return CompletionEvidence(
-            claim=ClaimEvidence(asserted=asserted),
-            action=ActionEvidence(
-                dispatched=dispatched,
-                executed=dispatched,
-            ),
-            validation=ValidationEvidence(executed=validation),
-            screen=ScreenEvidence(evolved=evolved),
-            criterion=criterion,
+        return SubGoalEvaluator(
+            context=self.__context(state), criterion_observer=_StubCriterionChecker(decision=decision)
         )
 
     @staticmethod
-    def __progress() -> EffectReading:
-        """
-        A scoped-progress effect reading — the typed signal the advancement policy needs to advance.
-        """
-
-        return EffectReading(live=ActionEffectStatus.PROGRESS, trial=ActionEffectStatus.PROGRESS)
-
-    @staticmethod
-    def __signal(*, flagged_complete: bool = True) -> SubGoalCompletionSignal:
-        """
-        Build a minimal SubGoalCompletionSignal for storage post-advance.
-        """
-
-        return SubGoalCompletionSignal(
-            evidence="test",
-            llm_confidence=1.0,
-            keyword_match=False,
-            action_executed=True,
-            flagged_complete=flagged_complete,
-            rationale_verified=True,
-            trace_verified=False,
-            screen_verified=True,
-        )
-
-    @staticmethod
-    def __step_result(
-        *,
-        action_type: ActionType,
-        success: bool = True,
-        screen_changed: bool = True,
-    ) -> StepResult:
-        """
-        Build a StepResult with the planner-emitted action_type.
-        """
-
-        action = Action(
-            action_type=action_type,
-            target="t",
-            rationale="r",
-            confidence=1.0,
-        )
-        step = Step(action=action, step_number=0, screen_hash="pre")
-        return StepResult(
-            step=step,
-            success=success,
-            duration=10,
-            screen_changed=screen_changed,
-            pre_hash="pre",
-            post_hash="post" if screen_changed else "pre",
-        )
-
-    @staticmethod
-    def __store_step_result(*, success: bool = True) -> StepResult:
-        """
-        Build a successful STORE step result carrying a literal capture request.
-        """
-
-        action = Action(
-            action_type=ActionType.STORE,
-            rationale="capture",
-            capture=CaptureRequest(name="abc", subject="xyz", value="xyz"),
-        )
-        step = Step(action=action, step_number=0, screen_hash="pre")
-        return StepResult(
-            step=step,
-            success=success,
-            executed=success,
-            duration=1,
-            pre_hash="pre",
-            post_hash="pre",
-            screen_changed=False,
-        )
-
-    async def test_store_subgoal_advances_on_successful_capture(self) -> None:
-        """
-        A STORE sub-goal routes to the capture policy and advances when a successful capture exists.
-        """
-
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        context = self.__context(
-            sub_goal=self.__sub_goal(directive=ActionType.STORE),
-            evidence=self.__evidence(asserted=False),
-            signal=self.__signal(flagged_complete=True),
-        )
-        context.catalog = CommandCatalogProvider().build()
-        store = CaptureStore()
-        store.write(capture=Capture.succeeded(name="abc", value="xyz", step=0))
-        context.capture_store = store
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__store_step_result(),
-            accumulated=[],
-            observation=self.__observation(),
-        )
-
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        self.assertEqual(checker.calls, 0)
-
-    async def test_store_subgoal_retains_when_capture_missing(self) -> None:
-        """
-        A STORE sub-goal retains (no capture in the store) without invoking the legacy criterion/gate path.
-        """
-
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        context = self.__context(
-            sub_goal=self.__sub_goal(directive=ActionType.STORE),
-            evidence=self.__evidence(asserted=False),
-            signal=self.__signal(flagged_complete=False),
-        )
-        context.catalog = CommandCatalogProvider().build()
-        context.capture_store = CaptureStore()
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__store_step_result(),
-            accumulated=[],
-            observation=self.__observation(),
-        )
-
-        self.assertIsNone(result)
-        self.assertEqual(checker.calls, 0)
-
-    async def test_store_action_during_non_store_subgoal_does_not_advance_via_capture(self) -> None:
-        """
-        A STORE action under a non-STORE sub-goal must fall to the legacy gate, never the capture policy.
-        """
-
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        context = self.__context(
-            sub_goal=self.__sub_goal(directive=ActionType.TAP),
-            evidence=self.__evidence(asserted=False),
-            signal=self.__signal(flagged_complete=False),
-        )
-        context.catalog = CommandCatalogProvider().build()
-        store = CaptureStore()
-        store.write(capture=Capture.succeeded(name="abc", value="xyz", step=0))
-        context.capture_store = store
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__store_step_result(),
-            accumulated=[],
-            observation=self.__observation(),
-        )
-
-        self.assertIsNone(result)
-        self.assertEqual(checker.calls, 1)
-
-    async def test_store_subgoal_with_non_store_action_does_not_use_capture(self) -> None:
-        """
-        A STORE sub-goal evaluated against a non-STORE action still uses the capture contract.
-        """
-
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        context = self.__context(
-            sub_goal=self.__sub_goal(directive=ActionType.STORE),
-            evidence=self.__evidence(asserted=False),
-            signal=self.__signal(flagged_complete=False),
-        )
-        context.catalog = CommandCatalogProvider().build()
-        context.capture_store = CaptureStore()
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
-            accumulated=[],
-            observation=self.__observation(),
-        )
-
-        self.assertIsNone(result)
-        self.assertEqual(checker.calls, 0)
-
-    @staticmethod
-    def __plan_with_analysis(*, validation: Optional[Validation] = None) -> PlanResult:
+    def __plan() -> PlanResult:
         """
         Build a minimal PlanResult carrying a synthetic AnalysisResult.
         """
 
         analysis = AnalysisResult(
-            action=Action(
-                action_type=ActionType.TAP,
-                target="t",
-                rationale="r",
-                confidence=1.0,
-            ),
+            action=Action(action_type=ActionType.TAP, target="t", rationale="r", confidence=1.0),
             reasoning="r",
             screen_description="s",
-            validation=validation,
             metadata={"tool_args": {}},
         )
         return PlanResult(
             step=None,
             is_complete=False,
             reason="t",
-            metadata={PlanMetadataKey.ANALYSIS.value: analysis},
+            context=PlanContext(analysis=analysis),
         )
 
     @staticmethod
@@ -404,422 +155,305 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         )
 
     @staticmethod
-    def __decision(
+    def __tap(*, target: str) -> Action:
+        """
+        Build a TAP action grounded on the given human-facing target.
+        """
+
+        return Action(
+            action_type=ActionType.TAP,
+            target="element",
+            natural_language_target=target,
+            rationale="r",
+            confidence=1.0,
+        )
+
+    @classmethod
+    def __result(
+        cls,
         *,
-        verdict: CriterionVerdict,
-        source: CriterionSource = CriterionSource.SYMBOLIC,
-        confidence: float = 0.9,
-    ) -> CriterionDecision:
+        action: Optional[Action] = None,
+        requirement: Optional[CommandRequirement] = None,
+        executed: bool = True,
+        capture: Optional[Capture] = None,
+    ) -> StepResult:
         """
-        Build a CriterionDecision for stub responses.
+        Build a StepResult carrying an optional admitted requirement and capture.
         """
 
-        return CriterionDecision(
-            verdict=verdict,
-            source=source,
-            confidence=confidence,
-            evidence=(),
-            notes=None,
+        step = Step(
+            action=action if action is not None else cls.__tap(target="Login"),
+            step_number=0,
+            screen_hash="pre",
+            requirement=requirement,
+        )
+        return StepResult(
+            step=step,
+            success=True,
+            executed=executed,
+            capture=capture,
+            pre_hash="pre",
+            post_hash="post",
+            screen_changed=True,
+            duration=1,
         )
 
-    def __context(
-        self,
-        *,
-        sub_goal: SubGoal,
-        evidence: CompletionEvidence,
-        signal: SubGoalCompletionSignal,
-        has_more: bool = True,
-    ) -> MagicMock:
+    @classmethod
+    def __store_result(cls, *, capture_name: str, executed: bool = True) -> StepResult:
         """
-        Build a GraphContext mock surface with a deterministic reasoner stub.
+        Build a STORE StepResult whose committed capture uses the given name.
         """
 
-        context = MagicMock(name="GraphContext")
-        context.workflow_id = "run-test"
-        context.catalog = CommandCatalogProvider().build()
-        context.agent_state.get_current_sub_goal.return_value = sub_goal
-        context.agent_state.get_recent_effects.return_value = []
-        context.agent_state.has_sub_goals.return_value = True
-        context.agent_state.has_active_final_sub_goal.return_value = not has_more
-        context.agent_state.mark_current_sub_goal_complete.return_value = has_more
-        context.agent_state.subgoal_retain_streak = 0
-        context.reasoner = _StubReasoner(evidence=evidence, signal=signal)
-        return context
-
-    async def test_action_subgoal_advances_on_claim_with_progress_effect(
-        self,
-    ) -> None:
-        """
-        ACTION sub-goal with an asserted claim, a dispatched action and a scoped-progress
-        effect advances regardless of criterion observer verdict.
-        """
-
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNSATISFIED),),
+        action = Action(
+            action_type=ActionType.STORE,
+            target="element",
+            rationale="capture",
+            capture=CaptureRequest(name="price", subject="item price", value="9.99"),
         )
-        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
-        evaluator = SubGoalEvaluator(
-            context=context,
-            criterion_observer=checker,
+        step = Step(action=action, step_number=0, screen_hash="pre")
+        return StepResult(
+            step=step,
+            success=True,
+            executed=executed,
+            capture=Capture(name=capture_name, step=0, success=True, value="9.99"),
+            pre_hash="pre",
+            post_hash="pre",
+            screen_changed=False,
+            duration=1,
         )
+
+    def __two_goals(self, first: Success) -> List[SubGoal]:
+        """
+        Build a two-goal plan so an advancing first goal loops back to GROUND (not final VERIFY).
+        """
+
+        return [
+            SubGoalFixtures.make(index=0, description="first", success=first),
+            SubGoalFixtures.make(index=1, description="second"),
+        ]
+
+    # ── Observed success ──────────────────────────────────────────────────
+
+    async def test_observed_goal_advances_on_satisfied_verdict_post_dispatch(self) -> None:
+        """
+        An observed goal advances when its own observation is freshly satisfied after dispatch.
+        """
+
+        state = self.__agent_state(self.__two_goals(SuccessFixtures.observed(assertion="home")))
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
+            plan=self.__plan(),
+            step_result=self.__result(),
             accumulated=[],
-            reading=self.__progress(),
             observation=self.__observation(),
         )
 
-        self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        context.agent_state.reset_complete_deferrals.assert_called_once()
+        self.assertEqual(state.current_sub_goal_index, 1)
 
-    async def test_action_subgoal_advances_when_criterion_observer_unsatisfied(
-        self,
-    ) -> None:
+    async def test_pre_dispatch_observed_satisfaction_advances_via_probe(self) -> None:
         """
-        Criterion observer reporting UNSATISFIED must NOT veto a conclusive
-        ACTION sub-goal advancement.
+        An observed goal already satisfied on the settled screen advances before any dispatch.
         """
 
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True, criterion_observed=False)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNSATISFIED),),
-        )
-        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
-        evaluator = SubGoalEvaluator(
-            context=context,
-            criterion_observer=checker,
-        )
+        state = self.__agent_state(self.__two_goals(SuccessFixtures.observed(assertion="home")))
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+
+        result = await evaluator.probe(observation=self.__observation())
+
+        self.assertIs(result.advancement.kind, AdvanceKind.SATISFIED_PRIOR)
+        assert result.transition is not None
+        self.assertTrue(result.transition.get(IntentStateKey.SHOULD_RETRY))
+        self.assertEqual(state.current_sub_goal_index, 1)
+
+    async def test_observed_goal_retains_when_verdict_unsatisfied(self) -> None:
+        """
+        An observed goal retains when its observation is not satisfied.
+        """
+
+        state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNSATISFIED)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
-            accumulated=[],
-            reading=self.__progress(),
-            observation=self.__observation(),
-        )
-
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        context.agent_state.mark_current_sub_goal_complete.assert_called_once()
-
-    async def test_validation_subgoal_retains_on_claim_asserted_without_validate(
-        self,
-    ) -> None:
-        """
-        VALIDATION sub-goal cannot advance on ``claim.asserted`` alone.
-        """
-
-        sub_goal = self.__sub_goal(
-            kind=SubGoalKind.VALIDATION,
-            description="Validate Jars & Containers is visible",
-        )
-        evidence = self.__evidence(
-            asserted=True,
-            dispatched=False,
-            evolved=False,
-            validation=False,
-        )
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
-        evaluator = SubGoalEvaluator(
-            context=context,
-            criterion_observer=checker,
-        )
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.VALIDATE, screen_changed=False),
+            plan=self.__plan(),
+            step_result=self.__result(),
             accumulated=[],
             observation=self.__observation(),
         )
 
         self.assertIsNone(result)
-        context.agent_state.mark_current_sub_goal_complete.assert_not_called()
 
-    async def test_validation_subgoal_advances_on_validate_evidence(self) -> None:
-        """
-        VALIDATION sub-goal advances on concrete validate action evidence.
-        """
+    # ── Command success ───────────────────────────────────────────────────
 
-        sub_goal = self.__sub_goal(
-            kind=SubGoalKind.VALIDATION,
-            description="Validate Jars & Containers is visible",
-        )
-        evidence = self.__evidence(
-            asserted=True,
-            dispatched=True,
-            evolved=False,
-            validation=True,
-        )
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(
-                validation=Validation(subject="Jars & Containers", source=ValidationSource.GOAL),
+    def __command(self, *, postcondition_assertion: Optional[str] = None) -> Success:
+        return SuccessFixtures.command(
+            requirement=PressRequirement(operation=ActionType.TAP, target="Login"),
+            postcondition=(
+                SuccessFixtures.observation(postcondition_assertion)
+                if postcondition_assertion is not None
+                else None
             ),
-            step_result=self.__step_result(action_type=ActionType.VALIDATE, screen_changed=False),
+            quote="tap",
+            intent=self.__LOGIN,
+        )
+
+    async def test_command_goal_never_advances_pre_dispatch(self) -> None:
+        """
+        A command goal is never advanced before its command executes, even when probed.
+        """
+
+        state = self.__agent_state([SubGoalFixtures.make(success=self.__command())])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+
+        result = await evaluator.probe(observation=self.__observation())
+
+        self.assertIsNone(result.transition)
+        self.assertIs(result.advancement.kind, AdvanceKind.RETAIN)
+
+    async def test_command_goal_retains_on_preparatory_action(self) -> None:
+        """
+        A preparatory action carrying no admitted requirement cannot advance a command goal.
+        """
+
+        success = self.__command()
+        state = self.__agent_state([SubGoalFixtures.make(success=success)])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan(),
+            step_result=self.__result(action=self.__tap(target="Login"), requirement=None),
             accumulated=[],
             observation=self.__observation(),
         )
 
-        self.assertIsNotNone(result)
+        self.assertIsNone(result)
+
+    async def test_command_goal_advances_on_matching_execution(self) -> None:
+        """
+        A command goal advances when the admitted requirement matches the executed action.
+        """
+
+        success = self.__command()
+        state = self.__agent_state(self.__two_goals(success))
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan(),
+            step_result=self.__result(
+                action=self.__tap(target="Login"),
+                requirement=PressRequirement(operation=ActionType.TAP, target="Login"),
+            ),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
 
-    async def test_action_sub_goal_missing_screen_evolution_retains(self) -> None:
+    async def test_command_goal_with_wrong_postcondition_retains(self) -> None:
         """
-        Action sub-goal with claim+explained+dispatched but no screen change → RETAIN.
+        A command with a postcondition retains when the postcondition verdict is unsatisfied.
         """
 
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True, dispatched=True, evolved=False)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
+        success = self.__command(postcondition_assertion="home shown")
+        state = self.__agent_state([SubGoalFixtures.make(success=success)])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNSATISFIED)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP, screen_changed=False),
+            plan=self.__plan(),
+            step_result=self.__result(
+                action=self.__tap(target="Login"),
+                requirement=PressRequirement(operation=ActionType.TAP, target="Login"),
+            ),
             accumulated=[],
             observation=self.__observation(),
         )
 
         self.assertIsNone(result)
 
-    async def test_action_sub_goal_missing_claim_retains(self) -> None:
+    # ── Capture success ───────────────────────────────────────────────────
+
+    async def test_capture_goal_advances_on_matching_store(self) -> None:
         """
-        Action sub-goal without LLM completion claim → RETAIN.
+        A capture goal advances exactly once on a committed STORE matching the requested identity.
         """
 
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=False)
-        signal = self.__signal(flagged_complete=False)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
+        success = SuccessFixtures.capture(name="price", subject="item price")
+        state = self.__agent_state(self.__two_goals(success))
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNCLEAR)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
+            plan=self.__plan(),
+            step_result=self.__store_result(capture_name="price"),
             accumulated=[],
             observation=self.__observation(),
         )
 
-        self.assertIsNone(result)
-
-    async def test_final_sub_goal_advance_routes_to_verify_with_is_complete(self) -> None:
-        """
-        Final sub-goal ADVANCE → IS_COMPLETE + COMPLETION_REASON set.
-        """
-
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION, description="Done")
-        evidence = self.__evidence(asserted=True)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        context = self.__context(
-            sub_goal=sub_goal, evidence=evidence, signal=signal, has_more=False
-        )
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
-            accumulated=[],
-            reading=self.__progress(),
-            observation=self.__observation(),
-        )
-
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertEqual(
-            result.get(IntentStateKey.VERIFY_MODE),
-            VerifyMode.PENDING_FINAL_COMMIT.value,
-        )
-        self.assertFalse(result.get(IntentStateKey.SHOULD_RETRY))
-        self.assertIn("All sub-goals", str(result.get(CommonStateKey.COMPLETION_REASON)))
-        context.agent_state.mark_current_sub_goal_complete.assert_not_called()
-        context.agent_state.clear_verification_loop.assert_called_once()
-        context.agent_state.reset_complete_deferrals.assert_called_once()
-
-    async def test_non_final_cursor_reporting_no_remaining_subgoals_fails_fast(self) -> None:
-        """
-        Cursor accounting drift must not be masked as final verification.
-        """
-
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION, description="Done")
-        evidence = self.__evidence(asserted=True)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        context = self.__context(
-            sub_goal=sub_goal,
-            evidence=evidence,
-            signal=signal,
-            has_more=True,
-        )
-        context.agent_state.has_active_final_sub_goal.return_value = False
-        context.agent_state.mark_current_sub_goal_complete.return_value = False
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
-
-        with self.assertRaises(InvariantViolation):
-            await evaluator.evaluate(
-                plan=self.__plan_with_analysis(),
-                step_result=self.__step_result(action_type=ActionType.TAP),
-                accumulated=[],
-                reading=self.__progress(),
-                observation=self.__observation(),
-            )
-
-    async def test_step_failed_skips_evaluation(self) -> None:
-        """
-        Failed step → return None without invoking the gate.
-        """
-
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP, success=False),
-            accumulated=[],
-            observation=self.__observation(),
-        )
-
-        self.assertIsNone(result)
-        self.assertEqual(checker.calls, 0)
-
-    async def test_missing_observation_skips_criterion_observer_still_runs_gate(self) -> None:
-        """
-        No ScreenObservation → criterion observer is skipped; gate still adjudicates.
-        """
-
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=True)
-        signal = self.__signal(flagged_complete=True)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
-
-        result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
-            accumulated=[],
-            reading=self.__progress(),
-            observation=None,
-        )
-
-        self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        self.assertEqual(checker.calls, 0)
+        self.assertEqual(state.current_sub_goal_index, 1)
 
-    async def test_criterion_satisfied_alone_cannot_advance_action_sub_goal(self) -> None:
+    async def test_capture_identity_mismatch_retains(self) -> None:
         """
-        Criterion observer SATISFIED but no claim / dispatched / progress → RETAIN.
-        The criterion observer is additive; it cannot rescue a missing main signal.
+        A committed capture under a different name cannot advance the capture goal.
         """
 
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(
-            asserted=False,
-            dispatched=False,
-            evolved=False,
-            criterion_observed=True,
-        )
-        signal = self.__signal(flagged_complete=False)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.SATISFIED),),
-        )
-        evaluator = SubGoalEvaluator(
-            context=self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal),
-            criterion_observer=checker,
-        )
+        success = SuccessFixtures.capture(name="price", subject="item price")
+        state = self.__agent_state([SubGoalFixtures.make(success=success)])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNCLEAR)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP),
+            plan=self.__plan(),
+            step_result=self.__store_result(capture_name="other"),
             accumulated=[],
             observation=self.__observation(),
         )
 
         self.assertIsNone(result)
 
-    async def test_retain_backstop_exhausted_escalates_and_terminates(self) -> None:
+    async def test_capture_goal_retains_when_store_not_executed(self) -> None:
         """
-        Once the retain streak reaches the backstop limit, a would-be RETAIN escalates:
-        the run terminates as STUCK instead of looping forever.
+        A successful-looking capture with executed=False cannot advance the capture goal.
         """
 
-        sub_goal = self.__sub_goal(kind=SubGoalKind.ACTION)
-        evidence = self.__evidence(asserted=False, dispatched=True, evolved=False)
-        signal = self.__signal(flagged_complete=False)
-        checker = _StubCriterionChecker(
-            decisions=(self.__decision(verdict=CriterionVerdict.UNCLEAR),),
-        )
-        context = self.__context(sub_goal=sub_goal, evidence=evidence, signal=signal)
-        context.agent_state.subgoal_retain_streak = int(AdvanceThreshold.RETAIN_ESCALATION)
-        evaluator = SubGoalEvaluator(context=context, criterion_observer=checker)
+        success = SuccessFixtures.capture(name="price", subject="item price")
+        state = self.__agent_state([SubGoalFixtures.make(success=success)])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.UNCLEAR)
 
         result = await evaluator.evaluate(
-            plan=self.__plan_with_analysis(),
-            step_result=self.__step_result(action_type=ActionType.TAP, screen_changed=False),
+            plan=self.__plan(),
+            step_result=self.__store_result(capture_name="price", executed=False),
             accumulated=[],
             observation=self.__observation(),
         )
 
-        self.assertIsNotNone(result)
+        self.assertIsNone(result)
+
+    # ── Final goal handoff ────────────────────────────────────────────────
+
+    async def test_final_goal_routes_to_verify_without_commit(self) -> None:
+        """
+        Advancing the terminal goal routes to VERIFY for final adjudication rather than completing here.
+        """
+
+        state = self.__agent_state([SubGoalFixtures.make(success=SuccessFixtures.observed())])
+        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
+
+        result = await evaluator.evaluate(
+            plan=self.__plan(),
+            step_result=self.__result(),
+            accumulated=[],
+            observation=self.__observation(),
+        )
+
         assert result is not None
-        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
-        self.assertFalse(result.get(IntentStateKey.SHOULD_RETRY))
         self.assertEqual(
-            result.get(CommonStateKey.COMPLETION_REASON),
-            CompletionReason.STUCK.value,
+            result.get(IntentStateKey.VERIFY_MODE), VerifyMode.PENDING_FINAL_COMMIT.value
         )
-        context.agent_state.mark_complete.assert_called_once_with(
-            reason=CompletionReason.STUCK.value
-        )
+        self.assertTrue(result.get(CommonStateKey.IS_COMPLETE))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -9,14 +9,6 @@ from fathom.constants.turn.advancement import AdvanceKind
 from fathom.schemas.base.common import SealedModel
 
 
-class RetainHistory(SealedModel):
-    """
-    Consecutive same-task retention observed across prior turns.
-    """
-
-    consecutive: int = Field(ge=0, default=0, description="Unbroken RETAIN streak for the task.")
-
-
 class Advancement(SealedModel):
     """
     The advancement policy's structured decision for one turn.

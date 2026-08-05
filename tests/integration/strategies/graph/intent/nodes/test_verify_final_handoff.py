@@ -5,16 +5,16 @@ from types import SimpleNamespace
 from typing import Dict, List
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.builders import SubGoalFixtures
+
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.record import RecordNode
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
 
@@ -193,20 +193,6 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
     Replays the final-subgoal VERIFY rejection/acceptance handoff.
     """
 
-    @staticmethod
-    def __signal() -> SubGoalCompletionSignal:
-        """
-        Return a valid signal for seeding the first completed sub-goal.
-        """
-
-        return SubGoalCompletionSignal(
-            llm_confidence=1.0,
-            screen_verified=True,
-            action_executed=True,
-            flagged_complete=True,
-            rationale_verified=True,
-            evidence="seed first sub-goal",
-        )
 
     @staticmethod
     def __step_result(*, step_number: int) -> StepResult:
@@ -271,18 +257,14 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap on the current address or change address option"),
-                SubGoal(index=1, description="Type HSR Layout into the address search field"),
-                SubGoal(index=2, description="Tap HSR Layout from the search results"),
-                SubGoal(
-                    index=3, description="Tap the button to confirm or save the address change"
-                ),
+                SubGoalFixtures.make(index=0, description="Tap on the current address or change address option"),
+                SubGoalFixtures.make(index=1, description="Type HSR Layout into the address search field"),
+                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
+                SubGoalFixtures.make(index=3, description="Tap the button to confirm or save the address change"),
             ]
         )
         for _ in range(3):
-            agent_state.mark_current_sub_goal_complete(
-                completion_signal=VerifyFinalHandoffIntegrationTest.__signal()
-            )
+            agent_state.advance_current_sub_goal()
         return agent_state
 
     @staticmethod
@@ -334,11 +316,11 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap address selector"),
-                SubGoal(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=0, description="Tap address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
             ]
         )
-        agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+        agent_state.advance_current_sub_goal()
         llm = _SequenceLlm(
             contents=[
                 '{"is_complete": false, "reason": "Tap Yes, continue first"}',

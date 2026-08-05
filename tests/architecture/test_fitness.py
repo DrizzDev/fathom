@@ -34,8 +34,20 @@ class FitnessTest(unittest.TestCase):
         report = audit.report
         lines = [f"mode: {audit.mode.value}"]
         lines += [f"  NEW      {v.selector.path}:{v.line} {v.message}" for v in report.new]
-        lines += [f"  STALE    {r.reference} {r.selector.path} :: {r.selector.detail}" for r in report.stale]
-        lines += [f"  EXPIRED  {r.reference} {r.selector.path} :: {r.selector.detail}" for r in report.expired]
-        lines += [f"  DUPLICATE {r.reference} {r.selector.path} :: {r.selector.detail}" for r in report.duplicate]
-        lines += [f"  INVALID  {r.reference} {r.selector.path} :: {r.selector.detail}" for r in report.invalid]
+        lines += [
+            f"  STALE    {r.reference} {r.selector.path} :: {r.selector.detail}"
+            for r in report.stale
+        ]
+        lines += [
+            f"  EXPIRED  {r.reference} {r.selector.path} :: {r.selector.detail}"
+            for r in report.expired
+        ]
+        lines += [
+            f"  DUPLICATE {r.reference} {r.selector.path} :: {r.selector.detail}"
+            for r in report.duplicate
+        ]
+        lines += [
+            f"  INVALID  {r.reference} {r.selector.path} :: {r.selector.detail}"
+            for r in report.invalid
+        ]
         return "\n".join(lines)

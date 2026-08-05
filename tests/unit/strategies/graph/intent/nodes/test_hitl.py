@@ -15,6 +15,7 @@ from fathom.core.services.hitl import HITLService
 from fathom.interfaces.abort import AbortDetectorPort
 from fathom.schemas.abort import AbortDecision
 from fathom.schemas.actions import Action
+from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.hitl import Hitl
 from tests.builders.agent import AgentFixtures
@@ -784,3 +785,61 @@ class HitlNonAbortResponseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.directive_kinds, [DirectiveKind.FREE_FORM])
         self.assertEqual(context.cancel_calls, 0)
+
+
+class HitlAvailabilityTest(unittest.TestCase):
+    """
+    Pins that the bridge reports availability from the HITL service authority ask() uses, never agent_state.
+    """
+
+    @staticmethod
+    def __service(*, enabled: bool) -> HITLService:
+        """
+        Build a real HITL service whose only relevant state is its capability flag.
+        """
+
+        return HITLService(
+            signal=SimpleNamespace(),  # type: ignore[arg-type]
+            phase=SimpleNamespace(),  # type: ignore[arg-type]
+            telemetry=SimpleNamespace(),  # type: ignore[arg-type]
+            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=enabled)),
+        )
+
+    def test_available_follows_service_even_when_agent_state_disagrees(self) -> None:
+        """
+        A disabled service reports unavailable even if agent_state's capabilities claim otherwise.
+        """
+
+        context = SimpleNamespace(
+            hitl=self.__service(enabled=False),
+            agent_state=SimpleNamespace(
+                capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
+            ),
+        )
+        helper = Hitl(context=context, aborter=_StubAborter())  # type: ignore[arg-type]
+
+        self.assertFalse(helper.available())
+
+    def test_available_true_when_service_enabled(self) -> None:
+        """
+        An enabled service reports available.
+        """
+
+        helper = Hitl(
+            context=SimpleNamespace(hitl=self.__service(enabled=True)),  # type: ignore[arg-type]
+            aborter=_StubAborter(),
+        )
+
+        self.assertTrue(helper.available())
+
+    def test_available_false_without_a_hitl_service(self) -> None:
+        """
+        An absent HITL service is unavailable, never opening an intervention step.
+        """
+
+        helper = Hitl(
+            context=SimpleNamespace(hitl=object()),  # type: ignore[arg-type]
+            aborter=_StubAborter(),
+        )
+
+        self.assertFalse(helper.available())

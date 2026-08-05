@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,6 +25,7 @@ from fathom.constants.screen import (
     SSIM_CHANGED_SIGNAL_WEIGHT,
     XML_HASH_CHANGED_SIGNAL_WEIGHT,
     ZERO_HASH,
+    HierarchyProvenance,
 )
 from fathom.schemas.artifacts import StepArtifacts
 
@@ -398,4 +400,31 @@ class ScreenCapture(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional capture metadata"
+    )
+
+    @property
+    def identity(self) -> str:
+        """
+        Stable screen identity from the perceived visual hash, else the activity name.
+        """
+
+        if self.state is not None and self.state.visual_hash:
+            return self.state.visual_hash[:16]
+
+        return hashlib.md5(self.activity.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
+class HierarchySnapshot(BaseModel):
+    """
+    One perception snapshot with the provenance explaining any missing hierarchy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    image: bytes = Field(description="Captured screenshot bytes", repr=False)
+    hierarchy: Optional[str] = Field(
+        default=None, description="View hierarchy when a dump was attempted and returned content"
+    )
+    provenance: Optional[HierarchyProvenance] = Field(
+        default=None, description="Why the hierarchy is absent; None when a dump succeeded"
     )

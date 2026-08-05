@@ -12,21 +12,31 @@ from fathom.constants.state import (
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
-    PlanMetadataKey,
     VerifyMode,
 )
 from fathom.constants.tools import StateNamespace
+from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.actions import Action
+from fathom.schemas.advancement import Advancement
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.results import AnalysisResult, PlanResult, ToolErrorFeedback
+from fathom.schemas.results import (
+    AnalysisResult,
+    PlanContext,
+    PlanResult,
+    PlanTurn,
+    ToolErrorFeedback,
+)
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.tools import StateUpdate
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
+from fathom.strategies.graph.intent.nodes.completion import ProbeResult
 from tests.builders.agent import AgentFixtures
+from tests.builders.subgoals import SubGoalFixtures
+
+RETAIN_PROBE = ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
 
 
 class _Persistence:
@@ -58,6 +68,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=cancelled),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -184,7 +195,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=PlanResult(
+            return_value=PlanTurn(plan=PlanResult(
                 step=None,
                 is_complete=False,
                 should_retry=True,
@@ -196,7 +207,7 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
                         value="94",
                     ),
                 ),
-            )
+            ))
         )
         provider = self.__provider(agent_state=agent_state, planner=planner)
         node = AnalyzeNode(provider=provider)  # type: ignore[arg-type]
@@ -285,7 +296,7 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=SimpleNamespace(plan=SimpleNamespace(
                 action=None,
                 metrics=None,
                 rationale="",
@@ -294,9 +305,10 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
                 reasoning="",
                 ux_label="",
                 use_xml_grounding=True,
-            ),
+            ), events=()),
         )
         provider = SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -351,19 +363,20 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             intent="change the address to salaryse office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm SalarySe address")])
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=SimpleNamespace(plan=SimpleNamespace(
                 metrics=None,
                 step=None,
                 is_complete=True,
                 should_retry=False,
                 reason="Address appears selected",
-                metadata=None,
-            ),
+                context=PlanContext(),
+            ), events=()),
         )
         provider = SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -414,18 +427,18 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap address selector"),
-                SubGoal(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=0, description="Tap address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
             ]
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=SimpleNamespace(plan=SimpleNamespace(
                 metrics=None,
                 is_complete=True,
                 should_retry=False,
                 reason=CompletionReason.SUCCESS.value,
-                metadata=None,
+                context=PlanContext(),
                 step=Step(
                     action=Action(
                         action_type=ActionType.TAP,
@@ -435,9 +448,10 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                     step_number=0,
                     screen_hash="screen",
                 ),
-            ),
+            ), events=()),
         )
         provider = SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -489,16 +503,17 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(reason=reason):
                 planner = Mock()
                 planner.plan_step = AsyncMock(
-                    return_value=SimpleNamespace(
+                    return_value=SimpleNamespace(plan=SimpleNamespace(
                         metrics=None,
                         step=None,
                         is_complete=True,
                         should_retry=False,
                         reason=reason,
-                        metadata=None,
-                    ),
+                        context=PlanContext(),
+                    ), events=()),
                 )
                 provider = SimpleNamespace(
+                    completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
                     is_cancelled=AsyncMock(return_value=False),
                     persistence=_Persistence(),
                     hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -560,7 +575,7 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
 
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=SimpleNamespace(plan=SimpleNamespace(
                 metrics=None,
                 step=Step(
                     action=Action(
@@ -576,10 +591,11 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
                 is_complete=False,
                 should_retry=False,
                 reasoning="deliberating",
-                metadata={PlanMetadataKey.ANALYSIS.value: analysis},
-            ),
+                context=PlanContext(analysis=analysis),
+            ), events=()),
         )
         provider = SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             is_cancelled=AsyncMock(return_value=False),
@@ -635,17 +651,18 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=SimpleNamespace(plan=SimpleNamespace(
                 metrics=None,
                 step=None,
                 is_complete=False,
                 should_retry=False,
                 reason="",
                 reasoning="",
-                metadata=None,
-            ),
+                context=PlanContext(),
+            ), events=()),
         )
         provider = SimpleNamespace(
+            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),

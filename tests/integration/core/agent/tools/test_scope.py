@@ -8,7 +8,6 @@ from fathom.constants.tools import ToolName, TurnMode
 from fathom.core.agent.tools.registry import DEFAULT_TOOL_POLICIES
 from fathom.core.agent.tools.scope import ToolScope
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.subgoal import SubGoalKind
 from fathom.schemas.tools import ToolPolicyContext
 
 
@@ -37,8 +36,8 @@ class IntentCorpus:
 
 class ToolScopeCorpusReplayTest(unittest.TestCase):
     """
-    For every intent in the production corpus, the framework must produce the
-    expected tool sets for every sub-goal shape it could encounter.
+    Across the production intent corpus, the mode gate is intent-independent: an active goal keeps
+    base UI tactics without VERIFY-only tools; the final-verification phase exposes them.
     """
 
     __VERIFY_TOOLS: Final[FrozenSet[ToolName]] = frozenset(
@@ -46,21 +45,16 @@ class ToolScopeCorpusReplayTest(unittest.TestCase):
     )
 
     @classmethod
-    def __compute(cls, *, kind: SubGoalKind, hitl: bool) -> FrozenSet[ToolName]:
+    def __compute(cls, *, modes: FrozenSet[TurnMode], hitl: bool) -> FrozenSet[ToolName]:
         """
-        Reproduce the planner mapping and compute the per-turn tool set.
+        Compute the per-turn tool set for the given mode set and HITL capability.
         """
-
-        modes: set[TurnMode] = set()
-
-        if kind == SubGoalKind.VALIDATION:
-            modes.add(TurnMode.VERIFY)
 
         return (
             ToolScope(policies=DEFAULT_TOOL_POLICIES)
             .compute(
                 context=ToolPolicyContext(
-                    modes=frozenset(modes),
+                    modes=modes,
                     capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=hitl)),
                 ),
             )
@@ -72,68 +66,50 @@ class ToolScopeCorpusReplayTest(unittest.TestCase):
         The corpus file must be present and contain at least one intent.
         """
 
-        corpus = IntentCorpus.all_intents()
+        self.assertGreater(len(IntentCorpus.all_intents()), 0)
 
-        self.assertGreater(len(corpus), 0, "intent corpus is empty; rebuild from /logs and /debug")
-
-    def test_action_sub_goal_never_exposes_verification_tools(self) -> None:
+    def test_active_goal_never_exposes_verification_tools(self) -> None:
         """
-        For every corpus intent, an ACTION sub-goal turn must hide verification tools.
+        An active goal (empty mode set) hides verification tools for every corpus intent and HITL value.
         """
 
         failures: List[str] = []
-        corpus = IntentCorpus.all_intents()
-
-        for intent in corpus:
+        for intent in IntentCorpus.all_intents():
             for hitl in (False, True):
-                tools = self.__compute(kind=SubGoalKind.ACTION, hitl=hitl)
+                tools = self.__compute(modes=frozenset(), hitl=hitl)
                 if tools & self.__VERIFY_TOOLS:
                     failures.append(f"intent={intent!r} hitl={hitl} tools={sorted(tools)}")
 
-        self.assertFalse(
-            failures,
-            "ACTION sub-goal leaked verification tools:\n" + "\n".join(failures),
-        )
+        self.assertFalse(failures, "active goal leaked verification tools:\n" + "\n".join(failures))
 
-    def test_validation_sub_goal_always_exposes_verification_tools(self) -> None:
+    def test_final_verification_phase_exposes_verification_tools(self) -> None:
         """
-        For every corpus intent, a VALIDATION sub-goal turn must expose both verification tools.
+        The final-verification phase (VERIFY mode) exposes both verification tools for every intent.
         """
 
         failures: List[str] = []
-        corpus = IntentCorpus.all_intents()
-
-        for intent in corpus:
+        for intent in IntentCorpus.all_intents():
             for hitl in (False, True):
-                tools = self.__compute(kind=SubGoalKind.VALIDATION, hitl=hitl)
+                tools = self.__compute(modes=frozenset({TurnMode.VERIFY}), hitl=hitl)
                 missing = self.__VERIFY_TOOLS - tools
                 if missing:
                     failures.append(f"intent={intent!r} hitl={hitl} missing={sorted(missing)}")
 
-        self.assertFalse(
-            failures,
-            "VALIDATION sub-goal missed verification tools:\n" + "\n".join(failures),
-        )
+        self.assertFalse(failures, "final phase missed verification tools:\n" + "\n".join(failures))
 
     def test_execute_ui_is_always_present(self) -> None:
         """
-        Liveness — every (intent, sub-goal kind, hitl) combination must include EXECUTE_UI.
+        Liveness — every (intent, mode, hitl) combination must include EXECUTE_UI.
         """
 
         failures: List[str] = []
-        corpus = IntentCorpus.all_intents()
-
-        for intent in corpus:
-            for kind in (SubGoalKind.ACTION, SubGoalKind.VALIDATION):
+        for intent in IntentCorpus.all_intents():
+            for modes in (frozenset(), frozenset({TurnMode.VERIFY})):
                 for hitl in (False, True):
-                    tools = self.__compute(kind=kind, hitl=hitl)
-                    if ToolName.EXECUTE_UI not in tools:
-                        failures.append(f"intent={intent!r} kind={kind} hitl={hitl}")
+                    if ToolName.EXECUTE_UI not in self.__compute(modes=modes, hitl=hitl):
+                        failures.append(f"intent={intent!r} modes={modes} hitl={hitl}")
 
-        self.assertFalse(
-            failures,
-            "EXECUTE_UI invariant violated:\n" + "\n".join(failures),
-        )
+        self.assertFalse(failures, "EXECUTE_UI invariant violated:\n" + "\n".join(failures))
 
     def test_ask_user_tracks_hitl_capability(self) -> None:
         """
@@ -141,19 +117,14 @@ class ToolScopeCorpusReplayTest(unittest.TestCase):
         """
 
         failures: List[str] = []
-        corpus = IntentCorpus.all_intents()
-
-        for intent in corpus:
-            for kind in (SubGoalKind.ACTION, SubGoalKind.VALIDATION):
+        for intent in IntentCorpus.all_intents():
+            for modes in (frozenset(), frozenset({TurnMode.VERIFY})):
                 for hitl in (False, True):
-                    tools = self.__compute(kind=kind, hitl=hitl)
+                    tools = self.__compute(modes=modes, hitl=hitl)
                     if (ToolName.ASK_USER in tools) != hitl:
-                        failures.append(f"intent={intent!r} kind={kind} hitl={hitl}")
+                        failures.append(f"intent={intent!r} modes={modes} hitl={hitl}")
 
-        self.assertFalse(
-            failures,
-            "ASK_USER did not track HITL capability:\n" + "\n".join(failures),
-        )
+        self.assertFalse(failures, "ASK_USER did not track HITL capability:\n" + "\n".join(failures))
 
 
 if __name__ == "__main__":

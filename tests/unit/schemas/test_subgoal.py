@@ -3,51 +3,89 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fathom.constants.subgoal import (
-    DEFAULT_SUB_GOAL_MAX_STEPS,
-)
-from fathom.schemas.subgoal import (
-    SubGoal,
-    SubGoalStatus,
-)
+from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS
+from fathom.schemas.subgoal import GoalState, Progress, SubGoal, SubGoalStatus
+from tests.builders import SuccessFixtures
 
 
-class TestSubGoalBudget:
+class TestProgressBudget:
     """
-    Behavioural pins for the Phase 1C step-budget field.
+    Behavioural pins for mutable sub-goal progress: status, budget, and validated counters.
     """
-
-    def test_default_max_steps_uses_named_constant(self) -> None:
-        """
-        Constructing a sub-goal without a ``max_steps`` override
-        picks up the module-level default constant.
-        """
-
-        sub_goal = SubGoal(index=0, description="Open Swiggy app")
-        assert sub_goal.max_steps == DEFAULT_SUB_GOAL_MAX_STEPS
-
-    def test_max_steps_override_is_preserved(self) -> None:
-        """
-        Explicit ``max_steps`` values flow through the model unchanged.
-        """
-
-        sub_goal = SubGoal(index=0, description="x", max_steps=3)
-        assert sub_goal.max_steps == 3
-
-    def test_zero_max_steps_is_rejected(self) -> None:
-        """
-        ``max_steps`` is bounded ``ge=1`` — a zero budget would prevent
-        the agent from making any progress and must not validate.
-        """
-
-        with pytest.raises(ValidationError):
-            SubGoal(index=0, description="x", max_steps=0)
 
     def test_status_defaults_to_pending(self) -> None:
         """
-        Pin behaviour of the existing status field so the budget
-        change didn't accidentally shift the default.
+        A freshly constructed progress starts PENDING.
         """
 
-        sub_goal = SubGoal(index=0, description="x")
-        assert sub_goal.status == SubGoalStatus.PENDING
+        assert Progress().status == SubGoalStatus.PENDING
+
+    def test_default_limit_uses_named_constant(self) -> None:
+        """
+        Progress without an explicit limit picks up the module-level default budget.
+        """
+
+        assert Progress().limit == DEFAULT_SUB_GOAL_MAX_STEPS
+
+    def test_limit_override_is_preserved(self) -> None:
+        """
+        An explicit budget flows through unchanged.
+        """
+
+        assert Progress(limit=3).limit == 3
+
+    def test_zero_limit_is_rejected(self) -> None:
+        """
+        A zero budget would prevent any progress and must not validate.
+        """
+
+        with pytest.raises(ValidationError):
+            Progress(limit=0)
+
+    def test_negative_counter_assignment_is_rejected(self) -> None:
+        """
+        Assignment validation forbids a negative attempt counter after construction.
+        """
+
+        progress = Progress()
+        with pytest.raises(ValidationError):
+            progress.attempts = -1
+
+
+class TestSubGoalDefinition:
+    """
+    Pins the immutable sub-goal definition and its GoalState aggregate.
+    """
+
+    @staticmethod
+    def __goal() -> SubGoal:
+        return SubGoal(index=0, objective="Open Swiggy app", success=SuccessFixtures.observed())
+
+    def test_goal_is_immutable(self) -> None:
+        """
+        The sub-goal definition is frozen: its objective cannot be reassigned.
+        """
+
+        with pytest.raises(ValidationError):
+            self.__goal().objective = "mutated"  # type: ignore[misc]
+
+    def test_goal_state_exposes_definition(self) -> None:
+        """
+        GoalState surfaces the immutable definition and defaults progress to PENDING.
+        """
+
+        state = GoalState(goal=self.__goal())
+        assert state.index == 0
+        assert state.objective == "Open Swiggy app"
+        assert state.progress.status == SubGoalStatus.PENDING
+
+    def test_lifecycle_transitions_apply_to_progress(self) -> None:
+        """
+        Lifecycle transitions mutate progress while leaving the definition intact.
+        """
+
+        state = GoalState(goal=self.__goal())
+        state.mark_in_progress()
+        assert not state.is_complete()
+        state.mark_complete()
+        assert state.is_complete()

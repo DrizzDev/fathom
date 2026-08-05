@@ -39,6 +39,7 @@ class CompletionReason(StrEnum):
     RETRY_BUDGET_EXHAUSTED = "Planner retry budget exhausted"
     ACTION_BLOCKED = "Action blocked: repeated without progress"
     UNSATISFIABLE = "Unsatisfiable: criterion observed refuted"
+    DECOMPOSITION_FAILED = "Decomposition failed: no plan accepted"
 
 
 class VerifyMode(StrEnum):
@@ -61,6 +62,7 @@ TERMINAL_COMPLETION_REASONS: Final[Tuple[str, ...]] = (
     CompletionReason.UNSATISFIABLE.value,
     CompletionReason.ACTION_BLOCKED.value,
     CompletionReason.OPERATOR_ABORTED.value,
+    CompletionReason.DECOMPOSITION_FAILED.value,
     CompletionReason.INTERVENTION_REQUIRED.value,
     CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
 )
@@ -146,15 +148,6 @@ class IntentStateKey(StrEnum):
 
     # Post-action activity captured in EXECUTE, consumed in RECORD
     POST_ACTIVITY = "POST_ACTIVITY"
-
-
-class PlanMetadataKey(StrEnum):
-    """
-    Stable keys for fields the planner writes into PlanResult.metadata.
-    """
-
-    ANALYSIS = "analysis_result"
-    OBSERVATION = "observation"
 
 
 class ExplorationStateKey(StrEnum):

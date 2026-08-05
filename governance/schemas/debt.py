@@ -26,9 +26,12 @@ class DebtRecord(BaseModel):
     owner: str = Field(min_length=1, description="Team or person accountable for closing the debt.")
     ticket: str = Field(min_length=1, description="Tracking issue for the remediation.")
     reason: str = Field(min_length=1, description="Why the exception exists.")
-    expires: Optional[date] = Field(default=None, description="Date the exception must be closed by.")
+    expires: Optional[date] = Field(
+        default=None, description="Date the exception must be closed by."
+    )
     state: DebtState = Field(
-        default=DebtState.BASELINE, description="Governance state; APPROVED requires full ownership."
+        default=DebtState.BASELINE,
+        description="Governance state; APPROVED requires full ownership.",
     )
 
     def matches(self, *, violation: Violation) -> bool:
