@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.perception import VISION_IMAGE_MAX_DIMENSION, VISION_IMAGE_QUALITY
 from fathom.constants.tools import TurnMode
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
@@ -669,9 +670,13 @@ class VisionService:
         if manifest != "N/A":
             payload.append(f"Element Manifest: {manifest}")
 
-        # Image must be last for KV-cache efficiency
-        # Optimization: Reduce resolution (768px) and quality (70) to improve latency
-        optimized = ImageProcessor.optimize_for_vision(image_data=screen)
+        # Image must be last for KV-cache efficiency. Cap the longest edge high enough to preserve
+        # the pixel position that disambiguates near-identical controls; the downscale saves no tokens.
+        optimized = ImageProcessor.optimize_for_vision(
+            image_data=screen,
+            quality=VISION_IMAGE_QUALITY,
+            max_dimension=VISION_IMAGE_MAX_DIMENSION,
+        )
         payload.append(optimized)
 
         return payload
