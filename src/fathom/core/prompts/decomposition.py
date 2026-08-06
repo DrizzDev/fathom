@@ -137,13 +137,10 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '                TAP / LONG_PRESS -> {"operation": "tap", "target": "<element>"}\n'
             '                TYPE             -> {"operation": "type", "target": "<field>", '
             '"text": "<text>"}\n'
-            '                SCROLL           -> {"operation": "scroll", '
-            '"direction": "UP|DOWN|LEFT|RIGHT", "target": "<optional surface>"}\n'
             '                SWIPE            -> {"operation": "swipe", '
             '"direction": "UP|DOWN|LEFT|RIGHT", "target": "<optional surface>"}\n'
             '                WAIT             -> {"operation": "wait", "condition": "<awaited state>", '
             '"bound": <seconds>}\n'
-            '                BACK / HOME / HIDE_KEYBOARD -> {"operation": "back"}\n'
             "\n"
             "  capture  -> a 'store {value} as {name}' clause: save a visible value into a variable.\n"
             '              Shape: {"kind": "CAPTURE", "subject": "<what to capture>", '
@@ -153,6 +150,11 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "- Prefer 'observed' when success is defined by an outcome or state rather than a\n"
             "  specific gesture; an observed goal may take several device actions to satisfy.\n"
             "- Use 'command' only when the user named an exact primitive and you can cite the quote.\n"
+            "- Reaching, returning to, or leaving a screen is a DESTINATION, not a gesture: type it\n"
+            "  'observed'. The planner presses back/home itself; navigation is never a 'command'.\n"
+            "- Scrolling or swiping to reveal, find, or reach content is defined by the revealed\n"
+            "  STATE, not the gesture or its direction: type it 'observed'. The planner swipes\n"
+            "  whichever way reveals it. Use a 'swipe' command only when the gesture is itself the goal.\n"
             "- A store/capture clause is always its own 'capture' sub-goal; it never merges into the\n"
             "  follow-up action. If the user checks a precondition before storing, emit that\n"
             "  precondition as a separate 'observed' sub-goal immediately before the capture.\n"
@@ -186,10 +188,20 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             '      -> {"objective": "Go to cart and verify total amount",\n'
             '          "proposal": {"kind": "OBSERVED", "assertion": "the cart total is displayed"}}\n'
             "\n"
+            'GOOD: User says "come back to the home screen"\n'
+            '      -> {"objective": "come back to the home screen",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the home screen is '
+            'displayed"}}\n'
+            "\n"
             'GOOD: User says "Swipe up to reveal more results"\n'
             '      -> {"objective": "Swipe up to reveal more results",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "more results are '
+            'displayed"}}\n'
+            "\n"
+            'GOOD: User says "Swipe the notification away"\n'
+            '      -> {"objective": "Swipe the notification away",\n'
             '          "proposal": {"kind": "COMMAND", "requirement": {"operation": "swipe", '
-            '"direction": "UP"}, "quote": "Swipe up"}}\n'
+            '"direction": "LEFT"}, "quote": "Swipe the notification away"}}\n'
             "\n"
             'GOOD: User says "Capture the verification code as otp_code"\n'
             '      -> {"objective": "Capture the verification code as otp_code",\n'

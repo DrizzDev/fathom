@@ -9,7 +9,6 @@ from fathom.schemas.decomposition import DecomposedTask, DecompositionSchema
 from fathom.schemas.proposal import CaptureProposal, CommandProposal, ObservedProposal
 from fathom.schemas.requirement import (
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
 )
 
@@ -90,21 +89,11 @@ class DecomposedTaskProposalParsingTest(unittest.TestCase):
         assert isinstance(task.proposal, CommandProposal)
         self.assertIsInstance(task.proposal.requirement, PressRequirement)
 
-    def test_command_scroll_and_swipe_parse_with_uppercase_direction(self) -> None:
+    def test_command_swipe_parses_with_uppercase_direction(self) -> None:
         """
-        Scroll/swipe proposals with uppercase ``direction`` validate to the right requirement types.
+        A swipe proposal with uppercase ``direction`` validates to the swipe requirement type.
         """
 
-        scroll = DecomposedTask.model_validate(
-            {
-                "objective": "Scroll",
-                "proposal": {
-                    "kind": "COMMAND",
-                    "requirement": {"operation": "scroll", "direction": "DOWN"},
-                    "quote": "Scroll down",
-                },
-            }
-        )
         swipe = DecomposedTask.model_validate(
             {
                 "objective": "Swipe",
@@ -115,9 +104,7 @@ class DecomposedTaskProposalParsingTest(unittest.TestCase):
                 },
             }
         )
-        assert isinstance(scroll.proposal, CommandProposal)
         assert isinstance(swipe.proposal, CommandProposal)
-        self.assertIsInstance(scroll.proposal.requirement, ScrollRequirement)
         self.assertIsInstance(swipe.proposal.requirement, SwipeRequirement)
 
     def test_capture_proposal_parses(self) -> None:

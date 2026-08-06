@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, assert_never
 
-from fathom.constants import GESTURE_SCROLL_DIRECTION, ActionType
+from fathom.constants import ActionType
 from fathom.core.capability.gesture import GestureNormalizer
 from fathom.schemas.actions import Action
 from fathom.schemas.requirement import (
     CommandRequirement,
-    NavigationRequirement,
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     TypeRequirement,
     WaitRequirement,
@@ -43,40 +41,23 @@ class CommandMatcher:
         if isinstance(requirement, TypeRequirement):
             return action.action_type is ActionType.TYPE and action.text == requirement.text
 
-        if isinstance(requirement, ScrollRequirement):
-            return (
-                action.action_type is ActionType.SCROLL
-                and GESTURE_SCROLL_DIRECTION.get(action.action_type) == requirement.direction
-            )
-
         if isinstance(requirement, SwipeRequirement):
-            return self.__swipe(action=action) == requirement
+            canonical = self.__swipe(action=action)
+            return canonical is not None and canonical.direction == requirement.direction
 
         if isinstance(requirement, WaitRequirement):
             return (
                 action.action_type is ActionType.WAIT and action.wait_duration == requirement.bound
             )
 
-        return self.__navigation(action=action, requirement=requirement)
+        assert_never(requirement)
 
     def __swipe(self, *, action: Action) -> Optional[SwipeRequirement]:
         """
-        Canonicalize a legacy directional swipe action into a swipe requirement for comparison.
+        Canonicalize a directional swipe action to its finger direction; the free-text surface never gates.
         """
 
         try:
-            canonical = self.__gestures.canonical(
-                operation=action.action_type, target=action.surface
-            )
+            return self.__gestures.canonical(operation=action.action_type)
         except ValueError:
             return None
-
-        return canonical
-
-    @staticmethod
-    def __navigation(*, action: Action, requirement: NavigationRequirement) -> bool:
-        """
-        Return whether a navigation action exactly matches the requested operation.
-        """
-
-        return action.action_type is requirement.operation

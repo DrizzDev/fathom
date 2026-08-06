@@ -44,15 +44,38 @@ class AdvancementPolicy:
 
     def decide(self, *, success: Success, evidence: TurnEvidence) -> Advancement:
         """
-        Return the advancement decision for one turn; a stalled retain escalates.
+        Return the advancement decision for one turn; a stalled retain resolves on observed proof, else escalates.
         """
 
         decision = self.__adjudicate(success=success, evidence=evidence)
 
         if decision.kind is AdvanceKind.RETAIN and self.__stalled(evidence=evidence):
-            return self.__escalation()
+            return self.__resolve_stall(success=success, evidence=evidence)
 
         return decision
+
+    def __resolve_stall(self, *, success: Success, evidence: TurnEvidence) -> Advancement:
+        """
+        Close a stalled retain by advancing when the outcome is observably satisfied, else escalating for help.
+        """
+
+        if self.__satisfied_outcome(success=success, evidence=evidence):
+            return Advancement(kind=AdvanceKind.ADVANCE)
+
+        return self.__escalation()
+
+    def __satisfied_outcome(self, *, success: Success, evidence: TurnEvidence) -> bool:
+        """
+        Whether settled evidence confirms the outcome, independent of the dispatch a command named; capture never qualifies.
+        """
+
+        if not isinstance(success, CommandSuccess):
+            return False
+
+        if success.postcondition is not None:
+            return self.__confirms(evidence=evidence, observation=success.postcondition)
+
+        return self.__graded(evidence=evidence, outcome=CriterionVerdict.SATISFIED)
 
     def __adjudicate(self, *, success: Success, evidence: TurnEvidence) -> Advancement:
         """

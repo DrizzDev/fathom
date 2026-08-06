@@ -11,16 +11,14 @@ from fathom.constants.capability import (
     RetryMode,
 )
 from fathom.constants.command import CommandRejection
-from fathom.constants.flow import ScrollDirection, SwipeDirection
+from fathom.constants.flow import SwipeDirection
 from fathom.core.capability.binder import CommandBinder
 from fathom.core.capability.catalog import CommandCatalog, CommandCatalogProvider
 from fathom.schemas.capability import CommandProfile
 from fathom.schemas.proposal import BoundCommand, CommandProposal, RejectedCommand
 from fathom.schemas.requirement import (
     CommandRequirement,
-    NavigationRequirement,
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     TypeRequirement,
     WaitRequirement,
@@ -112,16 +110,12 @@ class CommandBinderTest(unittest.TestCase):
 
     def test_device_and_wait_requirements_are_admitted(self) -> None:
         """
-        Press, type, scroll, swipe, wait, and navigation requirements bind on admissible channels.
+        Press, type, swipe, and wait requirements bind on admissible channels.
         """
 
         cases = [
             (PressRequirement(operation=ActionType.TAP, target="Login"), "Tap Login"),
             (TypeRequirement(operation=ActionType.TYPE, target="Search", text="soap"), "Type soap"),
-            (
-                ScrollRequirement(operation=ActionType.SCROLL, direction=ScrollDirection.DOWN),
-                "Scroll down",
-            ),
             (
                 SwipeRequirement(operation=ActionType.SWIPE, direction=SwipeDirection.LEFT),
                 "Swipe left",
@@ -130,7 +124,6 @@ class CommandBinderTest(unittest.TestCase):
                 WaitRequirement(operation=ActionType.WAIT, condition="results load", bound=5.0),
                 "Wait for results",
             ),
-            (NavigationRequirement(operation=ActionType.BACK), "Go back"),
         ]
 
         for requirement, quote in cases:

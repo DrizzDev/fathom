@@ -5,12 +5,9 @@ import unittest
 from pydantic import TypeAdapter, ValidationError
 
 from fathom.constants import ActionType
-from fathom.constants.flow import ScrollDirection
 from fathom.schemas.requirement import (
     CommandRequirement,
-    NavigationRequirement,
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     TypeRequirement,
     WaitRequirement,
@@ -53,21 +50,13 @@ class CommandRequirementTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.__adapter.validate_python({"operation": "type", "target": "Search"})
 
-    def test_scroll_variant_requires_direction(self) -> None:
+    def test_scroll_is_not_a_command_requirement(self) -> None:
         """
-        Scroll deserializes with a typed content direction and an optional target.
-        """
-
-        requirement = self.__adapter.validate_python({"operation": "scroll", "direction": "DOWN"})
-        self.assertIsInstance(requirement, ScrollRequirement)
-
-    def test_scroll_without_direction_is_rejected(self) -> None:
-        """
-        A scroll requirement missing its direction is invalid.
+        Scrolling to reveal content is a state, not a success, so it is not an admissible command.
         """
 
         with self.assertRaises(ValidationError):
-            self.__adapter.validate_python({"operation": "scroll"})
+            self.__adapter.validate_python({"operation": "scroll", "direction": "DOWN"})
 
     def test_swipe_variant_requires_direction(self) -> None:
         """
@@ -95,14 +84,14 @@ class CommandRequirementTest(unittest.TestCase):
         )
         self.assertIsInstance(requirement, WaitRequirement)
 
-    def test_navigation_variant_carries_no_parameters(self) -> None:
+    def test_navigation_operations_are_not_command_requirements(self) -> None:
         """
-        Back, home, and hide-keyboard deserialize to navigation with no target or payload.
+        Back, home, and hide-keyboard name a destination, not a success, so they are not admissible commands.
         """
 
         for operation in ("back", "home", "hide_keyboard"):
-            requirement = self.__adapter.validate_python({"operation": operation})
-            self.assertIsInstance(requirement, NavigationRequirement)
+            with self.assertRaises(ValidationError):
+                self.__adapter.validate_python({"operation": operation})
 
     def test_tap_with_text_is_rejected(self) -> None:
         """
@@ -114,7 +103,7 @@ class CommandRequirementTest(unittest.TestCase):
 
     def test_back_with_target_is_rejected(self) -> None:
         """
-        A navigation requirement cannot carry a target.
+        Back is not a command requirement at all, with or without a target.
         """
 
         with self.assertRaises(ValidationError):
@@ -138,19 +127,10 @@ class CommandRequirementTest(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 self.__adapter.validate_python({"operation": operation.value})
 
-    def test_invalid_scroll_direction_is_rejected(self) -> None:
+    def test_invalid_swipe_direction_is_rejected(self) -> None:
         """
-        The scroll direction must be a typed content direction.
+        The swipe direction must be a typed finger direction.
         """
 
         with self.assertRaises(ValidationError):
-            self.__adapter.validate_python({"operation": "scroll", "direction": "sideways"})
-
-    def test_scroll_direction_is_the_typed_enum(self) -> None:
-        """
-        A valid scroll requirement exposes the direction as the typed enum.
-        """
-
-        requirement = ScrollRequirement(operation=ActionType.SCROLL, direction=ScrollDirection.UP)
-
-        self.assertEqual(requirement.direction, ScrollDirection.UP)
+            self.__adapter.validate_python({"operation": "swipe", "direction": "sideways"})

@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from fathom.constants import ActionType
 from fathom.constants.assessment import VisualVerdict
-from fathom.constants.flow import ScrollDirection, SwipeDirection
+from fathom.constants.flow import SwipeDirection
 from fathom.constants.success import CaptureNameProvenance
 from fathom.constants.turn.advancement import AdvanceKind, ObservationPhase
 from fathom.constants.turn.binding import BindingState
@@ -19,7 +19,6 @@ from fathom.schemas.criterion import CriterionVerdict, Verdict
 from fathom.schemas.requirement import (
     CommandRequirement,
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     TypeRequirement,
     WaitRequirement,
@@ -193,6 +192,19 @@ class TestCommandActionMatch:
         evidence = _turn(execution=_result(_step(action, requirement=requirement)))
         assert _decide(success, evidence) is AdvanceKind.RETAIN
 
+    def test_free_text_swipe_surface_does_not_gate(self) -> None:
+        # Surface descriptions are authored independently by decomposer and planner; only the finger
+        # direction gates a swipe. A differing free-text surface does not block a matching swipe.
+        requirement = SwipeRequirement(
+            operation=ActionType.SWIPE, direction=SwipeDirection.UP, target="results list"
+        )
+        success = _command_success(requirement)
+        action = _action(ActionType.SWIPE_UP, surface="other surface")
+        evidence = _turn(
+            execution=_result(_step(action, requirement=requirement)), binding=_bound()
+        )
+        assert _decide(success, evidence) is AdvanceKind.ADVANCE
+
     def test_wrong_wait_bound_retains(self) -> None:
         requirement = WaitRequirement(
             operation=ActionType.WAIT, condition="results appear", bound=5.0
@@ -202,18 +214,6 @@ class TestCommandActionMatch:
         evidence = _turn(execution=_result(_step(action, requirement=requirement)))
         assert _decide(success, evidence) is AdvanceKind.RETAIN
 
-    def test_free_text_scroll_surface_no_longer_gates(self) -> None:
-        # Scroll surface descriptions are independently authored; only operation and canonical
-        # direction gate. A differing free-text surface does not block a matching-direction scroll.
-        requirement = ScrollRequirement(
-            operation=ActionType.SCROLL, direction=ScrollDirection.DOWN, target="results list"
-        )
-        success = _command_success(requirement)
-        action = _action(ActionType.SCROLL, surface="other surface")
-        evidence = _turn(
-            execution=_result(_step(action, requirement=requirement)), binding=_bound()
-        )
-        assert _decide(success, evidence) is AdvanceKind.ADVANCE
 
     def test_missing_dispatch_retains(self) -> None:
         requirement = PressRequirement(operation=ActionType.TAP, target="Login")
@@ -378,6 +378,67 @@ class TestEscalation:
             stall=StallState.FLOWING,
         )
         assert _decide(self._observed(), evidence) is AdvanceKind.RETAIN
+
+
+class TestStallResolution:
+    """
+    A stalled command that cannot match its gesture advances when the outcome is observably satisfied
+    (run e25975d0: five satisfied@1.0 oracle reads discarded, run killed), and escalates otherwise. The
+    resolution reads real proof, never the stall alone, so it can never fabricate a pass; capture stays strict.
+    """
+
+    @staticmethod
+    def _pending_command(
+        *, postcondition: Optional[ObservationRequirement] = None
+    ) -> CommandSuccess:
+        return _command_success(
+            PressRequirement(operation=ActionType.TAP, target="Login"), postcondition=postcondition
+        )
+
+    @staticmethod
+    def _validating(*, verdict: Verdict, observation: Optional[ObservationRequirement] = None) -> TurnEvidence:
+        # A validate while a command is pending: the step carries no matching requirement, so the
+        # command adjudication retains; the oracle verdict is the only outcome signal available.
+        return _turn(
+            execution=_result(_step(_action(ActionType.VALIDATE))),
+            observation=observation,
+            verdict=verdict,
+            stall=StallState.STALLED,
+        )
+
+    def test_stalled_command_advances_on_satisfied_oracle(self) -> None:
+        evidence = self._validating(verdict=_satisfied())
+        assert _decide(self._pending_command(), evidence) is AdvanceKind.ADVANCE
+
+    def test_stalled_command_advances_on_satisfied_postcondition(self) -> None:
+        postcondition = _obs("the bill summary is displayed")
+        evidence = self._validating(verdict=_satisfied(), observation=postcondition)
+        assert (
+            _decide(self._pending_command(postcondition=postcondition), evidence)
+            is AdvanceKind.ADVANCE
+        )
+
+    def test_stalled_command_escalates_when_oracle_not_satisfied(self) -> None:
+        evidence = self._validating(verdict=_refuted())
+        assert _decide(self._pending_command(), evidence) is AdvanceKind.ESCALATE
+
+    def test_flowing_command_does_not_advance_on_satisfied_oracle(self) -> None:
+        # The safety net is a stall-time backstop: without a stall the command keeps its normal path.
+        evidence = _turn(
+            execution=_result(_step(_action(ActionType.VALIDATE))),
+            verdict=_satisfied(),
+            stall=StallState.FLOWING,
+        )
+        assert _decide(self._pending_command(), evidence) is AdvanceKind.RETAIN
+
+    def test_stalled_capture_never_advances_on_satisfied_oracle(self) -> None:
+        # A capture cannot be confirmed by observation: if nothing was stored, advancing would lose data.
+        success = CaptureSuccess(
+            target=CaptureIdentity(name="price", provenance=CaptureNameProvenance.USER),
+            subject="the item price",
+        )
+        evidence = self._validating(verdict=_satisfied())
+        assert _decide(success, evidence) is AdvanceKind.ESCALATE
 
 
 class TestVisualAuthorityIsolation:

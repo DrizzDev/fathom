@@ -5,10 +5,10 @@ import unittest
 from pydantic import TypeAdapter, ValidationError
 
 from fathom.constants import ActionType
-from fathom.constants.flow import ScrollDirection
+from fathom.constants.flow import SwipeDirection
 from fathom.constants.success import CaptureNameProvenance, SuccessKind
 from fathom.schemas.capture import CaptureIdentity
-from fathom.schemas.requirement import PressRequirement, ScrollRequirement
+from fathom.schemas.requirement import PressRequirement, SwipeRequirement
 from fathom.schemas.success import (
     CaptureSuccess,
     CommandSuccess,
@@ -63,10 +63,10 @@ class SuccessUnionTest(unittest.TestCase):
         """
 
         success = CommandSuccess(
-            requirement=ScrollRequirement(
-                operation=ActionType.SCROLL, direction=ScrollDirection.DOWN
+            requirement=SwipeRequirement(
+                operation=ActionType.SWIPE, direction=SwipeDirection.UP
             ),
-            source=SourceSpan(quote="Scroll to Settings", location=SourceLocation(start=0, end=18)),
+            source=SourceSpan(quote="Swipe up to Settings", location=SourceLocation(start=0, end=20)),
             postcondition=ObservationRequirement(assertion="Settings is visible"),
         )
 

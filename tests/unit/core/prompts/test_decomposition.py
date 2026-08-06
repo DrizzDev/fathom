@@ -53,7 +53,7 @@ class GeminiDecompositionPromptProposalTest(unittest.TestCase):
         lowercase ActionType enum values the structured-output schema constrains the model to.
         """
 
-        for operation in ("tap", "type", "scroll", "swipe", "wait", "back"):
+        for operation in ("tap", "type", "swipe", "wait"):
             with self.subTest(operation=operation):
                 self.assertIn(f'"operation": "{operation}"', self.__user_prompt)
 

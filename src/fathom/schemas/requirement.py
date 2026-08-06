@@ -32,7 +32,7 @@ class TypeRequirement(SealedModel):
 
 class ScrollRequirement(SealedModel):
     """
-    A user-requested scroll: content moves in the stated direction.
+    A scroll gesture; retained only for checkpoint back-compat, never an admissible success.
     """
 
     operation: Literal[ActionType.SCROLL] = Field(
@@ -81,7 +81,7 @@ class WaitRequirement(SealedModel):
 
 class NavigationRequirement(SealedModel):
     """
-    A user-requested device navigation with no target or payload.
+    A device navigation gesture; retained only for checkpoint back-compat, never an admissible success.
     """
 
     operation: Literal[ActionType.BACK, ActionType.HOME, ActionType.HIDE_KEYBOARD] = Field(
@@ -89,14 +89,14 @@ class NavigationRequirement(SealedModel):
     )
 
 
+# Navigation and scroll are excluded by design: their success is a resulting state (an
+# ``ObservedSuccess``), never the gesture. A gesture that is itself the goal uses ``SwipeRequirement``.
 CommandRequirement = Annotated[
     Union[
         PressRequirement,
         TypeRequirement,
-        ScrollRequirement,
         SwipeRequirement,
         WaitRequirement,
-        NavigationRequirement,
     ],
     Field(
         discriminator="operation",

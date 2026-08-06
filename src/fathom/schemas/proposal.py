@@ -8,9 +8,7 @@ from fathom.constants.command import CommandBindingOutcome, CommandRejection
 from fathom.constants.success import CaptureNameProvenance, SuccessKind
 from fathom.schemas.base.common import NonBlank, SealedModel
 from fathom.schemas.requirement import (
-    NavigationRequirement,
     PressRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     TypeRequirement,
     WaitRequirement,
@@ -21,14 +19,13 @@ from fathom.schemas.success import CommandSuccess, ObservationRequirement
 # Literal keeps parsing unambiguous, and this emits JSON-Schema ``anyOf`` (which Gemini's
 # structured-output schema accepts) rather than the ``oneOf``+``discriminator`` a discriminated
 # union produces (which Gemini rejects). The canonical discriminated ``CommandRequirement`` is
-# still used everywhere trusted (``Success``).
+# still used everywhere trusted (``Success``). Navigation and scroll are excluded here for the same
+# reason as in ``CommandRequirement``: their success is a state, so a mis-read fails closed.
 ProposalRequirement = Union[
     PressRequirement,
     TypeRequirement,
-    ScrollRequirement,
     SwipeRequirement,
     WaitRequirement,
-    NavigationRequirement,
 ]
 
 
