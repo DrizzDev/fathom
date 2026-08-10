@@ -163,13 +163,19 @@ class DocumentAiOcr(OcrPort):
         width/height it is given and stamps the result ``DEVICE_PIXEL``, so the
         dimensions passed in must be the image's own pixel size.
 
-        ``ScreenCapture.width``/``height`` are NOT that size — they carry the
-        platform's LOGICAL (point) dimensions, while ``image`` is at device-pixel
-        resolution. On a 2x retina device the two differ by exactly the scale
-        factor, so passing the logical pair produced bounds that were already in
-        logical space but labelled ``DEVICE_PIXEL``. ``to_logical_dispatch`` then
-        divided them by the scale a second time and every OCR-resolved tap landed
-        at 1/scale of its correct distance from the top-left origin.
+        ``ScreenCapture.width``/``height`` cannot be relied on for that: they hold
+        the dispatch-space dimensions, which are device pixels for some adapters
+        (the local iOS one reads them straight off the PNG header) and logical
+        points for others — ``ScreenObservation.__capture_dimension_system``
+        resolves which at runtime. Where they are logical, a 2x retina device makes
+        them exactly half the image, so passing that pair produced bounds already
+        in logical space but labelled ``DEVICE_PIXEL``. ``to_logical_dispatch``
+        then divided them by the scale a second time and every OCR-resolved tap
+        landed at 1/scale of its correct distance from the top-left origin.
+
+        Decoding the image sidesteps the ambiguity entirely: it yields the true
+        pixel size whichever convention the adapter used, and is a no-op for the
+        adapters that already report pixels.
 
         Live incident 2026-08-06 (MatrixCare, iPad Air 4, logical 1180x820 /
         pixel 2360x1640): OCR located "Add Visit" at (936, 631) — dead on the

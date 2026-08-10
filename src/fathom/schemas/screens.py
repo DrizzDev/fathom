@@ -349,17 +349,21 @@ class ScreenCapture(BaseModel):
     width: int = Field(
         gt=0,
         description=(
-            "Screen width in LOGICAL points (the tap-dispatch space), NOT the pixel "
-            "width of `image`. On a retina device the two differ by the scale factor "
-            "(e.g. 1180 logical vs 2360 pixels at 2x). Anything mapping coordinates "
-            "out of `image` must decode the PNG for its true size instead."
+            "Capture width in the dispatch coordinate space. Whether that space is "
+            "LOGICAL points or DEVICE PIXELS depends on the adapter: some populate it "
+            "from the PNG header (pixels), others from the platform's logical screen "
+            "size, and on a retina device those differ by the scale factor (e.g. 1180 "
+            "logical vs 2360 pixels at 2x). `ScreenObservation.__capture_dimension_system` "
+            "resolves which it is at runtime by comparing against the decoded image. "
+            "Do NOT assume this equals the pixel size of `image` — code mapping "
+            "coordinates out of `image` must decode the PNG for its true dimensions."
         ),
     )
     height: int = Field(
         gt=0,
         description=(
-            "Screen height in LOGICAL points. See `width` — this is not the pixel "
-            "height of `image`."
+            "Capture height in the dispatch coordinate space. See `width` — may be "
+            "logical points or device pixels depending on the adapter."
         ),
     )
 
@@ -367,8 +371,9 @@ class ScreenCapture(BaseModel):
     image: bytes = Field(
         repr=False,
         description=(
-            "Canonical raw PNG image bytes, at DEVICE-PIXEL resolution — this is "
-            "the space OCR/vision results come back in, not `width`/`height`."
+            "Canonical raw PNG image bytes, always at DEVICE-PIXEL resolution. This is "
+            "the space OCR/vision results come back in; decode it when the true pixel "
+            "size is needed rather than relying on `width`/`height`."
         ),
     )
     annotated_image: Optional[bytes] = Field(
