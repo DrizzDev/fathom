@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
-from typing import Any, Dict, List, Tuple
+from typing import Any, List, Tuple
 
 from PIL import Image
 

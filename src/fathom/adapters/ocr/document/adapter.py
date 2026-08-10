@@ -10,10 +10,10 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, cast
 
-from PIL import Image
 from google.api_core import exceptions as google_exceptions
 from google.api_core.client_options import ClientOptions
 from google.oauth2 import service_account
+from PIL import Image
 from tenacity import (
     before_sleep_log,
     retry,
