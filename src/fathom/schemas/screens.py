@@ -346,11 +346,31 @@ class ScreenCapture(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    width: int = Field(gt=0, description="Screen width in pixels")
-    height: int = Field(gt=0, description="Screen height in pixels")
+    width: int = Field(
+        gt=0,
+        description=(
+            "Screen width in LOGICAL points (the tap-dispatch space), NOT the pixel "
+            "width of `image`. On a retina device the two differ by the scale factor "
+            "(e.g. 1180 logical vs 2360 pixels at 2x). Anything mapping coordinates "
+            "out of `image` must decode the PNG for its true size instead."
+        ),
+    )
+    height: int = Field(
+        gt=0,
+        description=(
+            "Screen height in LOGICAL points. See `width` — this is not the pixel "
+            "height of `image`."
+        ),
+    )
 
     activity: str = Field(description="Current activity name")
-    image: bytes = Field(description="Canonical raw PNG image bytes", repr=False)
+    image: bytes = Field(
+        repr=False,
+        description=(
+            "Canonical raw PNG image bytes, at DEVICE-PIXEL resolution — this is "
+            "the space OCR/vision results come back in, not `width`/`height`."
+        ),
+    )
     annotated_image: Optional[bytes] = Field(
         repr=False,
         default=None,
