@@ -346,11 +346,36 @@ class ScreenCapture(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    width: int = Field(gt=0, description="Screen width in pixels")
-    height: int = Field(gt=0, description="Screen height in pixels")
+    width: int = Field(
+        gt=0,
+        description=(
+            "Capture width in the dispatch coordinate space. Whether that space is "
+            "LOGICAL points or DEVICE PIXELS depends on the adapter: some populate it "
+            "from the PNG header (pixels), others from the platform's logical screen "
+            "size, and on a retina device those differ by the scale factor (e.g. 1180 "
+            "logical vs 2360 pixels at 2x). `ScreenObservation.__capture_dimension_system` "
+            "resolves which it is at runtime by comparing against the decoded image. "
+            "Do NOT assume this equals the pixel size of `image` — code mapping "
+            "coordinates out of `image` must decode the PNG for its true dimensions."
+        ),
+    )
+    height: int = Field(
+        gt=0,
+        description=(
+            "Capture height in the dispatch coordinate space. See `width` — may be "
+            "logical points or device pixels depending on the adapter."
+        ),
+    )
 
     activity: str = Field(description="Current activity name")
-    image: bytes = Field(description="Canonical raw PNG image bytes", repr=False)
+    image: bytes = Field(
+        repr=False,
+        description=(
+            "Canonical raw PNG image bytes, always at DEVICE-PIXEL resolution. This is "
+            "the space OCR/vision results come back in; decode it when the true pixel "
+            "size is needed rather than relying on `width`/`height`."
+        ),
+    )
     annotated_image: Optional[bytes] = Field(
         repr=False,
         default=None,

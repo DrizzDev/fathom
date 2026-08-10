@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import io
 import json
 import logging
 import time
@@ -12,6 +13,7 @@ from typing import Any, Callable, Dict, Optional, cast
 from google.api_core import exceptions as google_exceptions
 from google.api_core.client_options import ClientOptions
 from google.oauth2 import service_account
+from PIL import Image
 from tenacity import (
     before_sleep_log,
     retry,
@@ -151,6 +153,59 @@ class DocumentAiOcr(OcrPort):
             duration=int((time.monotonic() - started) * 1000),
         )
 
+    @staticmethod
+    def __pixel_dimensions(*, capture: ScreenCapture) -> tuple[int, int]:
+        """
+        Recover the true pixel resolution of ``capture.image``.
+
+        Document AI is handed the raw PNG bytes and reports ``normalized_vertices``
+        in 0..1 of *that image*. :class:`DocumentAiMapper` multiplies those by the
+        width/height it is given and stamps the result ``DEVICE_PIXEL``, so the
+        dimensions passed in must be the image's own pixel size.
+
+        ``ScreenCapture.width``/``height`` cannot be relied on for that: they hold
+        the dispatch-space dimensions, which are device pixels for some adapters
+        (the local iOS one reads them straight off the PNG header) and logical
+        points for others — ``ScreenObservation.__capture_dimension_system``
+        resolves which at runtime. Where they are logical, a 2x retina device makes
+        them exactly half the image, so passing that pair produced bounds already
+        in logical space but labelled ``DEVICE_PIXEL``. ``to_logical_dispatch``
+        then divided them by the scale a second time and every OCR-resolved tap
+        landed at 1/scale of its correct distance from the top-left origin.
+
+        Decoding the image sidesteps the ambiguity entirely: it yields the true
+        pixel size whichever convention the adapter used, and is a no-op for the
+        adapters that already report pixels.
+
+        Live incident 2026-08-06 (MatrixCare, iPad Air 4, logical 1180x820 /
+        pixel 2360x1640): OCR located "Add Visit" at (936, 631) — dead on the
+        button — and the tap was dispatched to (485, 318), ~590px away in the
+        middle of the calendar. Reproduced identically in runs HXPBk, HawUV and
+        QgzIM. Near the origin the error is a few pixels and goes unnoticed;
+        at the bottom-right of the screen it misses entirely.
+
+        Mirrors ``ActionExecutor.__resolve_pixel_dimensions``. Falls back to the
+        logical pair when the bytes cannot be decoded — that is the pre-existing
+        behaviour and is correct for 1x devices, where the two are equal anyway.
+        """
+
+        if not capture.image:
+            return capture.width, capture.height
+
+        try:
+            with Image.open(io.BytesIO(capture.image)) as image:
+                return image.width, image.height
+        except Exception:
+            logger.exception(
+                "Failed to decode OCR capture dimensions; falling back to logical",
+                extra={
+                    "logical.width": capture.width,
+                    "logical.height": capture.height,
+                    "event": "ocr.pixel_dimensions.failed",
+                },
+            )
+            return capture.width, capture.height
+
     async def __extract_unsafe(
         self,
         *,
@@ -171,10 +226,11 @@ class DocumentAiOcr(OcrPort):
         )
 
         duration = int((time.monotonic() - started) * 1000)
+        pixel_width, pixel_height = self.__pixel_dimensions(capture=capture)
         tokens = self.__mapper.map_document(
             document=document,
-            width=capture.width,
-            height=capture.height,
+            width=pixel_width,
+            height=pixel_height,
         )
         raw_response = self.__serialize_document(document=document)
 
