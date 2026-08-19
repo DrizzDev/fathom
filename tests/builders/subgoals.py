@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.subgoal import GoalState, SubGoal
+from fathom.schemas.success import ObservationRequirement, ObservedSuccess, Success
 
 
 class SubGoalFixtures:
     """
-    Factory for :class:`SubGoal` instances used across planner / completion tests.
+    Factory for :class:`SubGoal` / :class:`GoalState` instances used across planner and completion tests.
     """
 
     @classmethod
@@ -16,19 +17,30 @@ class SubGoalFixtures:
         *,
         description: str = "active sub-goal",
         index: int = 0,
-        max_steps: int = 10,
-        kind: Optional[SubGoalKind] = None,
+        success: Optional[Success] = None,
     ) -> SubGoal:
         """
-        Build a :class:`SubGoal` with sane defaults; ``kind`` is only set when supplied.
+        Build a :class:`SubGoal`; success defaults to an observed objective mirroring the description.
         """
 
-        if kind is None:
-            return SubGoal(description=description, index=index, max_steps=max_steps)
-
         return SubGoal(
-            description=description,
             index=index,
-            max_steps=max_steps,
-            kind=kind,
+            objective=description,
+            success=success
+            if success is not None
+            else ObservedSuccess(observation=ObservationRequirement(assertion=description)),
         )
+
+    @classmethod
+    def state(
+        cls,
+        *,
+        description: str = "active sub-goal",
+        index: int = 0,
+        success: Optional[Success] = None,
+    ) -> GoalState:
+        """
+        Build a :class:`GoalState` wrapping a fresh sub-goal with default progress.
+        """
+
+        return GoalState(goal=cls.make(description=description, index=index, success=success))

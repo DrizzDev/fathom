@@ -13,7 +13,10 @@ if TYPE_CHECKING:
 from fathom.constants import SignalType
 from fathom.constants.events import FathomEvent
 from fathom.constants.state import CommonStateKey, IntentStateKey
+from fathom.constants.timing import TimingEvent, TimingPhase
 from fathom.core.exceptions import WorkflowCancelledError
+from fathom.core.services.timing import RunClock
+from fathom.schemas.timing import RunTimingSummary
 from fathom.strategies.graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
@@ -46,11 +49,23 @@ class GraphExecutor:
         self.__config: RunnableConfig = {"configurable": {"thread_id": self.__thread_id}}
 
         self.__active_tasks: Set[asyncio.Task[None]] = set()
+        clock = getattr(context, "clock", None)
+        self.__clock: Optional[RunClock] = clock if isinstance(clock, RunClock) else None
 
     async def run(self) -> None:
         """
         Executes the graph workflow with HITL support.
         Processes interrupts and resumes until completion or cancellation.
+        """
+
+        try:
+            await self.__run()
+        finally:
+            self.__emit_run_summary()
+
+    async def __run(self) -> None:
+        """
+        Drive the graph to completion, autonomously or under the interactive pause/resume loop.
         """
 
         # Validate state consistency before execution
@@ -79,6 +94,26 @@ class GraphExecutor:
             await self.__run_interactive()
         finally:
             await self.__cancel_active_tasks()
+
+    def __emit_run_summary(self) -> None:
+        """
+        Emit the per-run timing rollup at run end; a no-op when the run clock is unavailable.
+        """
+
+        if self.__clock is None:
+            return
+        summary = self.__clock.summary()
+        if not isinstance(summary, RunTimingSummary):
+            return
+        logger.info(
+            "Run timing summary",
+            extra={
+                "component": "runtime.executor",
+                "event": TimingEvent.SUMMARY.value,
+                "thread.id": self.__thread_id,
+                **summary.to_event(),
+            },
+        )
 
     async def __run_interactive(self) -> None:
         """
@@ -197,8 +232,10 @@ class GraphExecutor:
             logger.info("Executor: Cancellation signal received while waiting for pause")
             self.__context.cancel()
             stream_task.cancel()
+
             with contextlib.suppress(asyncio.CancelledError):
                 await stream_task
+
             await self.__context.telemetry.info(
                 "Stopping the run.", type=FathomEvent.WORKFLOW_CANCELLED
             )
@@ -249,6 +286,16 @@ class GraphExecutor:
 
         self.__active_tasks.clear()
 
+    def __human_wait(self) -> Any:
+        """
+        Return the human-wait timing bracket, or a no-op context when the run clock is unavailable.
+        """
+
+        if self.__clock is None:
+            return contextlib.nullcontext()
+
+        return self.__clock.phase(TimingPhase.WAIT)
+
     async def __handle_interrupt(self, source: str) -> None:
         """
         Processes HITL signals at graph breakpoints.
@@ -278,7 +325,8 @@ class GraphExecutor:
         await self.__guarded_phase_pause(reason=f"paused_at_{source}")
 
         try:
-            await self.__context.hitl.wait_for_resume()
+            with self.__human_wait():
+                await self.__context.hitl.wait_for_resume()
         except WorkflowCancelledError:
             logger.info("Executor: Received workflow cancellation while paused")
             self.__context.cancel()

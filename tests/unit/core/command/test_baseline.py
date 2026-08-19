@@ -18,14 +18,11 @@ from fathom.constants import (
 )
 from fathom.constants.recovery import AUTONOMOUS_RECOVERY_ACTIVE_KINDS
 from fathom.core.agent.opener import OpenerSignalPolicy
-from fathom.core.agent.reasoner import Reasoner
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.capture.store import CaptureStore
 from fathom.core.services.action import ActionExecutor
 from fathom.schemas.actions import Action
-from fathom.schemas.results import AnalysisResult
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
 from fathom.schemas.vision import ActionKind, ActionKindResolver, PastActionEntry
 
 
@@ -509,52 +506,6 @@ class PersistenceEventTypeBaselineTest(unittest.TestCase):
             event_type=StepEvent.VALIDATION,
         ).to_record()
         self.assertEqual(record.event_type, StepEvent.VALIDATION)
-
-
-class ReasonerDispatchedBaselineTest(unittest.TestCase):
-    """
-    Golden master for the reasoner's dispatched semantics: assess_completion marks an action
-    dispatched iff its type is in ACTION_EXECUTED_TYPES.
-    """
-
-    def __analysis(self, *, action_type: ActionType) -> AnalysisResult:
-        """
-        Build an analysis result emitting the given action type.
-        """
-
-        return AnalysisResult(
-            action=Action(action_type=action_type, target="t", rationale="r", confidence=1.0),
-            reasoning="r",
-            screen_description="s",
-            is_sub_goal_complete=False,
-            is_goal_complete=False,
-            subgoal_completion_reason=None,
-            metadata={"tool_args": {}},
-        )
-
-    def __sub_goal(self) -> SubGoal:
-        """
-        Build an action sub-goal fixture.
-        """
-
-        return SubGoal(index=0, description="d", kind=SubGoalKind.ACTION, directive=ActionType.TAP)
-
-    def test_dispatched_matches_action_executed_membership(self) -> None:
-        """
-        The reasoner derives dispatched from ACTION_EXECUTED_TYPES membership for every command.
-        """
-
-        reasoner = Reasoner(intent="characterization intent", opener_policy=OpenerSignalPolicy())
-
-        for action_type in ActionType:
-            with self.subTest(action_type=action_type):
-                evidence = reasoner.assess_completion(
-                    analysis=self.__analysis(action_type=action_type),
-                    sub_goal=self.__sub_goal(),
-                    screen_changed=False,
-                    execution_success=True,
-                )
-                self.assertEqual(evidence.action.dispatched, action_type in ACTION_EXECUTED_TYPES)
 
 
 class OpenerSignalPolicyBaselineTest(unittest.TestCase):

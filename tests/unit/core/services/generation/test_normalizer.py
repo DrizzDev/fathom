@@ -258,6 +258,9 @@ class RunTraceNormalizerTest(unittest.TestCase):
         The recorded launcher-launched Meesho run yields one Meesho launch and keeps system steps.
         """
 
+        if not self.__fixture_dir().exists():
+            self.skipTest("78a8dcbf run history fixture absent (fixtures are gitignored).")
+
         records: List[StepRecord] = []
         for path in sorted(self.__fixture_dir().glob("history__com.*.json")):
             payload = json.loads(path.read_text())

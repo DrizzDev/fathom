@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 
 from fathom.constants.runtime import DEFAULT_INERT_REPETITION_THRESHOLD
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.loop import LoopEvidence, LoopReason
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import LoopDetector
 from fathom.schemas.vision import ActionKind
 
 

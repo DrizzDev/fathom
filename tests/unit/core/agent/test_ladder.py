@@ -4,9 +4,9 @@ import unittest
 
 from fathom.constants import ActionType
 from fathom.core.agent.ladder import LoopActionLadder
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.capabilities import DeviceCapability
 from fathom.schemas.screens import ScreenState
-from fathom.schemas.state import LoopDetector
 
 
 class LoopActionLadderTest(unittest.TestCase):

@@ -22,7 +22,7 @@ from fathom.constants.screen import (
 from fathom.constants.state import CompletionReason
 from fathom.core.agent.ladder import LoopActionLadder
 from fathom.core.agent.recovery import RecoveryGate
-from fathom.core.runtime import ExecutionTaskAdapter, RuntimeState
+from fathom.core.runtime import RuntimeState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
@@ -30,7 +30,6 @@ from fathom.schemas.directive import OperatorDirective
 from fathom.schemas.effect import ActionEffect
 from fathom.schemas.loop import LoopEvidence
 from fathom.schemas.observation import LoopObservation, ScreenRelation
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.retries import RetryAttempt, RetryCounter, RetryLimits, RetryState
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.state import (
@@ -40,9 +39,9 @@ from fathom.schemas.state import (
     VerificationLoopState,
 )
 from fathom.schemas.steps import StepResult
-from fathom.schemas.subgoal import SubGoal, SubGoalStatus
+from fathom.schemas.subgoal import GoalState, SubGoal
 from fathom.schemas.supervision import BlockReason
-from fathom.schemas.tasks import ExecutionTaskState
+from fathom.schemas.target import TargetAuthority
 
 logger = getLogger(__name__)
 
@@ -70,6 +69,7 @@ class AgentState:
         loop_threshold: int = DEFAULT_LOOP_THRESHOLD,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         realignment_budget: int = DEFAULT_REALIGNMENT_BUDGET,
+        target_authority: Optional[TargetAuthority] = None,
     ) -> None:
         """
         Initialize agent state with the goal and live runtime capabilities.
@@ -79,6 +79,7 @@ class AgentState:
         self.__intent = intent
         self.__max_steps = max_steps
         self.__capabilities = capabilities
+        self.__target_authority = target_authority or TargetAuthority.unbound()
 
         self.__retries = self.__build_retry_state(
             max_steps=max_steps,
@@ -108,24 +109,15 @@ class AgentState:
         self.__last_action_type: Optional[str] = None
         self.__last_action_description: Optional[str] = None
 
-        # Legacy delta-context fields. Kept as immutable defaults so the
-        # checkpoint round-trip continues to accept payloads written by
-        # earlier versions of the schema. No code path mutates them
-        # any more — the signal lives in runtime effect history instead.
-        self.__low_delta_streak: int = 0
-        self.__last_delta_score: Optional[float] = None
-
         # Multi-turn rejection history for cross-iteration feedback loops.
         # Stores provider-neutral ConversationTurn objects so the next
         # vision.analyze() call can pass them as conversation_history.
         self.__rejection_history: Optional[List[ConversationTurn]] = None
 
-        # Sub-goal tracking for sequential intent execution.
-        # The runtime aggregate owns task progress; these fields remain as
-        # compatibility shims while existing consumers migrate to runtime.tasks.
-        self.__sub_goals: List[SubGoal] = []
+        # Sub-goal tracking for sequential intent execution. Each GoalState is
+        # the sole authority for its goal definition and mutable progress.
+        self.__sub_goals: List[GoalState] = []
         self.__current_sub_goal_index: int = 0
-        self.__sub_goal_action_count: int = 0
         self.__sub_goal_start_screen: Optional[str] = None
 
         # Counts how many consecutive ANALYZE turns produced
@@ -253,7 +245,7 @@ class AgentState:
 
         current = self.get_current_sub_goal()
         if current is not None:
-            current.deferral_count += 1
+            current.record_deferral()
 
     def clear_deferrals(self) -> None:
         """
@@ -264,16 +256,8 @@ class AgentState:
         """
 
         current = self.get_current_sub_goal()
-        if current is not None and current.deferral_count != 0:
-            current.deferral_count = 0
-
-    @property
-    def last_delta_score(self) -> Optional[float]:
-        """
-        Most recent post-action screen-change magnitude in [0.0, 1.0].
-        """
-
-        return self.__last_delta_score
+        if current is not None:
+            current.clear_deferrals()
 
     def bump_realignment_budget(self) -> None:
         """
@@ -716,6 +700,14 @@ class AgentState:
         self.__consecutive_complete_deferrals = 0
 
     @property
+    def target_authority(self) -> TargetAuthority:
+        """
+        Authoritative target application for the run; unbound when none was requested.
+        """
+
+        return self.__target_authority
+
+    @property
     def verification_loop(self) -> Optional[VerificationLoopState]:
         """
         Current same-screen verifier-rejection streak, when one is active.
@@ -763,12 +755,8 @@ class AgentState:
             sub_goals: List of sequential sub-goals to execute.
         """
 
-        self.__sub_goals = [goal.model_copy(deep=True) for goal in sub_goals]
+        self.__sub_goals = [GoalState(goal=goal) for goal in sub_goals]
         self.__current_sub_goal_index = 0
-
-        self.__runtime.tasks.load(
-            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
-        )
 
         if self.__sub_goals:
             self.__sub_goals[0].mark_in_progress()
@@ -776,13 +764,12 @@ class AgentState:
             if self.__runtime.screen.current:
                 self.__sub_goal_start_screen = self.__runtime.screen.current.visual_hash
 
-            self.__sub_goal_action_count = 0
             logger.info(
                 f"[AgentState] Initialized with {len(self.__sub_goals)} sub-goals. "
-                f"Starting with: {self.__sub_goals[0].description}"
+                f"Starting with: {self.__sub_goals[0].objective}"
             )
 
-    def get_current_sub_goal(self) -> Optional[SubGoal]:
+    def get_current_sub_goal(self) -> Optional[GoalState]:
         """
         Get the currently active sub-goal.
 
@@ -821,7 +808,7 @@ class AgentState:
                 logger.info(f"[AgentState] Sub-goal index restored to {clamped_index}")
 
     @property
-    def sub_goal_list(self) -> List[SubGoal]:
+    def sub_goal_list(self) -> List[GoalState]:
         """
         List of all sub-goals.
         """
@@ -836,43 +823,19 @@ class AgentState:
 
         return self.__current_sub_goal_index
 
-    def mark_current_sub_goal_complete(
-        self,
-        completion_signal: SubGoalCompletionSignal,
-    ) -> bool:
+    def advance_current_sub_goal(self) -> bool:
         """
-        Mark the current sub-goal as complete with multi-signal verification.
+        Mark the active sub-goal complete and advance the cursor; return whether a next sub-goal exists.
 
-        Args:
-            completion_signal: Multi-signal verification data
-
-        Returns:
-            True if advanced to next sub-goal, False if all complete.
+        Completion is adjudicated exclusively by AdvancementPolicy upstream; this method
+        only applies the accepted transition to the owning GoalState.
         """
 
         current = self.get_current_sub_goal()
         if not current:
             return False
 
-        # NOTE: Completion gating happens in planner with two-signal policy (llm + rationale).
-        # This method just records the signals and advances. Trace verification is disabled
-        # to prevent false positives from screen changes unrelated to sub-goal completion.
-        updated_signal = SubGoalCompletionSignal(
-            trace_verified=False,
-            evidence=completion_signal.evidence,
-            keyword_match=completion_signal.keyword_match,
-            llm_confidence=completion_signal.llm_confidence,
-            action_executed=completion_signal.action_executed,
-            flagged_complete=completion_signal.flagged_complete,
-            rationale_verified=completion_signal.rationale_verified,
-        )
-
-        # Mark complete with all signals
-        current.mark_complete(
-            trace_verified=updated_signal.trace_verified,
-            flagged_complete=updated_signal.flagged_complete,
-            rationale_verified=updated_signal.rationale_verified,
-        )
+        current.mark_complete()
 
         # Sub-goal advanced -> any in-flight complete-deferral streak is now
         # stale; the next planner verdict starts from a clean slate.
@@ -884,38 +847,33 @@ class AgentState:
                 "component": "agent_state",
                 "event": "subgoal_complete",
                 "sub_goal_index": current.index,
-                "evidence": updated_signal.evidence,
-                "sub_goal_description": current.description[:80],
-                "flagged_complete": updated_signal.flagged_complete,
-                "rationale_verified": updated_signal.rationale_verified,
-                "action_executed": updated_signal.action_executed,
-                "screen_verified": updated_signal.screen_verified,
-                "trace_verified": updated_signal.trace_verified,
-                "signal.count": updated_signal.count_signals(),
+                "sub_goal_objective": current.objective[:80],
             },
         )
 
         # Advance to next sub-goal
         self.__current_sub_goal_index += 1
-        self.__runtime.tasks.mark(state=ExecutionTaskState.SUCCEEDED)
-        self.__runtime.tasks.advance()
+
+        # A verified sub-goal completion is semantic progress: segment the loop
+        # detector's screen evidence so a completed sub-goal's screens cannot
+        # prove the next sub-goal (often adjudicated on the same settled screen,
+        # e.g. TAP -> VALIDATE -> STORE) is looping. Action history is preserved.
+        self.__runtime.screen.detector.advance()
 
         if self.__current_sub_goal_index < len(self.__sub_goals):
             next_goal = self.__sub_goals[self.__current_sub_goal_index]
             next_goal.mark_in_progress()
 
-            # Reset per-sub-goal counters on advancement.
             if self.__runtime.screen.current:
                 self.__sub_goal_start_screen = self.__runtime.screen.current.visual_hash
 
-            self.__sub_goal_action_count = 0
             logger.info(
-                f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.description}"
+                f"[AgentState] Advanced to sub-goal {next_goal.index}: {next_goal.objective}"
             )
             return True
-        else:
-            logger.info("[AgentState] All sub-goals complete")
-            return False
+
+        logger.info("[AgentState] All sub-goals complete")
+        return False
 
     def reopen_last_completed_sub_goal(self) -> bool:
         """
@@ -936,20 +894,10 @@ class AgentState:
         if not candidate.is_complete():
             return False
 
-        candidate.status = SubGoalStatus.IN_PROGRESS
-        candidate.flagged_complete = False
-        candidate.trace_verified = False
-        candidate.rationale_verified = False
-        candidate.completion_verified = False
+        candidate.mark_in_progress()
         self.__current_sub_goal_index = last_index
         self.__is_complete = False
         self.__completion_reason = None
-
-        self.__runtime.tasks.load(
-            tasks=ExecutionTaskAdapter().from_sub_goals(sub_goals=self.__sub_goals),
-        )
-        for _ in range(self.__current_sub_goal_index):
-            self.__runtime.tasks.advance()
 
         logger.info(
             "[AgentState] Reopened last completed sub-goal after verifier rejection",
@@ -957,7 +905,7 @@ class AgentState:
                 "component": "agent_state",
                 "event": "subgoal_reopened",
                 "sub_goal_index": candidate.index,
-                "sub_goal_description": candidate.description[:80],
+                "sub_goal_objective": candidate.objective[:80],
             },
         )
         return True
@@ -968,8 +916,9 @@ class AgentState:
         Call this from planner after executing each action.
         """
 
-        self.__sub_goal_action_count += 1
-        self.__runtime.tasks.record_attempt()
+        current = self.get_current_sub_goal()
+        if current is not None:
+            current.record_attempt()
 
     @property
     def current_sub_goal_action_count(self) -> int:
@@ -978,13 +927,13 @@ class AgentState:
         Reset to zero on sub-goal advance.
         """
 
-        return self.__sub_goal_action_count
+        current = self.get_current_sub_goal()
+        return current.progress.attempts if current is not None else 0
 
     @property
     def current_sub_goal_over_budget(self) -> bool:
         """
-        Whether the active sub-goal has consumed at least
-        :attr:`SubGoal.max_steps` actions without advancing.
+        Whether the active sub-goal has consumed its device-action budget without advancing.
 
         Returns ``False`` when there is no active sub-goal (between
         runs, after completion). The RECORD node uses this property to
@@ -995,7 +944,7 @@ class AgentState:
         if current is None:
             return False
 
-        return self.__sub_goal_action_count >= current.max_steps
+        return current.over_budget
 
     def all_sub_goals_complete(self) -> bool:
         """
@@ -1023,7 +972,7 @@ class AgentState:
 
         return (self.__current_sub_goal_index, len(self.__sub_goals))
 
-    def get_all_sub_goals(self) -> List[SubGoal]:
+    def get_all_sub_goals(self) -> List[GoalState]:
         """
         Get all sub-goals.
 
@@ -1434,13 +1383,11 @@ class AgentState:
             "completion_reason": self.__completion_reason,
             "realignment_budget": self.__runtime.realignment.budget,
             "realignment_state": self.__runtime.realignment.to_state(),
-            "last_delta_score": self.__last_delta_score,
-            "low_delta_streak": self.__low_delta_streak,
             "seen_screens": [screen.model_dump() for screen in self.__runtime.screen.seen],
             "sub_goals": [goal.model_dump(mode="json") for goal in self.__sub_goals],
             "current_sub_goal_index": self.__current_sub_goal_index,
-            "sub_goal_action_count": self.__sub_goal_action_count,
             "consecutive_complete_deferrals": self.__consecutive_complete_deferrals,
+            "target_authority": self.__target_authority.model_dump(mode="json"),
             "verification_loop": (
                 self.__verification_loop.model_dump(mode="json")
                 if self.__verification_loop is not None
@@ -1473,15 +1420,13 @@ class AgentState:
         completion_reason: Optional[str],
         seen_screens: List[Dict[str, Any]],
         *,
-        low_delta_streak: int = 0,
         realignment_count: int = 0,
         current_sub_goal_index: int = 0,
-        last_delta_score: Optional[float] = None,
         sub_goals: Optional[List[Dict[str, Any]]] = None,
         loop_detector_state: Optional[Dict[str, Any]] = None,
         recent_effects: Optional[List[Dict[str, Any]]] = None,
-        sub_goal_action_count: int = 0,
         consecutive_complete_deferrals: int = 0,
+        target_authority: Optional[TargetAuthority] = None,
         verification_loop: Optional[VerificationLoopState] = None,
         realignment_state: Optional[Dict[str, Any]] = None,
         last_action_type: Optional[str] = None,
@@ -1497,6 +1442,7 @@ class AgentState:
         self.__is_complete = is_complete
         self.__completion_reason = completion_reason
         self.__consecutive_complete_deferrals = max(0, consecutive_complete_deferrals)
+        self.__target_authority = target_authority or TargetAuthority.unbound()
         self.__verification_loop = verification_loop
 
         if retries is not None:
@@ -1511,10 +1457,6 @@ class AgentState:
             for _ in range(max(0, realignment_count - self.__runtime.realignment.count)):
                 self.__runtime.realignment.record()
 
-        self.__last_delta_score = last_delta_score
-        self.__low_delta_streak = max(0, low_delta_streak)
-        self.__sub_goal_action_count = max(0, sub_goal_action_count)
-
         self.__runtime.screen.load_seen(
             screens=[ScreenState(**data) for data in seen_screens],
         )
@@ -1523,7 +1465,7 @@ class AgentState:
 
         if sub_goals:
             for goal in sub_goals:
-                self.__sub_goals.append(SubGoal.model_validate(goal))
+                self.__sub_goals.append(GoalState.model_validate(goal))
 
         if self.__sub_goals:
             self.__current_sub_goal_index = min(
@@ -1531,7 +1473,7 @@ class AgentState:
             )
             if self.__current_sub_goal_index < len(self.__sub_goals):
                 current = self.__sub_goals[self.__current_sub_goal_index]
-                if current.status == SubGoalStatus.PENDING:
+                if current.is_pending():
                     current.mark_in_progress()
         else:
             self.__current_sub_goal_index = 0
@@ -1590,16 +1532,8 @@ class AgentState:
 
         is_complete = bool(data.get("is_complete", False))
         realignment_count = int(cast("int", data.get("realignment_count", 0)))
-        low_delta_streak = int(cast("int", data.get("low_delta_streak", 0)))
-
         reason_value = data.get("completion_reason")
         completion_reason = str(reason_value) if reason_value else None
-        last_delta_raw = data.get("last_delta_score")
-        last_delta_score = (
-            float(cast("float", last_delta_raw))
-            if isinstance(last_delta_raw, (int, float))
-            else None
-        )
 
         seen_screens: List[Dict[str, Any]] = []
         screens_value = data.get("seen_screens")
@@ -1619,18 +1553,18 @@ class AgentState:
             else 0
         )
 
-        sub_goal_action_count_raw = data.get("sub_goal_action_count", 0)
-        sub_goal_action_count = (
-            int(cast("int", sub_goal_action_count_raw))
-            if isinstance(sub_goal_action_count_raw, (int, float))
-            else 0
-        )
-
         consecutive_complete_deferrals_raw = data.get("consecutive_complete_deferrals", 0)
         consecutive_complete_deferrals = (
             int(cast("int", consecutive_complete_deferrals_raw))
             if isinstance(consecutive_complete_deferrals_raw, (int, float))
             else 0
+        )
+
+        target_authority_raw = data.get("target_authority")
+        target_authority = (
+            TargetAuthority.model_validate(target_authority_raw)
+            if isinstance(target_authority_raw, dict)
+            else TargetAuthority.unbound()
         )
 
         verification_loop = None
@@ -1676,16 +1610,14 @@ class AgentState:
             step_count=step_count,
             is_complete=is_complete,
             seen_screens=seen_screens,
-            low_delta_streak=low_delta_streak,
-            last_delta_score=last_delta_score,
             completion_reason=completion_reason,
             realignment_count=realignment_count,
             realignment_state=realignment_state,
             current_sub_goal_index=current_sub_goal_index,
             loop_detector_state=loop_detector_state,
             recent_effects=recent_effects,
-            sub_goal_action_count=sub_goal_action_count,
             consecutive_complete_deferrals=consecutive_complete_deferrals,
+            target_authority=target_authority,
             verification_loop=verification_loop,
             last_action_type=last_action_type,
             last_action_description=last_action_description,

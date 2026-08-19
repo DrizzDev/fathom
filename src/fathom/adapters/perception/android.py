@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from fathom.adapters.perception.breaker import HierarchyBreaker
+from fathom.constants.screen import HierarchyProvenance
 from fathom.core.exceptions import DeviceError
 from fathom.core.perception.orientation import CaptureOrientationResolver
 from fathom.interfaces.device import DevicePort
@@ -25,6 +27,8 @@ class AndroidPerceptionAdapter(PerceptionPort):
         self.__device = device
         self.__include_hierarchy = include_hierarchy
 
+        self.__breaker = HierarchyBreaker()
+
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
         """
@@ -39,11 +43,19 @@ class AndroidPerceptionAdapter(PerceptionPort):
         """
 
         capture_start = time.time()
+        provenance: Optional[HierarchyProvenance] = None
+
         if self.__include_hierarchy:
-            screenshot_bytes, hierarchy_content = await self.__device.get_snapshot()
+            snapshot = await self.__breaker.snapshot(
+                dump=self.__device.get_snapshot,
+                screenshot=self.__device.capture_screen,
+            )
+            provenance = snapshot.provenance
+            screenshot_bytes = snapshot.image
+            hierarchy_content = snapshot.hierarchy
         else:
-            screenshot_bytes = await self.__device.capture_screen()
             hierarchy_content = None
+            screenshot_bytes = await self.__device.capture_screen()
 
         if not screenshot_bytes:
             raise DeviceError("Android perception captured an empty screenshot.")
@@ -67,15 +79,34 @@ class AndroidPerceptionAdapter(PerceptionPort):
             xml_content=hierarchy_content,
             activity=application_identifier,
             timestamp=int(time.time() * 1000),
-            metadata={
-                "capture_duration": time.time() - capture_start,
-                **(
-                    {"hierarchy_dump_duration": time.time() - capture_start}
-                    if hierarchy_content is not None
-                    else {}
-                ),
-            },
+            metadata=self.__metadata(
+                provenance=provenance,
+                capture_start=capture_start,
+                hierarchy_content=hierarchy_content,
+            ),
         )
+
+    @staticmethod
+    def __metadata(
+        *,
+        capture_start: float,
+        hierarchy_content: Optional[str],
+        provenance: Optional[HierarchyProvenance],
+    ) -> dict[str, object]:
+        """
+        Build capture metadata, recording hierarchy timing and any breaker fallback provenance.
+        """
+
+        elapsed = time.time() - capture_start
+        metadata: dict[str, object] = {"capture_duration": elapsed}
+
+        if hierarchy_content is not None:
+            metadata["hierarchy_dump_duration"] = elapsed
+
+        if provenance is not None:
+            metadata["hierarchy_fallback"] = provenance.value
+
+        return metadata
 
     async def detect_keyboard(
         self, *, capture: Optional[ScreenCapture] = None

@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 from tests.fixtures.intents import VERIFY_TOOLS
-from tests.unit.core.agent.tools._legacy import _LegacyToolScope
 
 from fathom.constants.tools import BASE_TOOLS, ToolName, TurnMode
 from fathom.core.agent.tools.policy import ToolPolicy
@@ -13,7 +12,6 @@ from fathom.core.agent.tools.registry import DEFAULT_TOOL_POLICIES
 from fathom.core.agent.tools.scope import ToolScope
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.subgoal import SubGoalKind
 from fathom.schemas.tools import ToolPolicyContext
 
 
@@ -196,23 +194,20 @@ class ToolScopeCompositionTest(unittest.TestCase):
                 scope.compute(context=self.__context())
 
 
-class ToolScopeMigrationParityTest(unittest.TestCase):
+class ToolScopeModeGateTest(unittest.TestCase):
     """
-    Pins the per-cell behavioral diff between the legacy intent-keyword gate
-    and the new TurnMode-set gate. Delete one release after rollout.
+    Pins the mode-driven VERIFY gate: an active goal keeps base UI tactics regardless of its
+    success kind, and VERIFY-only tools appear solely in the no-active-goal / final-verification phase.
     """
 
     __VERIFY_TOOLS = VERIFY_TOOLS
 
     @staticmethod
-    def __new_tool_set(*, hitl: bool, sub_goal_kind: SubGoalKind) -> frozenset[ToolName]:
+    def __tools(*, modes: frozenset[TurnMode], hitl: bool = False) -> frozenset[ToolName]:
         """
-        Compute the allowed tool set under the new framework for a sub-goal kind.
+        Compute the allowed tool set for a given mode set.
         """
 
-        modes = (
-            frozenset({TurnMode.VERIFY}) if sub_goal_kind == SubGoalKind.VALIDATION else frozenset()
-        )
         return (
             ToolScope(policies=DEFAULT_TOOL_POLICIES)
             .compute(
@@ -224,48 +219,33 @@ class ToolScopeMigrationParityTest(unittest.TestCase):
             .names
         )
 
-    @staticmethod
-    def __legacy_tool_set(*, intent: str, hitl: bool) -> frozenset[ToolName]:
+    def test_active_goal_retains_base_ui_without_verify(self) -> None:
         """
-        Compute the allowed tool set under the legacy intent-keyword framework.
-        """
-
-        return (
-            _LegacyToolScope()
-            .compute(
-                intent=intent,
-                capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=hitl)),
-            )
-            .names
-        )
-
-    def test_truth_table_pins_eight_cells(self) -> None:
-        """
-        Exhaustive truth table — intent keyword x sub-goal kind x HITL.
+        An active goal (empty mode set) keeps the base UI tactics and exposes no VERIFY-only tools.
         """
 
-        cases = (
-            ("verify the offerwall", SubGoalKind.VALIDATION, False, True, True),
-            ("verify the offerwall", SubGoalKind.VALIDATION, True, True, True),
-            ("verify the offerwall", SubGoalKind.ACTION, False, True, False),
-            ("verify the offerwall", SubGoalKind.ACTION, True, True, False),
-            ("open the app", SubGoalKind.VALIDATION, False, False, True),
-            ("open the app", SubGoalKind.VALIDATION, True, False, True),
-            ("open the app", SubGoalKind.ACTION, True, False, False),
-            ("open the app", SubGoalKind.ACTION, False, False, False),
-        )
+        tools = self.__tools(modes=frozenset())
 
-        for intent, kind, hitl, legacy_has_verify, new_has_verify in cases:
-            with self.subTest(intent=intent, kind=kind, hitl=hitl):
-                new_tools = self.__new_tool_set(sub_goal_kind=kind, hitl=hitl)
-                legacy_tools = self.__legacy_tool_set(intent=intent, hitl=hitl)
+        self.assertIn(ToolName.EXECUTE_UI, tools)
+        self.assertFalse(tools & self.__VERIFY_TOOLS)
 
-                self.assertIn(ToolName.EXECUTE_UI, new_tools)
-                self.assertIn(ToolName.EXECUTE_UI, legacy_tools)
-                self.assertEqual(ToolName.ASK_USER in new_tools, hitl)
-                self.assertEqual(ToolName.ASK_USER in legacy_tools, hitl)
-                self.assertEqual(bool(new_tools & self.__VERIFY_TOOLS), new_has_verify)
-                self.assertEqual(bool(legacy_tools & self.__VERIFY_TOOLS), legacy_has_verify)
+    def test_final_verification_phase_exposes_verify_tools(self) -> None:
+        """
+        The no-active-goal / final-verification phase (VERIFY mode) exposes the VERIFY-only tools.
+        """
+
+        tools = self.__tools(modes=frozenset({TurnMode.VERIFY}))
+
+        self.assertTrue(tools & self.__VERIFY_TOOLS)
+        self.assertIn(ToolName.EXECUTE_UI, tools)
+
+    def test_ask_user_tracks_hitl_capability(self) -> None:
+        """
+        ASK_USER is exposed exactly when HITL is enabled, independent of mode.
+        """
+
+        self.assertIn(ToolName.ASK_USER, self.__tools(modes=frozenset(), hitl=True))
+        self.assertNotIn(ToolName.ASK_USER, self.__tools(modes=frozenset(), hitl=False))
 
 
 if __name__ == "__main__":

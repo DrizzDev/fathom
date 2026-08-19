@@ -10,6 +10,7 @@ from fathom.adapters.evidence.history import HistoryEvidenceSource
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.ocr.noop import NoopOcr
+from fathom.adapters.oracle.vision import VisionOracle
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
 from fathom.adapters.script.refresher import BaselineRefresher
 from fathom.authoring.adapters.artifacts import FileAuthoringArtifactProvider
@@ -57,10 +58,12 @@ from fathom.core.services.generation.projector import DeterministicFlowGenerator
 from fathom.core.services.hierarchy import HierarchyService
 from fathom.core.services.history import HistoryService
 from fathom.core.services.hitl import HITLService
+from fathom.core.services.oracle import OracleRecorder
 from fathom.core.services.perception import PerceptionService
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.resolution import ReferenceResolutionService
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.core.services.timing import RunClock
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
@@ -92,6 +95,7 @@ from fathom.schemas.exploration import ExplorationGraph
 from fathom.schemas.metrics import ExecutionMetrics
 from fathom.schemas.perception import PerceptionConfiguration  # noqa: TC001
 from fathom.schemas.run import RealignmentPolicy
+from fathom.schemas.target import TargetAuthority
 from fathom.schemas.tools import ToolPolicyContext, ToolScopeMatrixExpansion
 
 logger = getLogger(__name__)
@@ -124,6 +128,7 @@ class GraphContext:
         execution_id: str,
         workflow_id: str,
         package_name: str,
+        requested_package: Optional[str] = None,
         tenant: str,
         thread: str,
         requester: str,
@@ -205,6 +210,7 @@ class GraphContext:
 
         # Injected services with defaults for backward compatibility
         self.__metrics = metrics or ExecutionMetrics()
+        self.__clock = RunClock()
 
         self.__capabilities = RuntimeCapabilities(
             hitl=HITLCapability(enabled=signal.supports_interruption()),
@@ -222,6 +228,11 @@ class GraphContext:
             capabilities=self.__capabilities,
             retries=configuration.intent.retries,
             realignment_budget=self.__realignment.budget,
+            target_authority=(
+                TargetAuthority.requested(package=requested_package)
+                if requested_package
+                else TargetAuthority.unbound()
+            ),
         )
 
         self.__signal = signal
@@ -371,6 +382,10 @@ class GraphContext:
         )
 
         self.__abort_detector = abort_detector or AbortDetectorFactory.build(llm=llm)
+
+        self.__oracle = OracleRecorder(
+            oracle=VisionOracle(llm=llm) if configuration.oracle.enabled else None,
+        )
 
         self.__journal = journal if journal is not None else NoopRuntimeJournal()
 
@@ -683,6 +698,14 @@ class GraphContext:
         return self.__package_name
 
     @property
+    def target_authority(self) -> TargetAuthority:
+        """
+        Read-only projection of the run's durable target authority owned by AgentState.
+        """
+
+        return self.__agent_state.target_authority
+
+    @property
     def artifact_catalog(self) -> ArtifactCatalog:
         """
         Returns the artifact catalog bound to the shared path manager.
@@ -773,6 +796,14 @@ class GraphContext:
         return self.__catalog
 
     @property
+    def oracle(self) -> OracleRecorder:
+        """
+        Returns the shadow criterion-oracle recorder.
+        """
+
+        return self.__oracle
+
+    @property
     def capture_store(self) -> CaptureStore:
         """
         Returns the run-owned capture store shared with the action executor.
@@ -796,6 +827,14 @@ class GraphContext:
         """
 
         return self.__metrics
+
+    @property
+    def clock(self) -> RunClock:
+        """
+        Returns the run-scoped monotonic timing ledger shared across graph nodes.
+        """
+
+        return self.__clock
 
     @property
     def vision(self) -> VisionService:

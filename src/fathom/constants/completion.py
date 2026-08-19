@@ -1,21 +1,6 @@
 from __future__ import annotations
 
 from enum import IntEnum, StrEnum
-from typing import Final, FrozenSet
-
-DURABLE_OUTCOME_TERMS: Final[FrozenSet[str]] = frozenset(
-    {
-        "add",
-        "added",
-        "adding",
-        "capture",
-        "captured",
-        "save",
-        "saved",
-        "store",
-        "stored",
-    }
-)
 
 
 class VerifyEvidenceDimension(StrEnum):
@@ -55,6 +40,9 @@ class RetainReason(StrEnum):
     CAPTURE_FAILED = "CAPTURE_FAILED"
     EMPTY_CAPTURE_VALUE = "EMPTY_CAPTURE_VALUE"
     STEP_EXECUTION_FAILED = "STEP_EXECUTION_FAILED"
+
+    AWAITING_PROOF = "AWAITING_PROOF"
+    LEFT_APPLICATION = "LEFT_APPLICATION"
 
 
 class GateOutcome(StrEnum):

@@ -44,6 +44,7 @@ class SwipeRetryCoordinator:
         policy: SwipeRetryPolicy,
         keyboard: KeyboardObservation,
         original_before: str,
+        frame: Optional[Bounds] = None,
     ) -> SwipeExecution:
         """
         Plan candidates, dispatch until visual change or candidates exhaust, return typed execution.
@@ -54,6 +55,7 @@ class SwipeRetryCoordinator:
             bounds=bounds,
             policy=policy,
             keyboard=keyboard,
+            frame=frame,
         )
 
         attempts: List[SwipeAttempt] = []

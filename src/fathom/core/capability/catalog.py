@@ -5,6 +5,7 @@ from typing import Dict, FrozenSet, Mapping
 
 from fathom.constants import ActionType
 from fathom.constants.capability import (
+    COMMAND_REQUIREMENT_CHANNELS,
     NON_INTERACTIVE_CHANNELS,
     CompletionMode,
     ExecutionChannel,
@@ -19,6 +20,7 @@ from fathom.schemas.capability import (
     CommandContract,
     CommandProfile,
 )
+from fathom.schemas.requirement import CommandRequirement
 
 
 class CommandCatalog:
@@ -50,6 +52,22 @@ class CommandCatalog:
             raise InvariantViolation(f"No command profile for '{action_type.value}'.")
 
         return profile
+
+    def supports(self, *, action_type: ActionType) -> bool:
+        """
+        Return whether this catalog knows and enables the command.
+        """
+
+        return action_type in self.__profiles
+
+    def admits_requirement(self, *, requirement: CommandRequirement) -> bool:
+        """
+        Return whether a canonical command requirement runs on an admissible execution channel.
+        """
+
+        return (
+            self.profile(action_type=requirement.operation).channel in COMMAND_REQUIREMENT_CHANNELS
+        )
 
     def is_spatial(self, *, action_type: ActionType) -> bool:
         """

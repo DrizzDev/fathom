@@ -18,11 +18,12 @@ RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.35
 # Below this rationale-to-sub-goal similarity an asserted claim is flagged as lateral credit; observe-only.
 LATERAL_CREDIT_SIMILARITY_THRESHOLD: float = 0.45
 
-# Magnitude below which a post-action screen change is treated as noise.
-MEANINGFUL_SCREEN_DELTA_FLOOR: float = 0.05
-
-# Minimum decomposer confidence below which the fallback single-goal path is used.
+# Minimum decomposer confidence; a plan below this floor is a validation finding
+# that triggers the single bounded repair, and fails closed if still below.
 MINIMUM_DECOMPOSITION_CONFIDENCE: float = 0.6
+
+# Upper bound on decomposed sub-goals; a larger plan is rejected as malformed.
+MAXIMUM_DECOMPOSITION_SUB_GOALS: int = 50
 
 # Delta score below which a step counts as low-progress for streak tracking.
 LOW_DELTA_PROGRESS_THRESHOLD: float = 0.3

@@ -2,56 +2,59 @@ from __future__ import annotations
 
 import unittest
 
-from fathom.schemas.subgoal import SubGoal
+from pydantic import ValidationError
+
+from fathom.schemas.subgoal import GoalState, Progress, SubGoal
+from tests.builders import SuccessFixtures
 
 
-class SubGoalDeferralFieldTest(unittest.TestCase):
+class ProgressDeferralFieldTest(unittest.TestCase):
     """
-    Pins the escalation-deferral counter field on :class:`SubGoal`.
+    Pins the escalation-deferral counter, now owned by mutable Progress and surfaced by GoalState.
     """
+
+    @staticmethod
+    def __state() -> GoalState:
+        return GoalState(
+            goal=SubGoal(index=0, objective="test", success=SuccessFixtures.observed())
+        )
 
     def test_default_is_zero(self) -> None:
         """
-        Newly constructed sub-goals start with zero deferrals.
+        A fresh goal starts with zero deferrals.
         """
 
-        sub_goal = SubGoal(description="test", index=0)
-        self.assertEqual(sub_goal.deferral_count, 0)
+        self.assertEqual(self.__state().deferral_count, 0)
 
-    def test_field_is_mutable(self) -> None:
+    def test_record_and_clear_mutate_in_place(self) -> None:
         """
-        ``deferral_count`` is mutated in-place by :class:`AgentState` helpers.
-        """
-
-        sub_goal = SubGoal(description="test", index=0)
-        sub_goal.deferral_count += 1
-        sub_goal.deferral_count += 1
-        self.assertEqual(sub_goal.deferral_count, 2)
-
-    def test_negative_values_rejected(self) -> None:
-        """
-        ``deferral_count`` cannot go below zero.
+        record_deferral / clear_deferrals mutate the recovery counter in place.
         """
 
-        from pydantic import ValidationError
+        state = self.__state()
+        state.record_deferral()
+        state.record_deferral()
+        self.assertEqual(state.deferral_count, 2)
+        state.clear_deferrals()
+        self.assertEqual(state.deferral_count, 0)
 
+    def test_negative_recovery_is_rejected(self) -> None:
+        """
+        The recovery counter cannot be assigned a negative value.
+        """
+
+        progress = Progress()
         with self.assertRaises(ValidationError):
-            SubGoal(description="test", index=0, deferral_count=-1)
+            progress.recovery = -1
 
     def test_round_trip_preserves_value(self) -> None:
         """
-        Checkpoint serialization preserves the counter.
+        Serialization preserves the recovery counter through a checkpoint round trip.
         """
 
-        sub_goal = SubGoal(description="test", index=0, deferral_count=3)
-        restored = SubGoal.model_validate(sub_goal.model_dump())
+        state = self.__state()
+        state.record_deferral()
+        state.record_deferral()
+        state.record_deferral()
+        restored = GoalState.model_validate(state.model_dump())
         self.assertEqual(restored.deferral_count, 3)
-
-    def test_legacy_checkpoint_without_field_defaults_to_zero(self) -> None:
-        """
-        Old checkpoints written before this field existed must rehydrate cleanly.
-        """
-
-        legacy_payload = {"description": "legacy", "index": 0}
-        sub_goal = SubGoal.model_validate(legacy_payload)
-        self.assertEqual(sub_goal.deferral_count, 0)

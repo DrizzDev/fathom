@@ -27,6 +27,31 @@ class AndroidParserTest(unittest.TestCase):
         )
 
         self.assertEqual(len(elements), 1)
-        self.assertEqual(elements[0].attributes.get("scrollable"), "true")
-        self.assertEqual(elements[0].attributes.get("axis"), "vertical")
         self.assertEqual(elements[0].attributes.get("kind"), "list")
+        self.assertEqual(elements[0].attributes.get("axis"), "vertical")
+        self.assertEqual(elements[0].attributes.get("scrollable"), "true")
+
+    def test_declares_interactivity_as_tri_state_hint(self) -> None:
+        """
+        Surface the hierarchy's clickable declaration as True, False, or None when absent.
+        """
+
+        xml = """
+        <hierarchy package="app">
+          <node class="android.widget.Button" bounds="[0,200][540,400]" clickable="true" text="Login" />
+          <node class="android.widget.TextView" bounds="[0,500][540,700]" clickable="false" text="Caption" resource-id="app:id/caption" />
+          <node class="android.widget.TextView" bounds="[0,800][540,1000]" text="Undeclared" resource-id="app:id/plain" />
+        </hierarchy>
+        """
+        root = ET.fromstring(xml)
+        elements = AndroidParser().find_all_elements(
+            root=root, screenshot_width=1080, screenshot_height=2340
+        )
+
+        declared = {
+            str(element.attributes.get("text")): element.interactive for element in elements
+        }
+
+        self.assertIsNone(declared["Undeclared"])
+        self.assertIs(declared["Login"], True)
+        self.assertIs(declared["Caption"], False)

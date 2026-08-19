@@ -403,6 +403,56 @@ class ADBDevice(DevicePort):
         except Exception as exception:
             raise DeviceError(f"Screenshot capture failed: {exception}") from exception
 
+    async def frame(self) -> Optional[Bounds]:
+        """
+        Return the focused window's OS-reported frame, None when the dump cannot be read or parsed.
+        """
+
+        result = await self.__shell(command="dumpsys window windows", capture_output=True)
+
+        if not result.success or not result.output:
+            return None
+
+        return self._frame_from(dump=result.output)
+
+    @staticmethod
+    def _frame_from(*, dump: str) -> Optional[Bounds]:
+        """
+        Parse the focused window's frame rectangle out of a window-manager dump; None on any mismatch.
+        """
+
+        focus = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}", dump)
+        if focus is None:
+            return None
+
+        title = re.escape(focus.group(1).strip())
+        section = re.search(
+            rf"Window #\d+ Window\{{\S+ \S+ {title}\}}(.*?)(?:Window #\d+ Window\{{|\Z)",
+            dump,
+            re.DOTALL,
+        )
+        if section is None:
+            return None
+
+        rectangle = re.search(
+            r"(?:mFrame|frame)=\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+            section.group(1),
+        )
+        if rectangle is None:
+            return None
+
+        left, top, right, bottom = (int(value) for value in rectangle.groups())
+        if right <= left or bottom <= top:
+            return None
+
+        return Bounds(
+            x=left,
+            y=top,
+            width=right - left,
+            height=bottom - top,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
     async def get_current_package(self) -> str:
         """
         Get current foreground package name.

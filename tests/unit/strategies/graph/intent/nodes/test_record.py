@@ -6,15 +6,16 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
+from fathom.constants.timing import TimingEvent, TimingPhase
 from fathom.core.agent.state import AgentState
+from fathom.core.services.timing import RunClock, Stopwatch
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import AnalysisResult, PlanResult
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.record import RecordNode
+from tests.builders import SubGoalFixtures
 
 
 class RecordNodeFailureTest(unittest.IsolatedAsyncioTestCase):
@@ -89,21 +90,6 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
 
     @staticmethod
-    def __signal() -> SubGoalCompletionSignal:
-        """
-        Return a valid signal for advancing sub-goals.
-        """
-
-        return SubGoalCompletionSignal(
-            llm_confidence=1.0,
-            screen_verified=True,
-            action_executed=True,
-            flagged_complete=True,
-            rationale_verified=True,
-            evidence="unit test",
-        )
-
-    @staticmethod
     def __step_result() -> StepResult:
         """
         Build a minimal successful tap StepResult.
@@ -171,7 +157,9 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
         agent_state.record_complete_deferral()
         agent_state.record_verify_rejection(
             screen=self.__screen(), activity="com.test/.MainActivity"
@@ -215,16 +203,20 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap on the current address or change address"),
-                SubGoal(index=1, description="Type HSR Layout into the address search field"),
-                SubGoal(index=2, description="Tap HSR Layout from the search results"),
-                SubGoal(
+                SubGoalFixtures.make(
+                    index=0, description="Tap on the current address or change address"
+                ),
+                SubGoalFixtures.make(
+                    index=1, description="Type HSR Layout into the address search field"
+                ),
+                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
+                SubGoalFixtures.make(
                     index=3, description="Tap the button to confirm or save the address change"
                 ),
             ]
         )
         for _ in range(3):
-            agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+            agent_state.advance_current_sub_goal()
 
         provider = self.__provider(agent_state=agent_state)
         node = RecordNode(provider=provider)
@@ -292,8 +284,10 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
-        agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
+        agent_state.advance_current_sub_goal()
         agent_state.record_complete_deferral()
         provider = self.__provider(agent_state=agent_state)
         node = RecordNode(provider=provider)
@@ -639,3 +633,84 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
             post_hash="pre",
             observation=None,
         )
+
+
+class RecordNodeTimingEmissionTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins that RECORD emits one step.timing event carrying the expected dotted-key fields.
+    """
+
+    __LOGGER = "fathom.strategies.graph.intent.nodes.record"
+    __KEYS = (
+        "step.number",
+        "sub_goal.index",
+        "timing.ground",
+        "timing.analyze",
+        "timing.planner",
+        "timing.vision",
+        "timing.supervise",
+        "timing.execute",
+        "timing.observe",
+        "timing.record",
+        "timing.wait",
+        "timing.compute",
+        "timing.total",
+    )
+
+    @staticmethod
+    def __provider(*, clock: RunClock) -> MagicMock:
+        """
+        Return a provider whose context carries a real run clock and a two-goal cursor.
+        """
+
+        provider = MagicMock(name="IntentNodeProvider")
+        provider.context.clock = clock
+        provider.context.workflow_id = "wf"
+        provider.context.agent_state.get_sub_goal_progress = MagicMock(return_value=(0, 2))
+        return provider
+
+    @staticmethod
+    def __step_result() -> StepResult:
+        """
+        Build a minimal executed step result for timing correlation.
+        """
+
+        return StepResult(
+            step=Step(
+                action=Action(action_type=ActionType.TAP, target="t", rationale="r"),
+                step_number=4,
+                screen_hash="pre",
+            ),
+            success=True,
+            executed=True,
+            duration=1,
+            screen_changed=True,
+            pre_hash="pre",
+            post_hash="post",
+        )
+
+    async def test_step_timing_event_is_emitted_with_expected_keys(self) -> None:
+        """
+        Closing the record phase commits and logs one step.timing event with the timing.* and correlation keys.
+        """
+
+        clock = RunClock()
+        clock.record(phase=TimingPhase.GROUND, duration=5.0)
+        node = RecordNode(provider=self.__provider(clock=clock))
+
+        with self.assertLogs(self.__LOGGER, level="INFO") as logs:
+            node._RecordNode__emit_step_timing(  # type: ignore[attr-defined]
+                step_result=self.__step_result(), watch=Stopwatch()
+            )
+
+        emitted = [
+            record.__dict__
+            for record in logs.records
+            if record.__dict__.get("event") == TimingEvent.STEP.value
+        ]
+        self.assertEqual(len(emitted), 1)
+        payload = emitted[0]
+        for key in self.__KEYS:
+            self.assertIn(key, payload)
+        self.assertEqual(payload["step.number"], 4)
+        self.assertEqual(payload["sub_goal.index"], 0)

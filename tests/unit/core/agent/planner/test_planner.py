@@ -5,7 +5,7 @@ from typing import Tuple
 from unittest.mock import AsyncMock, Mock
 
 from fathom.constants import ActionType
-from fathom.constants.retries import RetryBranch, RetryKind, RetryMetadataField
+from fathom.constants.retries import RetryBranch, RetryKind
 from fathom.constants.state import CompletionReason
 from fathom.constants.tools import ToolName
 from fathom.core.agent.planner import StepPlanner
@@ -13,10 +13,15 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.gemini_tools import ExecuteAction
 from fathom.schemas.results import AnalysisResult, PlanResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.supervision import BlockReason
 from fathom.schemas.tools import ToolCommand, ToolResponse
-from tests.builders import ActionFixtures, AgentFixtures, ScreenFixtures, SubGoalFixtures
+from tests.builders import (
+    ActionFixtures,
+    AgentFixtures,
+    ScreenFixtures,
+    SubGoalFixtures,
+    SuccessFixtures,
+)
 
 
 class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
@@ -41,15 +46,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         """
 
         planner = StepPlanner(vision_tool=Mock())
-        result = await planner.plan_step(
-            state=self.__stuck_state_with_exhausted_autonomous_budget(),
-            reasoner=Mock(),
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=self.__stuck_state_with_exhausted_autonomous_budget(),
+                reasoner=Mock(),
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertFalse(result.is_complete)
         self.assertIsNotNone(result.step)
@@ -87,22 +94,25 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         reasoner = Mock()
         reasoner.select_best_action.return_value = action
 
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.should_retry)
         self.assertEqual(result.reason, CompletionReason.ACTION_BLOCKED.value)
-        self.assertEqual(
-            result.metadata.get(RetryMetadataField.BLOCK_REASON.value),
-            BlockReason.REPEATED_CURRENT_SCREEN_ACTION.value,
+        assert result.context.retry is not None
+        self.assertIs(
+            result.context.retry.block,
+            BlockReason.REPEATED_CURRENT_SCREEN_ACTION,
         )
 
     async def test_materializes_tool_command_after_catalog_validation(self) -> None:
@@ -143,24 +153,28 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         state = AgentFixtures.state(intent="Tap search")
         state.set_sub_goals([SubGoalFixtures.make(description="Tap search box")])
 
-        result = await StepPlanner(vision_tool=vision).plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
         self.assertEqual(result.step.action.action_type, ActionType.TAP)
         self.assertEqual(result.step.action.target, "Search box")
 
-    async def test_rejects_validate_command_during_store_subgoal(self) -> None:
+    async def test_validate_command_admitted_as_preparatory_under_capture_goal(self) -> None:
         """
-        A STORE-directed sub-goal retries when the model emits validate instead of capture.
+        Regression: a VALIDATE emitted under a capture (STORE) goal is admitted as a preparatory
+        action, not gate-rejected by directive. It carries no admitted requirement, so it cannot
+        complete the capture goal — the old directive-based "not authorized" rejection must not recur.
         """
 
         analysis = AnalysisResult(
@@ -182,30 +196,45 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         vision.analyze = AsyncMock(return_value=analysis)
         vision.build_rejection_history_from_analysis = Mock(return_value=[])
 
+        def choose(primary: Action, alternatives: object, failed_actions: object) -> Action:
+            """
+            Return the planner-materialized primary action from the reasoner seam.
+            """
+
+            _ = (alternatives, failed_actions)
+            return primary
+
+        reasoner = Mock()
+        reasoner.select_best_action.side_effect = choose
+
         state = AgentFixtures.state(intent="Store product price")
         state.set_sub_goals(
             [
-                SubGoal(
+                SubGoalFixtures.make(
                     index=0,
                     description="Store the product price as product.amount",
-                    directive=ActionType.STORE,
+                    success=SuccessFixtures.capture(name="product_amount", subject="price"),
                 )
             ]
         )
 
-        result = await StepPlanner(vision_tool=vision).plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
-        self.assertIsNone(result.step)
-        self.assertTrue(result.should_retry)
-        self.assertIn("needs an executable command with capture", str(result.reason))
+        self.assertIsNotNone(result.step)
+        assert result.step is not None
+        self.assertEqual(result.step.action.action_type, ActionType.VALIDATE)
+        self.assertIsNone(result.step.requirement)
+        self.assertNotIn("not authorized", str(result.reason or ""))
 
     async def test_does_not_block_persistent_screen_memory(self) -> None:
         """
@@ -238,15 +267,17 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
         reasoner = Mock()
         reasoner.select_best_action.return_value = action
 
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         self.assertFalse(result.should_retry)
@@ -358,15 +389,17 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -394,19 +427,114 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         reasoner.select_best_action.return_value = analysis.action
 
         planner = StepPlanner(vision_tool=vision)
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         self.assertIsNone(result.step)
         self.assertTrue(result.is_complete)
         self.assertEqual(result.reason, CompletionReason.INTERVENTION_REQUIRED.value)
+
+
+class StepPlannerControlAdmissionTest(unittest.IsolatedAsyncioTestCase):
+    """
+    P0-2: an LLM-emitted ASK_USER *command* must pass CommandGate under proof-bearing goals and reach the escalation/HITL policy, never be blocked at admission.
+    """
+
+    @staticmethod
+    def __ask_user_command_analysis() -> AnalysisResult:
+        """
+        Analysis whose emitted command (not a pre-built action) is ASK_USER, forcing the gate path.
+        """
+
+        return AnalysisResult(
+            action=None,
+            reasoning="Need the user to choose a product.",
+            screen_description="search results",
+            tool_response=ToolResponse(
+                command=ToolCommand(
+                    action_type=ActionType.ASK_USER,
+                    payload=ExecuteAction(
+                        action_type="ask_user",
+                        text="Which product should I select?",
+                        confidence=0.9,
+                    ),
+                )
+            ),
+        )
+
+    async def __plan_under(self, *, directive: ActionType) -> PlanResult:
+        """
+        Drive one plan_step where the model emits an ASK_USER command under the given goal directive.
+        """
+
+        analysis = self.__ask_user_command_analysis()
+        vision = Mock()
+        vision.analyze = AsyncMock(return_value=analysis)
+        vision.build_rejection_history_from_analysis = Mock(return_value=[])
+
+        state = AgentFixtures.state(intent="Store product price")
+        success = (
+            SuccessFixtures.capture()
+            if directive is ActionType.STORE
+            else SuccessFixtures.observed()
+        )
+        state.set_sub_goals([SubGoalFixtures.make(index=0, description="goal", success=success)])
+
+        reasoner = Mock()
+        reasoner.select_best_action.return_value = ActionFixtures.make(
+            target="User",
+            action_type=ActionType.ASK_USER,
+            rationale="need input",
+            text="Which product should I select?",
+        )
+
+        return (
+            await StepPlanner(vision_tool=vision).plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
+
+    async def test_ask_user_command_reaches_escalation_under_capture_goal(self) -> None:
+        """
+        Under a STORE (capture) goal the ASK_USER command is admitted and reaches escalation — the
+        autonomous runtime substitutes a recovery action rather than gate-rejecting it or completing.
+        """
+
+        result = await self.__plan_under(directive=ActionType.STORE)
+
+        self.assertNotIn("not authorized", str(result.reason or ""))
+        self.assertIsNotNone(result.step)
+        assert result.step is not None
+        self.assertNotEqual(result.step.action.action_type, ActionType.ASK_USER)
+        self.assertFalse(result.is_complete)
+
+    async def test_ask_user_command_reaches_escalation_under_validation_goal(self) -> None:
+        """
+        Under a VALIDATE goal the ASK_USER command is likewise admitted and reaches escalation.
+        """
+
+        result = await self.__plan_under(directive=ActionType.VALIDATE)
+
+        self.assertNotIn("not authorized", str(result.reason or ""))
+        self.assertIsNotNone(result.step)
+        assert result.step is not None
+        self.assertNotEqual(result.step.action.action_type, ActionType.ASK_USER)
+        self.assertFalse(result.is_complete)
 
 
 class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
@@ -464,15 +592,17 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
         reasoner.select_best_action.return_value = action
         planner = StepPlanner(vision_tool=vision)
 
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
         return result, state, vision
 
@@ -519,18 +649,10 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
             rejection_history_return=["x"],
         )
 
-        self.assertEqual(
-            result.metadata.get(RetryMetadataField.KIND.value),
-            RetryKind.SILENT_REJECTION.value,
-        )
-        self.assertEqual(
-            result.metadata.get(RetryMetadataField.BRANCH.value),
-            RetryBranch.SHOULD_AVOID_ACTION.value,
-        )
-        self.assertIn(
-            "More on Swiggy widget",
-            str(result.metadata.get(RetryMetadataField.BLOCKED_ACTION.value, "")),
-        )
+        assert result.context.retry is not None
+        self.assertIs(result.context.retry.kind, RetryKind.SILENT_REJECTION)
+        self.assertIs(result.context.retry.branch, RetryBranch.SHOULD_AVOID_ACTION)
+        self.assertIn("More on Swiggy widget", result.context.retry.action or "")
 
     async def test_should_avoid_action_does_not_advance_step_count(self) -> None:
         """
@@ -556,15 +678,17 @@ class StepPlannerTerminalReasonResolutionTest(unittest.IsolatedAsyncioTestCase):
         """
 
         planner = StepPlanner(vision_tool=Mock())
-        return await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=ScreenFixtures.capture(activity="app"),
-            context_manager=AgentFixtures.context_manager(),
-            screen_width=100,
-            screen_height=200,
-            prompt_if_stuck=False,
-        )
+        return (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=ScreenFixtures.capture(activity="app"),
+                context_manager=AgentFixtures.context_manager(),
+                screen_width=100,
+                screen_height=200,
+                prompt_if_stuck=False,
+            )
+        ).plan
 
     async def test_state_marked_cancelled_preserves_cancelled_reason(self) -> None:
         """

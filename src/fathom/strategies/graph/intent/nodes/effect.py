@@ -13,7 +13,7 @@ from fathom.constants.execution import POST_ACTION_OBSERVATION_TIMEOUT_SECONDS
 from fathom.constants.perception import ACTION_REGION_HALF_SIDE, ACTION_REGION_STATIC_HAMMING_FLOOR
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.screen import ZERO_HASH
-from fathom.constants.state import IntentStateKey, PlanMetadataKey
+from fathom.constants.state import IntentStateKey
 from fathom.constants.storage import StorageBackend
 from fathom.core.perception.hashing import VisualHashEngine
 from fathom.core.services.settlement import ScreenSettlementService
@@ -228,8 +228,7 @@ class PostAction:
         plan = state.get(IntentStateKey.PLAN)
 
         if isinstance(plan, PlanResult):
-            value = plan.metadata.get(PlanMetadataKey.OBSERVATION.value)
-            return value if isinstance(value, str) else None
+            return plan.context.observation
 
         return None
 
@@ -376,6 +375,13 @@ class PostAction:
                     before=before, after=None, annotated=annotated, traces=traces
                 ),
             )
+
+        self.__context.oracle.observe(
+            turn=context.step.step_number,
+            workflow_id=self.__context.workflow_id,
+            criterion=self.__criterion(),
+            image=post_capture.image,
+        )
 
         # Post-action enrichment (OCR + icon + ensemble) was previously
         # re-run here on every turn; the next GROUND call rebuilds the same
@@ -748,6 +754,14 @@ class PostAction:
             return backend
 
         return StorageBackend.LOCAL
+
+    def __criterion(self) -> Optional[str]:
+        """
+        Return the active sub-goal's criterion text when present.
+        """
+
+        sub_goal = self.__context.agent_state.get_current_sub_goal()
+        return sub_goal.objective if sub_goal is not None else None
 
     def __log_context(self) -> Dict[str, Any]:
         """

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import Dict, Optional
 
+from fathom.adapters.perception.breaker import HierarchyBreaker
 from fathom.core.exceptions import DeviceError
 from fathom.core.perception.orientation import CaptureOrientationResolver
 from fathom.interfaces.device import DevicePort
@@ -49,10 +50,12 @@ class IOSNativePerceptionAdapter(PerceptionPort):
 
         capture_start = time.time()
         screenshot_bytes = await self.__device.capture_screen()
+
         if not screenshot_bytes:
             raise DeviceError("iOS native perception captured an empty screenshot.")
 
         reported_width, reported_height = await self.__device.get_dimensions()
+
         width, height = CaptureOrientationResolver.resolve(
             image=screenshot_bytes,
             reported_width=reported_width,
@@ -84,6 +87,7 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         """
 
         self.__device = device
+        self.__breaker = HierarchyBreaker()
 
     @property
     def configuration(self) -> Optional[DeviceRuntimeConfiguration]:
@@ -109,7 +113,13 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         """
 
         capture_start = time.time()
-        screenshot_bytes, hierarchy_content = await self.__device.get_snapshot()
+        snapshot = await self.__breaker.snapshot(
+            dump=self.__device.get_snapshot,
+            screenshot=self.__device.capture_screen,
+        )
+
+        screenshot_bytes = snapshot.image
+        hierarchy_content = snapshot.hierarchy
 
         if not screenshot_bytes:
             raise DeviceError("iOS enhanced perception captured an empty screenshot.")
@@ -122,7 +132,7 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
         )
         application_identifier = await self.__device.get_current_package()
 
-        metadata = {
+        metadata: Dict[str, object] = {
             "perception_strategy": "enhanced",
             "capture_duration": time.time() - capture_start,
         }
@@ -130,6 +140,9 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
             metadata["hierarchy_error"] = "Hierarchy unavailable"
         else:
             metadata["hierarchy_dump_duration"] = time.time() - capture_start
+
+        if snapshot.provenance is not None:
+            metadata["hierarchy_fallback"] = snapshot.provenance.value
 
         return ScreenCapture(
             width=width,

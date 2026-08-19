@@ -10,7 +10,6 @@ from fathom.core.runtime.effects import EffectHistory
 from fathom.core.runtime.failures import FailureMemory
 from fathom.core.runtime.realignment import RealignmentTracker
 from fathom.core.runtime.screen import ScreenRuntimeState
-from fathom.core.runtime.tasks import TaskRuntimeState
 
 
 class RuntimeState:
@@ -21,7 +20,6 @@ class RuntimeState:
     def __init__(
         self,
         *,
-        tasks: TaskRuntimeState,
         screen: ScreenRuntimeState,
         effects: EffectHistory,
         failures: FailureMemory,
@@ -32,7 +30,6 @@ class RuntimeState:
         Initialize the runtime state aggregate.
         """
 
-        self.__tasks = tasks
         self.__screen = screen
         self.__effects = effects
         self.__failures = failures
@@ -54,7 +51,6 @@ class RuntimeState:
         return cls(
             effects=EffectHistory(),
             failures=FailureMemory(),
-            tasks=TaskRuntimeState(),
             screen=ScreenRuntimeState(
                 loop_threshold=loop_threshold,
                 loop_window=loop_window,
@@ -62,14 +58,6 @@ class RuntimeState:
             checkpoint=CheckpointCodec(),
             realignment=RealignmentTracker(budget=realignment_budget),
         )
-
-    @property
-    def tasks(self) -> TaskRuntimeState:
-        """
-        Return task runtime state.
-        """
-
-        return self.__tasks
 
     @property
     def screen(self) -> ScreenRuntimeState:

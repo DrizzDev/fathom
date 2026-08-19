@@ -4,6 +4,7 @@ import logging
 
 from fathom.core.services.comparator import ScreenComparator
 from fathom.core.services.criterion import CriterionObserver
+from fathom.core.services.outcome import OutcomeObserver
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator
 from fathom.strategies.graph.intent.nodes.effect import PostAction
@@ -49,6 +50,7 @@ class IntentNodeProvider:
         self.__completion = SubGoalEvaluator(
             context=context,
             criterion_observer=self.__criterion_observer,
+            outcome=OutcomeObserver(llm=context.llm),
         )
 
     @property

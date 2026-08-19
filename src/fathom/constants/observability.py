@@ -8,10 +8,12 @@ class CompletionEvent(StrEnum):
     Structured log event names emitted across the completion-gate pipeline.
     """
 
+    INTENT_PENDING = "completion.intent.pending"
+    INTENT_COMPLETED = "completion.intent.completed"
+
     SUBGOAL_ADVANCED = "completion.subgoal.advanced"
     SUBGOAL_RETAINED = "completion.subgoal.retained"
-    INTENT_COMPLETED = "completion.intent.completed"
-    INTENT_PENDING = "completion.intent.pending"
+
     GATE_ADJUDICATED = "completion.gate.adjudicated"
     EVIDENCE_ASSESSED = "completion.evidence.assessed"
     CRITERION_OBSERVED = "completion.criterion.observed"

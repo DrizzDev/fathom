@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import unittest
 from typing import Optional, Sequence
-from unittest.mock import AsyncMock
 
-from fathom.constants import ActionType
 from fathom.constants.observation import KeyboardVisibility
 from fathom.core.services.criterion import CriterionObserver
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.actions import Bounds
-from fathom.schemas.criterion import CriterionSource, CriterionVerdict
+from fathom.schemas.criterion import CriterionAssessment, CriterionSource, CriterionVerdict
+from fathom.schemas.llm import StructuredOutput
 from fathom.schemas.observation import (
     ElementRole,
     ElementSource,
@@ -19,22 +18,23 @@ from fathom.schemas.observation import (
 )
 from fathom.schemas.results import GenerateResult
 from fathom.schemas.screens import ScreenHashBundle
-from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import ObservationRequirement
 
 
 class _StubLLM(LLMPort):
     """
-    Test-only LLM port returning a queued response per generate() call.
+    LLM port returning a queued CriterionAssessment JSON per call, or raising a queued error.
     """
 
-    def __init__(self, *, responses: Sequence[str]) -> None:
-        self.__responses = list(responses)
+    def __init__(self, *, verdicts: Sequence[object]) -> None:
+        self.__verdicts = list(verdicts)
         self.calls: int = 0
+        self.structured_payloads: list[object] = []
 
     @property
     def model_name(self) -> str:
         """
-        FIX
+        Report a stub model name.
         """
 
         return "stub"
@@ -45,56 +45,48 @@ class _StubLLM(LLMPort):
         use_cache: bool,
         prompt,
         tools=None,
-        structured_output=None,
+        structured_output: Optional[StructuredOutput] = None,
         system_instruction=None,
         conversation_history=None,
     ) -> GenerateResult:
         """
-        FIX + Use _ for unused arguments
+        Return the next queued verdict as structured JSON, or raise the queued exception.
         """
 
-        _ = structured_output
-
+        _ = (use_cache, prompt, tools, system_instruction, conversation_history)
+        self.structured_payloads.append(structured_output.payload if structured_output else None)
+        item = self.__verdicts[self.calls]
         self.calls += 1
-        content = self.__responses[self.calls - 1] if self.__responses else ""
-
+        if isinstance(item, BaseException):
+            raise item
+        content = CriterionAssessment(verdict=item, reason="stub reasoning").model_dump_json()
         return GenerateResult(content=content, tool_calls=[], metrics={})
 
     async def cleanup(self) -> None:
-        """ """
+        """
+        Release resources (no-op).
+        """
 
         return None
 
 
-def _element(*, identifier: str, text: Optional[str]) -> PerceivedElement:
+def _observation(*, visual_hash: str = "h0") -> ScreenObservation:
     """
-    Build a minimal :class:`PerceivedElement` carrying just text.
-
-    FIX: Why standalone functions
+    Build a minimal ScreenObservation.
     """
 
-    return PerceivedElement(
-        identifier=identifier,
+    element = PerceivedElement(
+        identifier="e0",
         bounds=Bounds(x=0, y=0, width=10, height=10),
         source=ElementSource.XML,
         role=ElementRole.TEXT,
         confidence=1.0,
-        text=text,
+        text="Home",
         tappable=False,
     )
-
-
-def _observation(*, texts: Sequence[str], visual_hash: str = "h0") -> ScreenObservation:
-    """
-    Build a :class:`ScreenObservation` whose elements carry the given texts.
-
-    FIX: Why standalone functions
-    """
-
-    elements = tuple(_element(identifier=f"e{idx}", text=text) for idx, text in enumerate(texts))
     return ScreenObservation(
         activity="com.test.app",
-        elements=elements,
+        elements=(element,),
         hashes=ScreenHashBundle(
             visual_hash=visual_hash,
             xml_hash="0000000000000000",
@@ -108,391 +100,115 @@ def _observation(*, texts: Sequence[str], visual_hash: str = "h0") -> ScreenObse
     )
 
 
-def _sub_goal(
-    *,
-    index: int,
-    criterion: Optional[str],
-    description: str = "test sub-goal",
-    directive: Optional[ActionType] = ActionType.TAP,
-) -> SubGoal:
-    """
-    Build a :class:`SubGoal` with the supplied criterion.
+def _requirement(assertion: str = "the home screen is open") -> ObservationRequirement:
+    return ObservationRequirement(assertion=assertion)
 
-    FIX: Why standalone functions
+
+class CriterionObserverModelAdjudicationTest(unittest.IsolatedAsyncioTestCase):
+    """
+    Pins model-based structured adjudication: the model's typed verdict drives the decision, never a
+    token heuristic; failures degrade to UNCLEAR; only SATISFIED is cached.
     """
 
-    return SubGoal(
-        index=index,
-        description=description,
-        directive=directive,
-        criterion=criterion,
-    )
-
-
-class CriterionObserverSymbolicTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Symbolic-layer pins: hit-ratio threshold, evidence capture, miss-then-fallback.
-    """
-
-    async def test_symbolic_hit_returns_satisfied_without_llm(self) -> None:
+    async def test_satisfied_verdict_drives_decision_via_structured_output(self) -> None:
         """
-        Criterion tokens present on the screen → SATISFIED, source=SYMBOLIC, no LLM call.
+        A satisfied model verdict yields SATISFIED with LLM source and clears the confidence floor.
         """
 
-        llm = _StubLLM(responses=[])
+        llm = _StubLLM(verdicts=[CriterionVerdict.SATISFIED])
         checker = CriterionObserver(llm=llm)
 
-        observation = _observation(
-            texts=["Jars", "&", "Containers", "Top rated"],
-        )
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="'Jars & containers' is visible on the screen.",
-        )
-
         decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
+            workflow_id="wf",
+            index=0,
+            requirement=_requirement(),
+            observation=_observation(),
         )
 
-        self.assertEqual(llm.calls, 0)
-        self.assertIn("jars", decision.evidence)
-        self.assertGreaterEqual(decision.confidence, 0.85)
-
-        self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
         self.assertEqual(decision.verdict, CriterionVerdict.SATISFIED)
-
-    async def test_symbolic_miss_returns_unclear_without_llm(self) -> None:
-        """
-        Too few criterion tokens match → returns SYMBOLIC/UNCLEAR; Tier-2
-        LLM is intentionally suppressed (criterion is observe-only today).
-        """
-
-        llm = _StubLLM(responses=[])
-
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home", "Categories"])
-
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login flow has been triggered and overlay is visible.",
-        )
-
-        decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
-        )
-
-        self.assertEqual(llm.calls, 0)
-        self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
-        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
-
-
-@unittest.skip(
-    "Tier-2 LLM adjudication is intentionally suppressed in CriterionObserver.check; "
-    "the call is preserved on the class but not invoked because the criterion "
-    "decision is currently observe-only. Re-enable these pins alongside the "
-    "call-site reactivation in core/services/criterion.py."
-)
-class CriterionObserverLLMLayerTest(unittest.IsolatedAsyncioTestCase):
-    """
-    LLM-layer pins: tri-state mapping, error degrades to UNCLEAR, leading-line evidence.
-    """
-
-    async def test_llm_unsatisfied_response_propagates(self) -> None:
-        """
-        LLM reply starting with 'UNSATISFIED' maps to UNSATISFIED verdict.
-        """
-
-        llm = _StubLLM(responses=["UNSATISFIED — login card not present."])
-        checker = CriterionObserver(llm=llm)
-
-        observation = _observation(texts=["Home", "Categories"])
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
-        )
-
-        decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
-        )
-
         self.assertEqual(decision.source, CriterionSource.LLM)
-        self.assertEqual(decision.verdict, CriterionVerdict.UNSATISFIED)
+        self.assertGreaterEqual(decision.confidence, 0.7)
+        self.assertEqual(llm.structured_payloads[0], CriterionAssessment)
 
-    async def test_llm_unclear_response_propagates(self) -> None:
+    async def test_unsatisfied_and_unclear_pass_through(self) -> None:
         """
-        Anything that is not SATISFIED / UNSATISFIED maps to UNCLEAR.
+        Unsatisfied is definitive; unclear stays below the confidence floor so it never advances.
         """
 
-        llm = _StubLLM(responses=["UNCLEAR — not enough evidence on this screen."])
-        checker = CriterionObserver(llm=llm)
-
-        observation = _observation(texts=["Home", "Categories"])
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
+        checker = CriterionObserver(llm=_StubLLM(verdicts=[CriterionVerdict.UNSATISFIED]))
+        unsat = await checker.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
+        self.assertEqual(unsat.verdict, CriterionVerdict.UNSATISFIED)
 
+        checker2 = CriterionObserver(llm=_StubLLM(verdicts=[CriterionVerdict.UNCLEAR]))
+        unclear = await checker2.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
+        )
+        self.assertEqual(unclear.verdict, CriterionVerdict.UNCLEAR)
+        self.assertLess(unclear.confidence, 0.7)
+
+    async def test_llm_failure_degrades_to_unclear(self) -> None:
+        """
+        An adjudication error degrades to UNCLEAR, never a false satisfaction.
+        """
+
+        checker = CriterionObserver(llm=_StubLLM(verdicts=[RuntimeError("provider down")]))
         decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
-
-        self.assertEqual(decision.source, CriterionSource.LLM)
         self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
-
-    async def test_llm_exception_degrades_to_unclear(self) -> None:
-        """
-        Any exception from the LLM port is caught and degraded to UNCLEAR.
-        """
-
-        llm = AsyncMock(spec=LLMPort)
-        llm.generate.side_effect = RuntimeError("provider down")
-
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home"])
-
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
-        )
-
-        decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
-        )
-
-        self.assertIn("RuntimeError", decision.notes or "")
         self.assertEqual(decision.source, CriterionSource.LLM)
-        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
 
-
-@unittest.skip(
-    "Cache pins exercise LLM-driven SATISFIED/UNSATISFIED/UNCLEAR verdicts; "
-    "since Tier-2 LLM is suppressed at the call site, only symbolic SATISFIED "
-    "is cacheable. Re-enable alongside CriterionObserverLLMLayerTest when the "
-    "criterion decision is wired into the gate as a real consumer."
-)
-class CriterionObserverCacheTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Cache pins: positive-only cache. SATISFIED verdicts are cached;
-    UNSATISFIED and UNCLEAR verdicts are not cached and re-invoke the LLM so a stuck loop cannot lock in a wrong verdict.
-    """
-
-    async def test_satisfied_verdict_is_cached(self) -> None:
+    async def test_satisfied_is_cached_unsatisfied_is_not(self) -> None:
         """
-        Repeated check with SATISFIED first call hits cache on second call.
+        A SATISFIED verdict serves from cache on the same screen; a non-satisfied one re-adjudicates.
         """
 
-        llm = _StubLLM(
-            responses=[
-                "SATISFIED — first call goes to LLM.",
-                "UNSATISFIED — would change verdict if called.",
-            ]
+        satisfied = _StubLLM(verdicts=[CriterionVerdict.SATISFIED, CriterionVerdict.UNSATISFIED])
+        checker = CriterionObserver(llm=satisfied)
+        first = await checker.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
-
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home"], visual_hash="hX")
-
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
+        second = await checker.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
-
-        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-
-        self.assertEqual(llm.calls, 1)
-
+        self.assertEqual(satisfied.calls, 1)
         self.assertEqual(first.source, CriterionSource.LLM)
-        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
-
         self.assertEqual(second.source, CriterionSource.CACHE)
-        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
 
-    async def test_unsatisfied_verdict_is_not_cached(self) -> None:
-        """
-        Repeated check with UNSATISFIED first call re-invokes the LLM — positive-only cache guarantees
-        a stuck loop cannot lock in a wrong UNSATISFIED verdict against a screen the agent has actually transitioned past.
-        """
-
-        llm = _StubLLM(
-            responses=[
-                "UNSATISFIED — first call.",
-                "SATISFIED — second call sees post-state.",
-            ]
+        unsatisfied = _StubLLM(verdicts=[CriterionVerdict.UNSATISFIED, CriterionVerdict.SATISFIED])
+        checker2 = CriterionObserver(llm=unsatisfied)
+        await checker2.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home"], visual_hash="hX")
-
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
+        again = await checker2.check(
+            workflow_id="wf", index=0, requirement=_requirement(), observation=_observation()
         )
-
-        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-
-        self.assertEqual(llm.calls, 2)
-
-        self.assertEqual(first.source, CriterionSource.LLM)
-        self.assertEqual(first.verdict, CriterionVerdict.UNSATISFIED)
-
-        self.assertEqual(second.source, CriterionSource.LLM)
-        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
-
-    async def test_unclear_verdict_is_not_cached(self) -> None:
-        """
-        Repeated check with UNCLEAR first call re-invokes the LLM.
-        """
-
-        llm = _StubLLM(
-            responses=[
-                "UNCLEAR — not enough evidence on first call.",
-                "SATISFIED — second call resolves.",
-            ]
-        )
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home"], visual_hash="hX")
-
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login half card is displayed on the screen.",
-        )
-
-        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-
-        self.assertEqual(llm.calls, 2)
-
-        self.assertEqual(first.source, CriterionSource.LLM)
-        self.assertEqual(first.verdict, CriterionVerdict.UNCLEAR)
-
-        self.assertEqual(second.source, CriterionSource.LLM)
-        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
+        self.assertEqual(unsatisfied.calls, 2)
+        self.assertEqual(again.verdict, CriterionVerdict.SATISFIED)
 
     async def test_distinct_screen_hash_bypasses_cache(self) -> None:
         """
-        A different visual_hash forces a fresh check even for cached SATISFIED.
+        A different visual hash forces a fresh adjudication even after a cached SATISFIED.
         """
 
-        llm = _StubLLM(
-            responses=[
-                "SATISFIED — screen A.",
-                "UNSATISFIED — screen B does not have it.",
-            ]
-        )
+        llm = _StubLLM(verdicts=[CriterionVerdict.SATISFIED, CriterionVerdict.UNSATISFIED])
         checker = CriterionObserver(llm=llm)
-        sub_goal = _sub_goal(
+        await checker.check(
+            workflow_id="wf",
             index=0,
-            criterion="Login half card is displayed on the screen.",
+            requirement=_requirement(),
+            observation=_observation(visual_hash="hA"),
         )
-
-        first = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=_observation(texts=["Home"], visual_hash="hA"),
+        other = await checker.check(
+            workflow_id="wf",
+            index=0,
+            requirement=_requirement(),
+            observation=_observation(visual_hash="hB"),
         )
-        second = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=_observation(texts=["Home"], visual_hash="hB"),
-        )
-
         self.assertEqual(llm.calls, 2)
-        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
-        self.assertEqual(second.verdict, CriterionVerdict.UNSATISFIED)
-
-
-class CriterionObserverSymbolicOnlyTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Pins the Tier-2 LLM suppression: the call site is commented out, so symbolic
-    verdicts (including UNCLEAR) flow through untouched and __llm_adjudicate is never invoked.
-    """
-
-    async def test_symbolic_miss_returns_unclear_without_invoking_llm(self) -> None:
-        """
-        Symbolic UNCLEAR is returned directly; the LLM port is never called.
-        """
-
-        llm = _StubLLM(responses=[])
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Home", "Categories"])
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="Login flow has been triggered and overlay is visible.",
-        )
-
-        decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=observation,
-        )
-
-        self.assertEqual(llm.calls, 0)
-        self.assertEqual(decision.source, CriterionSource.SYMBOLIC)
-        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
-
-    async def test_satisfied_symbolic_verdict_still_cached(self) -> None:
-        """
-        Symbolic SATISFIED verdicts cache so a repeated check on the same screen returns from cache.
-        """
-
-        llm = _StubLLM(responses=[])
-        checker = CriterionObserver(llm=llm)
-        observation = _observation(texts=["Jars", "Containers"], visual_hash="hX")
-        sub_goal = _sub_goal(
-            index=0,
-            criterion="'Jars & containers' is visible on the screen.",
-        )
-
-        first = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-        second = await checker.check(workflow_id="wf-1", sub_goal=sub_goal, observation=observation)
-
-        self.assertEqual(llm.calls, 0)
-        self.assertEqual(first.source, CriterionSource.SYMBOLIC)
-        self.assertEqual(first.verdict, CriterionVerdict.SATISFIED)
-        self.assertEqual(second.source, CriterionSource.CACHE)
-        self.assertEqual(second.verdict, CriterionVerdict.SATISFIED)
-
-    async def test_llm_adjudicate_helper_still_present(self) -> None:
-        """
-        The private LLM adjudication helper remains on the class for easy reactivation.
-        """
-
-        helper = getattr(CriterionObserver, "_CriterionObserver__llm_adjudicate", None)
-        self.assertTrue(callable(helper))
-
-
-class CriterionObserverEmptyCriterionTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Pins for sub-goals lacking criterion text.
-    """
-
-    async def test_missing_criterion_returns_unclear(self) -> None:
-        """
-        Sub-goal with no criterion and no description text → UNCLEAR.
-        """
-
-        llm = _StubLLM(responses=[])
-        checker = CriterionObserver(llm=llm)
-        sub_goal = SubGoal(index=0, description="", criterion=None, directive=None)
-
-        decision = await checker.check(
-            workflow_id="wf-1",
-            sub_goal=sub_goal,
-            observation=_observation(texts=["Home"]),
-        )
-
-        self.assertEqual(llm.calls, 0)
-        self.assertEqual(decision.verdict, CriterionVerdict.UNCLEAR)
+        self.assertEqual(other.verdict, CriterionVerdict.UNSATISFIED)
 
 
 if __name__ == "__main__":

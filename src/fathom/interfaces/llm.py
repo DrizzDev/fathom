@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Union
 
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.llm import StructuredOutput
 from fathom.schemas.results import GenerateResult
+
+if TYPE_CHECKING:
+    from fathom.schemas.configuration import LLMConfiguration
 
 # Type alias for LLM prompt parts (text, images, or structured content)
 PromptPart = Union[str, bytes, Dict[str, str]]
@@ -69,6 +72,18 @@ class LLMPort(ABC):
         """
 
         return  # noqa: PLE0101
+
+    def derive(self, *, overrides: "LLMConfiguration") -> "LLMPort":
+        """
+        Spawn a sibling adapter sharing credentials and model, with only the explicitly-set
+        fields of ``overrides`` applied on top.
+
+        Default returns self; providers that support reconfiguration (e.g. Gemini) override
+        this to build a genuinely independent sibling.
+        """
+
+        _ = overrides
+        return self
 
     @abstractmethod
     async def cleanup(self) -> None:

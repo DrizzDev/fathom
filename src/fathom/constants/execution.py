@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 # Visual hashing
 VISUAL_HASH_LENGTH = 16
@@ -45,6 +45,15 @@ DEFAULT_RETRY_DELAY = 500  # Base delay for exponential backoff (milliseconds)
 # Signal adapter heartbeat interval (seconds)
 SIGNAL_HEARTBEAT_INTERVAL = 5.0
 RECOMMENDED_WORKFLOW_TASK_TIMEOUT_SECONDS = 60
+
+
+class SignalDeadline(float, Enum):
+    """
+    Seconds a signal wait may block before soft-failing typed; must stay below the hosting Temporal activity timeout.
+    """
+
+    ASK = 600.0
+
 
 # Maximum time (seconds) to wait for background tasks during shutdown
 DRAIN_TIMEOUT = 60.0

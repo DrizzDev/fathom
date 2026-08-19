@@ -5,17 +5,13 @@ from logging import getLogger
 from typing import List, Optional, Set, Tuple
 
 from fathom.constants import (
-    ACTION_EXECUTED_TYPES,
     ActionType,
     StepEvent,
 )
-from fathom.constants.agent import DirectiveKind
 from fathom.constants.reasoning import (
     ACTION_MIN_CONFIDENCE,
     ACTION_NEXT_PHASE_CONFIDENCE,
     COMPLETION_KEYWORDS,
-    LATERAL_CREDIT_SIMILARITY_THRESHOLD,
-    MEANINGFUL_SCREEN_DELTA_FLOOR,
     NEXT_PHASE_KEYWORDS,
     OPENER_GOAL_WORDS,
     RATIONALE_CONTEXT_RELEVANCE_THRESHOLD,
@@ -25,19 +21,9 @@ from fathom.constants.reasoning import (
 from fathom.core.agent.opener import OpenerSignalPolicy
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.actions import Action
-from fathom.schemas.completion import (
-    ActionEvidence,
-    ClaimEvidence,
-    CompletionEvidence,
-    CriterionEvidence,
-    ScreenEvidence,
-    ValidationEvidence,
-)
-from fathom.schemas.criterion import CriterionDecision, CriterionVerdict
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
-from fathom.schemas.reasoning import CompletionSignal, SubGoalCompletionSignal
+from fathom.schemas.reasoning import CompletionSignal
 from fathom.schemas.results import AnalysisResult
-from fathom.schemas.subgoal import SubGoal
 
 logger = getLogger(name=__name__)
 
@@ -167,234 +153,6 @@ class Reasoner:
             expected_screen=analysis.is_goal_complete,
         )
 
-    def analyze_subgoal_completion(
-        self,
-        analysis: AnalysisResult,
-        sub_goal_description: str,
-        *,
-        screen_changed: bool = False,
-        delta_score: Optional[float] = None,
-        screen_description: Optional[str] = None,
-    ) -> SubGoalCompletionSignal:
-        """
-        Multi-signal verification for sub-goal completion.
-        ``delta_score`` gates screen verification by magnitude; ``screen_changed`` is a boolean fallback when no magnitude is available.
-        """
-
-        evidence: List[str] = []
-        action = self.__require_action(analysis=analysis)
-        target = sub_goal_description.lower()
-
-        # Flag 1: model explicitly raised the completion flag via tool output
-        # or recommended the COMPLETE action.
-        if flagged_complete := (
-            analysis.is_sub_goal_complete
-            or analysis.is_goal_complete
-            or action.action_type == ActionType.COMPLETE
-        ):
-            evidence.append("Model flagged sub-goal completion via tool output")
-
-        # Flag 2: rationale-side verification. Prefer the model's explicit
-        # completion reason; fall back to a keyword + similarity heuristic
-        # so non-explicit narrations are not silently dropped.
-        rationale_verified, rationale_evidence, keyword_match, similarity = self.__verify_rationale(
-            target=target,
-            analysis=analysis,
-            flagged_complete=flagged_complete,
-            screen_description=screen_description,
-        )
-        if rationale_evidence:
-            evidence.append(rationale_evidence)
-
-        # Flag 3: an action that actually ran (planning-only actions excluded).
-        action_executed = action.action_type in ACTION_EXECUTED_TYPES
-
-        if action_executed:
-            evidence.append(f"Action executed: {action.action_type.value}")
-
-        # Flag 4: post-action screen change exceeded the meaningful-delta floor.
-        # Magnitude path rejects animation noise; boolean path is the fallback.
-        screen_verified, screen_evidence = self.__verify_screen_change(
-            delta_score=delta_score,
-            screen_changed=screen_changed,
-        )
-        if screen_verified:
-            evidence.append(screen_evidence)
-
-        elif flagged_complete:
-            evidence.append(f"WARNING: model flagged complete but {screen_evidence}")
-
-        llm_confidence = self.__derive_llm_confidence(
-            analysis=analysis, keyword_match=keyword_match, similarity=similarity
-        )
-
-        signal = SubGoalCompletionSignal(
-            trace_verified=False,
-            keyword_match=keyword_match,
-            llm_confidence=llm_confidence,
-            action_executed=action_executed,
-            screen_verified=screen_verified,
-            flagged_complete=flagged_complete,
-            rationale_verified=rationale_verified,
-            evidence="; ".join(evidence) if evidence else "No sub-goal completion signals detected",
-        )
-
-        logger.info(
-            "[Reasoner] Sub-goal verdict",
-            extra={
-                "component": "reasoner",
-                "event": "subgoal_signals",
-                "sub_goal": sub_goal_description[:80],
-                "flagged_complete": flagged_complete,
-                "rationale_verified": rationale_verified,
-                "action_executed": action_executed,
-                "screen_verified": screen_verified,
-                "signal.count": signal.count_signals(),
-                "delta_score": delta_score,
-                "similarity": round(similarity, 3),
-                "llm_confidence": round(llm_confidence, 3),
-            },
-        )
-        return signal
-
-    def assess_completion(
-        self,
-        *,
-        sub_goal: SubGoal,
-        screen_changed: bool,
-        execution_success: bool,
-        analysis: AnalysisResult,
-        delta_score: Optional[float] = None,
-        effect: Optional[ActionEffect] = None,
-        screen_description: Optional[str] = None,
-        semantic_similarity: Optional[float] = None,
-        directive_kind: Optional[DirectiveKind] = None,
-        criterion_decision: Optional[CriterionDecision] = None,
-    ) -> CompletionEvidence:
-        """
-        Assemble this turn's typed CompletionEvidence bundle for the gate to adjudicate.
-        NO_PROGRESS effect vetoes screen.evolved so animation noise alone cannot satisfy the gate.
-        """
-
-        notes: List[str] = []
-        action = self.__require_action(analysis=analysis)
-        target = sub_goal.description.lower()
-
-        asserted = (
-            analysis.is_sub_goal_complete
-            or analysis.is_goal_complete
-            or action.action_type == ActionType.COMPLETE
-        )
-        if asserted:
-            notes.append("claim.asserted: model flagged completion via tool output")
-
-        directive_aborts = directive_kind is DirectiveKind.ABORT
-        explicit_reason = analysis.subgoal_completion_reason or analysis.goal_completion_reason
-
-        if directive_aborts:
-            explained = True
-            rationale_similarity = 1.0
-            notes.append("claim.explained.via_operator_directive")
-            rationale_note: Optional[str] = (
-                "Completion reason provided by operator directive (HITL)"
-            )
-        elif asserted and explicit_reason:
-            explained = True
-            rationale_note = f"Completion reason provided by model: '{explicit_reason}'"
-            rationale_similarity = (
-                semantic_similarity
-                if semantic_similarity is not None
-                else SequenceMatcher(
-                    None,
-                    target,
-                    f"{analysis.reasoning} {screen_description or ''}".lower(),
-                ).ratio()
-            )
-            notes.append("claim.explained.via_explicit_reason")
-        elif (
-            asserted
-            and semantic_similarity is not None
-            and semantic_similarity >= LATERAL_CREDIT_SIMILARITY_THRESHOLD
-        ):
-            explained = True
-            rationale_note = f"Completion reason aligned by embedding similarity (cosine={semantic_similarity:.2f})"
-            rationale_similarity = semantic_similarity
-            notes.append("claim.explained.via_embedding_similarity")
-        else:
-            explained, rationale_note, _, rationale_similarity = self.__verify_rationale(
-                target=target,
-                analysis=analysis,
-                flagged_complete=asserted,
-                screen_description=screen_description,
-            )
-        if explained and rationale_note is not None:
-            notes.append(f"claim.explained: {rationale_note}")
-
-        if asserted and rationale_similarity < LATERAL_CREDIT_SIMILARITY_THRESHOLD:
-            logger.info(
-                "Completion claim observed with weak rationale alignment to active sub-goal",
-                extra={
-                    "component": "reasoner",
-                    "event": "completion.lateral_credit.observed",
-                    "claim.explained": explained,
-                    "sub_goal.index": sub_goal.index,
-                    "action.type": action.action_type.value,
-                    "sub_goal.description": sub_goal.description[:120],
-                    "rationale.similarity": round(rationale_similarity, 3),
-                    "rationale.threshold": LATERAL_CREDIT_SIMILARITY_THRESHOLD,
-                    "model.goal_completion_reason": (
-                        (analysis.goal_completion_reason or "")[:240] or None
-                    ),
-                    "model.subgoal_completion_reason": (
-                        (analysis.subgoal_completion_reason or "")[:240] or None
-                    ),
-                },
-            )
-
-        dispatched = action.action_type in ACTION_EXECUTED_TYPES
-        if dispatched:
-            notes.append(f"action.dispatched: {action.action_type.value}")
-
-        evolved, screen_note = self.__verify_screen_change(
-            effect=effect,
-            delta_score=delta_score,
-            screen_changed=screen_changed,
-        )
-
-        if evolved:
-            notes.append(f"screen.evolved: {screen_note}")
-
-        elif asserted:
-            notes.append(f"screen.unchanged_despite_claim: {screen_note}")
-
-        criterion_evidence: Optional[CriterionEvidence] = None
-
-        if criterion_decision is not None:
-            criterion_observed = criterion_decision.verdict is CriterionVerdict.SATISFIED
-            criterion_evidence = CriterionEvidence(observed=criterion_observed)
-
-            notes.append(
-                f"criterion.{'observed' if criterion_observed else 'not_observed'}: "
-                f"verdict={criterion_decision.verdict.value} "
-                f"confidence={criterion_decision.confidence:.2f}"
-            )
-
-        return CompletionEvidence(
-            notes=tuple(notes),
-            criterion=criterion_evidence,
-            screen=ScreenEvidence(evolved=evolved),
-            action=ActionEvidence(
-                dispatched=dispatched,
-                executed=execution_success,
-            ),
-            validation=ValidationEvidence(
-                executed=self.__validation_executed(
-                    action=action, execution_success=execution_success
-                )
-            ),
-            claim=ClaimEvidence(asserted=asserted, explained=explained),
-        )
-
     @staticmethod
     def __validation_executed(*, action: Action, execution_success: bool) -> bool:
         """
@@ -465,22 +223,14 @@ class Reasoner:
     def __verify_screen_change(
         *,
         screen_changed: bool,
-        delta_score: Optional[float],
         effect: Optional[ActionEffect] = None,
     ) -> Tuple[bool, str]:
         """
         Return (verified, evidence) for the screen-change verification; NO_PROGRESS effect short-circuits to false.
-        Magnitude path takes precedence over the boolean fallback when neither veto fires.
         """
 
         if effect is not None and effect.status is ActionEffectStatus.NO_PROGRESS:
             return (False, "effect.status=no_progress vetoed screen.evolved")
-
-        if delta_score is not None:
-            if delta_score >= MEANINGFUL_SCREEN_DELTA_FLOOR:
-                return True, f"Screen changed meaningfully (delta={delta_score:.2f})"
-
-            return False, f"delta {delta_score:.2f} below floor {MEANINGFUL_SCREEN_DELTA_FLOOR}"
 
         if screen_changed:
             return True, "Screen changed after action execution"

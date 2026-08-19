@@ -83,6 +83,42 @@ class PhaseAnnouncer:
             message=self.__message.step.grounding,
         )
 
+    async def planning(self, *, intent: str) -> None:
+        """
+        Announce planner entry for the next step and start a heartbeat pulse across its internal retries.
+        """
+
+        await self.__open(
+            intent=intent,
+            kind=PhaseKind.PLANNING,
+            event=FathomEvent.PLANNING,
+            message=self.__message.step.planning,
+        )
+
+    async def verifying(self, *, intent: str) -> None:
+        """
+        Announce the post-action completion check and start a heartbeat pulse for it.
+        """
+
+        await self.__open(
+            intent=intent,
+            kind=PhaseKind.VERIFYING,
+            event=FathomEvent.VERIFYING,
+            message=self.__message.step.verifying,
+        )
+
+    async def authoring(self, *, intent: str) -> None:
+        """
+        Announce post-execution script authoring and start a heartbeat pulse for it.
+        """
+
+        await self.__open(
+            intent=intent,
+            kind=PhaseKind.AUTHORING,
+            event=FathomEvent.AUTHORING,
+            message=self.__message.intent.authoring,
+        )
+
     async def plan_synthesized(self, *, intent: str, sub_goals: List[Dict[str, Any]]) -> None:
         """
         Stop the pulse and emit the plan-synthesized event carrying the sub-goal breakdown.

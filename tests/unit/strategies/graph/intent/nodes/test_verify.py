@@ -4,6 +4,7 @@ import json
 import unittest
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
+from unittest.mock import AsyncMock
 
 from fathom.constants import ActionType
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
@@ -12,11 +13,10 @@ from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.flow import CompletionAssertion
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
+from tests.builders import SubGoalFixtures
 
 
 class _LLM:
@@ -118,6 +118,7 @@ class _Provider:
             intent="finish onboarding",
             max_steps=10,
             workflow_id="run-test",
+            phase=AsyncMock(),
             perception=_Perception(
                 image=capture_image,
                 activity=capture_activity,
@@ -157,8 +158,8 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         state.update_screen(screen=self._screen())
         state.set_sub_goals(
             [
-                SubGoal(index=0, description="Open the app"),
-                SubGoal(index=1, description="Reach the Home screen"),
+                SubGoalFixtures.make(index=0, description="Open the app"),
+                SubGoalFixtures.make(index=1, description="Reach the Home screen"),
             ]
         )
         state.mark_complete(reason="Sub-goal pending verification")
@@ -172,20 +173,11 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         state.update_screen(screen=self._screen())
         state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap address selector"),
-                SubGoal(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=0, description="Tap address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
             ]
         )
-        state.mark_current_sub_goal_complete(
-            completion_signal=SubGoalCompletionSignal(
-                llm_confidence=1.0,
-                screen_verified=True,
-                action_executed=True,
-                flagged_complete=True,
-                rationale_verified=True,
-                evidence="first step complete",
-            )
-        )
+        state.advance_current_sub_goal()
         return state
 
     @staticmethod
@@ -311,11 +303,11 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
             "Phone Number input field",
         )
 
-    async def test_pending_final_commit_blank_reason_does_not_mark_rationale_verified(
+    async def test_pending_final_commit_blank_reason_still_commits_with_generic_reason(
         self,
     ) -> None:
         """
-        Empty verifier evidence must not receive a positive rationale signal.
+        A blank verifier rationale still commits the final goal, under a generic completion reason.
         """
 
         provider = _Provider(
@@ -332,7 +324,6 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[IntentStateKey.SHOULD_RETRY])
         final_sub_goal = provider.context.agent_state.get_all_sub_goals()[1]
         self.assertTrue(final_sub_goal.is_complete())
-        self.assertFalse(final_sub_goal.rationale_verified)
         self.assertEqual(
             result[CommonStateKey.COMPLETION_REASON],
             "Verifier accepted completion without detailed rationale.",
@@ -392,16 +383,7 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
             llm_content='{"is_complete": true, "reason": "Done"}',
         )
         provider.context.agent_state.set_current_sub_goal_index(1)
-        provider.context.agent_state.mark_current_sub_goal_complete(
-            completion_signal=SubGoalCompletionSignal(
-                llm_confidence=1.0,
-                screen_verified=True,
-                action_executed=True,
-                flagged_complete=True,
-                rationale_verified=True,
-                evidence="done",
-            )
-        )
+        provider.context.agent_state.advance_current_sub_goal()
         node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 
         result = await node.run(
@@ -441,16 +423,7 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = self._final_agent_state()
-        agent_state.mark_current_sub_goal_complete(
-            completion_signal=SubGoalCompletionSignal(
-                llm_confidence=1.0,
-                screen_verified=True,
-                action_executed=True,
-                flagged_complete=True,
-                rationale_verified=True,
-                evidence="done",
-            )
-        )
+        agent_state.advance_current_sub_goal()
         provider = _Provider(
             agent_state=agent_state,
             llm_content='{"is_complete": true, "reason": "Done"}',

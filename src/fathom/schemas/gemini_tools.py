@@ -109,6 +109,10 @@ class VerifyGoalArgs(GeminiCompletionFlags):
         "Goal State",
         description="Current screen description or identifier.",
     )
+    assertion: Optional[str] = Field(
+        default=None,
+        description="Crisp observable condition this verification asserts on the current screen.",
+    )
 
 
 class ValidateStateArgs(GeminiCompletionFlags):

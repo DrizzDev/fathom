@@ -920,6 +920,17 @@ class JobSchedulerConfiguration(BaseModel):
         return self
 
 
+class OracleConfiguration(BaseModel):
+    """
+    Shadow criterion-oracle settings.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether the shadow oracle reads criteria against settled screens.",
+    )
+
+
 class FathomConfiguration(BaseModel):
     """
     Root configuration container for the Fathom runtime.
@@ -927,6 +938,7 @@ class FathomConfiguration(BaseModel):
     """
 
     llm: LLMConfiguration = Field(default_factory=LLMConfiguration)
+    oracle: OracleConfiguration = Field(default_factory=OracleConfiguration)
     device: DeviceConfiguration = Field(default_factory=DeviceConfiguration)
     engine: ExecutionConfiguration = Field(default_factory=ExecutionConfiguration)
 

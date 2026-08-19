@@ -91,21 +91,50 @@ class GeminiPromptBuilder(PromptBuilder):
             index = sub_goal_info.get("index")
             total = sub_goal_info.get("total", 0)
             description = sub_goal_info.get("description")
+            assertion = sub_goal_info.get("assertion")
 
             if index is not None and total > 1:
                 progress_text = f"[{index + 1}/{total}]"
+                if assertion:
+                    directives = (
+                        f"Completion condition (must be visibly true on the current screen): "
+                        f"{assertion}\n\n"
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "1. Focus EXCLUSIVELY on this task; do NOT attempt future steps.\n"
+                        "2. Judge the completion condition ONLY from what is visible on the current "
+                        "screen now, and report it as a 'visual_assessment' object (verdict SATISFIED, "
+                        "NOT_SATISFIED, or UNCLEAR; confidence 0..1; concise visible evidence).\n"
+                        "3. The 'visual_assessment' verdict is the ONLY completion signal for this "
+                        "task. Set goal_completed and sub_goal_completed to false — they are required "
+                        "by the schema but ignored for this goal — and do NOT return a COMPLETE action.\n"
+                        "4. If the condition is SATISFIED, do NOT also propose an action this turn; "
+                        "otherwise propose the single best action to make progress.\n"
+                    )
+                else:
+                    proof_clause = (
+                        "5. This step changes persistent state (adds, saves, submits, pays, deletes). "
+                        "Do NOT signal completion until the resulting state is VISIBLE on screen "
+                        "(e.g. the item is shown in the cart). A claim without a visible result is not "
+                        "completion.\n"
+                        if sub_goal_info.get("durable")
+                        else ""
+                    )
+                    directives = (
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "1. Focus EXCLUSIVELY on completing this task\n"
+                        "2. Do NOT attempt to complete future steps\n"
+                        "3. When this task is FULLY COMPLETED, signal completion by:\n"
+                        "   - Setting 'is_goal_complete: true' in your response, OR\n"
+                        "   - Returning a COMPLETE action\n"
+                        "4. The system will automatically advance to the next step\n"
+                        f"{proof_clause}"
+                    )
 
                 parts.append(
                     f"<CURRENT_STEP>\n"
                     f"Progress: {progress_text}\n"
                     f"Task: {description}\n\n"
-                    f"CRITICAL INSTRUCTIONS:\n"
-                    f"1. Focus EXCLUSIVELY on completing this task\n"
-                    f"2. Do NOT attempt to complete future steps\n"
-                    f"3. When this task is FULLY COMPLETED, signal completion by:\n"
-                    f"   - Setting 'is_goal_complete: true' in your response, OR\n"
-                    f"   - Returning a COMPLETE action\n"
-                    f"4. The system will automatically advance to the next step\n"
+                    f"{directives}"
                     f"</CURRENT_STEP>"
                 )
                 logger.info(
@@ -187,7 +216,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</USER_OVERRIDE>"
             )
 
-        # 5. Verifier Feedback (system-internal rejection — adjust the next action)
+        # 5. Verifier Feedback (VERIFY-node rejection — adjust the next action)
         if verifier_feedback := context.get("verifier_feedback", []):
             entries = [
                 f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in verifier_feedback
@@ -209,7 +238,22 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</VERIFIER_FEEDBACK>"
             )
 
-        # 5. Interaction Cadence (Deterministic Repetition Tracking)
+        # 5b. Completion Feedback (post-action vision refuted the sub-goal — correct the approach)
+        if completion_feedback := context.get("completion_feedback", []):
+            notes = [
+                f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}"
+                for item in completion_feedback
+            ]
+            parts.append(
+                "<COMPLETION_FEEDBACK>\n"
+                "The screen was checked after your last action and the active sub-goal is NOT satisfied "
+                "yet. Do not assume it is done and do not re-assert completion — take the next concrete UI "
+                "action that actually advances it, correcting your approach using the reason below.\n"
+                + "\n".join(notes)
+                + "\n</COMPLETION_FEEDBACK>"
+            )
+
+        # 6. Interaction Cadence (Deterministic Repetition Tracking)
         # Placed LAST to ensure maximum recency bias and adherence when stuck
         if tracking_note:
             parts.append(f"<SYSTEM_ALERT>\nCRITICAL: {tracking_note}\n</SYSTEM_ALERT>")

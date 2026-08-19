@@ -6,9 +6,8 @@ from fathom.constants.state import IntentStateKey, VerifyMode
 from fathom.core.agent.state import AgentState
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.reasoning import SubGoalCompletionSignal
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.verification import VerificationModePolicy
+from tests.builders import SubGoalFixtures
 
 
 class VerificationModePolicyTest(unittest.TestCase):
@@ -31,21 +30,6 @@ class VerificationModePolicyTest(unittest.TestCase):
 
         return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
 
-    @staticmethod
-    def __signal() -> SubGoalCompletionSignal:
-        """
-        Return a valid signal for advancing sub-goals.
-        """
-
-        return SubGoalCompletionSignal(
-            llm_confidence=1.0,
-            screen_verified=True,
-            action_executed=True,
-            flagged_complete=True,
-            rationale_verified=True,
-            evidence="unit test",
-        )
-
     def test_producer_uses_sub_goal_mode_for_non_final_active_sub_goal(self) -> None:
         """
         Producers stamp SUB_GOAL while there is more sub-goal work after the active one.
@@ -54,8 +38,8 @@ class VerificationModePolicyTest(unittest.TestCase):
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Open address selector"),
-                SubGoal(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=0, description="Open address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
             ]
         )
 
@@ -69,7 +53,9 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
 
         mode = self.__policy.mode_for_producer(agent_state=agent_state)
 
@@ -81,8 +67,10 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
-        agent_state.mark_current_sub_goal_complete(completion_signal=self.__signal())
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
+        agent_state.advance_current_sub_goal()
 
         mode = self.__policy.mode_for_producer(agent_state=agent_state)
 
@@ -110,8 +98,8 @@ class VerificationModePolicyTest(unittest.TestCase):
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Open address selector"),
-                SubGoal(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=0, description="Open address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
             ]
         )
 
@@ -125,7 +113,9 @@ class VerificationModePolicyTest(unittest.TestCase):
         """
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
-        agent_state.set_sub_goals([SubGoal(index=0, description="Confirm SalarySe address")])
+        agent_state.set_sub_goals(
+            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+        )
 
         mode = self.__policy.mode_for_verify(state={}, agent_state=agent_state)
 

@@ -1,12 +1,24 @@
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.constants import ActionType
-from fathom.constants.subgoal import (
-    DEFAULT_SUB_GOAL_MAX_STEPS,
-)
+from fathom.constants.subgoal import DEFAULT_SUB_GOAL_MAX_STEPS
+from fathom.schemas.base.common import NonBlank, SealedModel
+from fathom.schemas.steps import StepResult
+from fathom.schemas.success import Success
+
+
+class PendingProof(SealedModel):
+    """
+    A correlated successful command receipt held on a goal awaiting its later visual postcondition.
+    """
+
+    receipt: StepResult = Field(
+        description="The matching executed command step proving the primitive ran, pending its postcondition."
+    )
 
 
 class SubGoalStatus(StrEnum):
@@ -20,131 +32,144 @@ class SubGoalStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
 
 
-class SubGoalKind(StrEnum):
+class SubGoal(SealedModel):
     """
-    Classification used to select the completion gate strategy for a sub-goal.
-    """
-
-    ACTION = "action"
-    VALIDATION = "validation"
-
-
-class SubGoal(BaseModel):
-    """
-    Represents a single sub-goal in a decomposed intent.
-    Sub-goals must be executed sequentially without skipping.
+    Immutable definition of one decomposed sub-goal.
     """
 
-    description: str = Field(description="Task description for this sub-goal")
-    index: int = Field(description="Position in the decomposition sequence (0-based)")
+    index: int = Field(ge=0, description="Position in the decomposition sequence.")
+    objective: NonBlank = Field(description="Observable objective this sub-goal must achieve.")
+    success: Success = Field(description="The single typed definition of this sub-goal's success.")
 
-    criterion: str | None = Field(
-        default=None,
-        description="Observable terminal state criterion for compatibility with execution tasks.",
-    )
-    directive: Optional[ActionType] = Field(
-        default=None,
-        description=(
-            "Structured action the planner must emit to satisfy this sub-goal. "
-            "The completion gate compares the planner-emitted action_type "
-            "against this value to detect divergence. Optional only for "
-            "backward compatibility with checkpoints written before the "
-            "directive contract existed; new decompositions always populate it."
-        ),
-    )
+
+class Progress(BaseModel):
+    """
+    Mutable execution state for one sub-goal.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     status: SubGoalStatus = Field(
-        default=SubGoalStatus.PENDING, description="Current lifecycle status"
+        default=SubGoalStatus.PENDING, description="Current lifecycle status."
     )
-
-    kind: SubGoalKind = Field(
-        default=SubGoalKind.ACTION,
-        description=(
-            "Classification used by the completion gate: ACTION sub-goals require a "
-            "state-mutating action and screen evolution to advance; VALIDATION sub-goals "
-            "advance on an asserted completion claim alone."
-        ),
+    attempts: int = Field(default=0, ge=0, description="Device actions spent on this sub-goal.")
+    recovery: int = Field(
+        default=0, ge=0, description="Escalation deferrals accrued on this sub-goal."
     )
-
-    # Completion signals (tracked for multi-signal verification)
-    flagged_complete: bool = Field(default=False, description="Model raised the completion flag")
-    trace_verified: bool = Field(
-        default=False, description="Trace/action history confirms completion"
-    )
-    rationale_verified: bool = Field(
-        default=False, description="Rationale tokens match sub-goal completion keywords"
-    )
-    completion_verified: bool = Field(
-        default=False, description="Final verification that sub-goal is complete"
-    )
-
-    confidence: float = Field(
-        default=1.0, ge=0.0, le=1.0, description="Decomposer confidence (0.0=low, 1.0=perfect)"
-    )
-
-    max_steps: int = Field(
-        ge=1,
+    limit: int = Field(
         default=DEFAULT_SUB_GOAL_MAX_STEPS,
-        description="Maximum graph iterations the agent may spend on this sub-goal.",
+        gt=0,
+        description="Device-action budget before the sub-goal is over budget.",
+    )
+    proof: Optional[PendingProof] = Field(
+        default=None,
+        description="Additive checkpointed P5 evidence: a correlated command receipt ignored by live decisions until P6.",
     )
 
-    deferral_count: int = Field(
-        ge=0,
-        default=0,
-        description=(
-            "Consecutive escalations deferred by the escalation gate while "
-            "this sub-goal was active. Resets on observable progress or is "
-            "implicitly reset by sub-goal advance (the next sub-goal starts "
-            "at 0). Bounded by the gate's deferral_limit so deferral cannot "
-            "hide a genuinely stuck flow indefinitely."
-        ),
-    )
-    completion_claim_streak: int = Field(
-        ge=0,
-        default=0,
-        description=(
-            "Consecutive planner emits of ``validate`` + ``flagged_complete`` "
-            "against a non-validate directive while this sub-goal was active. "
-            "Counts the divergence pattern that arises when the app skips an "
-            "intermediate screen and the named action is no longer reachable "
-            "but the criterion is already satisfied. Bounded by "
-            "IMPLICIT_COMPLETION_THRESHOLD; on reach the completion gate "
-            "accepts the divergence as an implicit completion and advances."
-        ),
-    )
 
-    def mark_in_progress(self) -> None:
+class GoalState(BaseModel):
+    """
+    Pairs an immutable sub-goal definition with its mutable progress.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal: SubGoal = Field(description="Immutable sub-goal definition.")
+    progress: Progress = Field(default_factory=Progress, description="Mutable execution state.")
+
+    @property
+    def index(self) -> int:
         """
-        Mark sub-goal as currently being executed.
+        Position of this sub-goal in the decomposition sequence.
         """
 
-        self.status = SubGoalStatus.IN_PROGRESS
+        return self.goal.index
 
-    def mark_complete(
-        self,
-        trace_verified: bool = False,
-        flagged_complete: bool = False,
-        rationale_verified: bool = False,
-    ) -> None:
+    @property
+    def objective(self) -> str:
         """
-        Mark sub-goal as complete with multi-signal verification.
+        Observable objective this sub-goal must achieve.
         """
 
-        self.trace_verified = trace_verified
-        self.flagged_complete = flagged_complete
-        self.rationale_verified = rationale_verified
+        return self.goal.objective
 
-        self.completion_verified = True
-        self.status = SubGoalStatus.COMPLETE
+    @property
+    def success(self) -> Success:
+        """
+        Typed definition of this sub-goal's success.
+        """
+
+        return self.goal.success
+
+    @property
+    def deferral_count(self) -> int:
+        """
+        Escalation deferrals accrued on this sub-goal.
+        """
+
+        return self.progress.recovery
+
+    @property
+    def over_budget(self) -> bool:
+        """
+        Whether device actions on this sub-goal have reached its budget.
+        """
+
+        return self.progress.attempts >= self.progress.limit
+
+    def is_pending(self) -> bool:
+        """
+        Whether the sub-goal has not yet been started.
+        """
+
+        return self.progress.status is SubGoalStatus.PENDING
 
     def is_complete(self) -> bool:
         """
-        Check if sub-goal is in COMPLETE state.
+        Whether the sub-goal has been completed.
         """
 
-        return self.status == SubGoalStatus.COMPLETE
+        return self.progress.status is SubGoalStatus.COMPLETE
 
-    def __repr__(self) -> str:
-        return (
-            f"SubGoal(idx={self.index}, status={self.status.value}, "
-            f"desc='{self.description[:30]}...', confidence={self.confidence:.2f})"
-        )
+    def mark_in_progress(self) -> None:
+        """
+        Transition the sub-goal into the in-progress state.
+        """
+
+        self.progress.status = SubGoalStatus.IN_PROGRESS
+
+    def mark_complete(self) -> None:
+        """
+        Transition the sub-goal into the complete state.
+        """
+
+        self.progress.status = SubGoalStatus.COMPLETE
+
+    def mark_failed(self) -> None:
+        """
+        Transition the sub-goal into the failed state.
+        """
+
+        self.progress.status = SubGoalStatus.FAILED
+
+    def record_attempt(self) -> None:
+        """
+        Count one device action spent against this sub-goal's budget.
+        """
+
+        self.progress.attempts += 1
+
+    def record_deferral(self) -> None:
+        """
+        Count one escalation deferral against this sub-goal.
+        """
+
+        self.progress.recovery += 1
+
+    def clear_deferrals(self) -> None:
+        """
+        Reset this sub-goal's escalation-deferral count.
+        """
+
+        if self.progress.recovery != 0:
+            self.progress.recovery = 0

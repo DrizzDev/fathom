@@ -55,10 +55,14 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         Build the workflow-scoped evidence source, the policy, and the Drizz dialect.
         """
 
+        workflow_trace = self.__workflow_trace()
+        if not workflow_trace.exists():
+            self.skipTest(f"History fixture absent (gitignored): {workflow_trace}")
+
         self.__temporary = TemporaryDirectory()
         self.addCleanup(self.__temporary.cleanup)
         self.__fixture_directory = Path(self.__temporary.name)
-        self.__execution_trace().write_text(self.__workflow_trace().read_text())
+        self.__execution_trace().write_text(workflow_trace.read_text())
 
         self.__source = HistoryEvidenceSource(
             path_manager=StubPathManager(directory=self.__fixture()),

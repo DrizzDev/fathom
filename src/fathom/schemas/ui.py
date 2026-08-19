@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -88,5 +88,6 @@ class LabeledElement(BaseModel):
 
     bounds: UIBounds
     attributes: Dict[str, Any]
+    interactive: Optional[bool] = None
 
     model_config = ConfigDict(frozen=False)

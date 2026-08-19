@@ -5,6 +5,10 @@ from typing import Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from fathom.constants.swipe import (
+    ANCHOR_RESERVE_CEILING,
+    DEFAULT_ANCHOR_RESERVE_BOTTOM,
+    DEFAULT_ANCHOR_RESERVE_SIDE,
+    DEFAULT_ANCHOR_RESERVE_TOP,
     DEFAULT_SWIPE_MINIMUM_TRAVEL,
     DEFAULT_SWIPE_MINIMUM_TRAVEL_FLOOR,
     DEFAULT_SWIPE_RETRY_DIRECTION,
@@ -14,6 +18,33 @@ from fathom.constants.swipe import (
     RetryDirection,
 )
 from fathom.schemas.actions import GesturePath
+
+
+class ReservePolicy(BaseModel):
+    """
+    Viewport fractions each screen edge withholds from gesture touch-down points.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    top: float = Field(
+        default=DEFAULT_ANCHOR_RESERVE_TOP,
+        ge=0.0,
+        lt=ANCHOR_RESERVE_CEILING,
+        description="Fraction of viewport height the top edge withholds for status and shade gestures.",
+    )
+    bottom: float = Field(
+        default=DEFAULT_ANCHOR_RESERVE_BOTTOM,
+        ge=0.0,
+        lt=ANCHOR_RESERVE_CEILING,
+        description="Fraction of viewport height the bottom edge withholds for home and switcher gestures.",
+    )
+    side: float = Field(
+        default=DEFAULT_ANCHOR_RESERVE_SIDE,
+        ge=0.0,
+        lt=ANCHOR_RESERVE_CEILING,
+        description="Fraction of viewport width each vertical edge withholds for back gestures.",
+    )
 
 
 class SwipeRetryPolicy(BaseModel):
@@ -39,6 +70,10 @@ class SwipeRetryPolicy(BaseModel):
         default=DEFAULT_SWIPE_MINIMUM_TRAVEL,
         ge=DEFAULT_SWIPE_MINIMUM_TRAVEL_FLOOR,
         description="Lower bound on the post-shift gesture travel in pixels.",
+    )
+    reserve: ReservePolicy = Field(
+        default_factory=ReservePolicy,
+        description="Screen-edge fractions withheld from touch-down points to avoid operating-system gestures.",
     )
 
     @model_validator(mode="after")
@@ -112,6 +147,20 @@ class SwipeRejection(BaseModel):
     index: int = Field(ge=0, description="Position in the original ordered candidate sequence.")
     path: GesturePath = Field(description="Candidate path that was not dispatched.")
     reason: AbortReason = Field(description="Why this candidate was rejected.")
+
+
+class Admission(BaseModel):
+    """
+    Planner verdict for one candidate: the confined path plus the reason it was filtered, if any.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    path: GesturePath = Field(description="Candidate path after screen-edge confinement.")
+    reason: Optional[AbortReason] = Field(
+        default=None,
+        description="Filter reason; None when the candidate is dispatchable.",
+    )
 
 
 class CandidateSequence(BaseModel):

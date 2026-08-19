@@ -310,3 +310,40 @@ class ADBDeviceHierarchyDumpTest(unittest.IsolatedAsyncioTestCase):
                 for command in commands
             )
         )
+
+
+class ADBDeviceFrameParseTest(unittest.TestCase):
+    """
+    Verify focused-window frame parsing from a real window-manager dump shape.
+    """
+
+    __DUMP = """
+WINDOW MANAGER WINDOWS (dumpsys window windows)
+  Window #0 Window{1a2b3c4 u0 NavigationBar0}:
+    mFrame=[0,2148][1080,2208]
+  Window #1 Window{5d6e7f8 u0 com.swiggy.android/com.swiggy.android.MainActivity}:
+    mDisplayId=0 rootTaskId=1
+    mFrame=[0,80][1080,2080]
+  Window #2 Window{9a8b7c6 u0 StatusBar}:
+    mFrame=[0,0][1080,80]
+  mCurrentFocus=Window{5d6e7f8 u0 com.swiggy.android/com.swiggy.android.MainActivity}
+"""
+
+    def test_parses_focused_window_frame(self) -> None:
+        """
+        The focused app window's frame is returned, not the bars'.
+        """
+
+        frame = ADBDevice._frame_from(dump=self.__DUMP)
+
+        self.assertIsNotNone(frame)
+        assert frame is not None
+        self.assertEqual((frame.x, frame.y, frame.width, frame.height), (0, 80, 1080, 2000))
+
+    def test_unparseable_dump_fails_open_to_none(self) -> None:
+        """
+        Any dump without a matching focused window fails open to None.
+        """
+
+        self.assertIsNone(ADBDevice._frame_from(dump="mCurrentFocus=null"))
+        self.assertIsNone(ADBDevice._frame_from(dump=""))

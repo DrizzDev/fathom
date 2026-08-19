@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -487,3 +487,29 @@ class LocalizationResult(BaseModel):
     )
 
     reason: Optional[str] = Field(default=None, description="Diagnostic result reason.")
+
+
+class MemberOutcome(BaseModel):
+    """
+    Result of invoking one localization member.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    proposal: Optional[LocalizationProposal] = Field(
+        description="The member's proposal, or None when it produced none."
+    )
+    failed: bool = Field(default=False, description="Whether the member timed out or raised.")
+
+
+class ProposalCollection(BaseModel):
+    """
+    Aggregated localizer proposals and member health.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    proposals: List[LocalizationProposal] = Field(
+        description="Proposals returned by members that produced one."
+    )
+    failed_members: int = Field(default=0, description="Count of members that timed out or raised.")

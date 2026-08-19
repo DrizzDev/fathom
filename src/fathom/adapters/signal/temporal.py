@@ -8,7 +8,8 @@ from typing import Optional
 from temporalio import activity
 
 from fathom.constants import SIGNAL_HEARTBEAT_INTERVAL, SignalType
-from fathom.core.exceptions import WorkflowCancelledError
+from fathom.constants.execution import SignalDeadline
+from fathom.core.exceptions import HITLTimeoutError, WorkflowCancelledError
 from fathom.infrastructure.temporal.state import SignalStateRegistry, WorkflowSignalState
 from fathom.interfaces.signal import SignalPort
 
@@ -23,11 +24,12 @@ class TemporalSignalAdapter(SignalPort):
     via SignalStateRegistry. This adapter reads from that mirror, eliminating billable Temporal queries entirely.
     """
 
-    def __init__(self, *, workflow_id: str) -> None:
+    def __init__(self, *, workflow_id: str, deadline: float = SignalDeadline.ASK) -> None:
         """
-        Initialize Temporal signal adapter.
+        Initialize Temporal signal adapter with the interactive-ask deadline.
         """
 
+        self.__deadline = deadline
         self.__workflow_id = workflow_id
         self.__state: WorkflowSignalState = SignalStateRegistry.shared().get(
             workflow_id=workflow_id,
@@ -146,14 +148,28 @@ class TemporalSignalAdapter(SignalPort):
 
     async def ask(self, *, prompt: str) -> str:
         """
-        Request human input and block until context is injected; raise on cancellation.
+        Request human input and block until context arrives; raise typed on cancellation or deadline.
         """
 
         logger.info(
             f'[signal-adapter] workflow={self.__workflow_id} event=ask phase=entering prompt="{prompt[:80]}"'
         )
 
+        started = asyncio.get_running_loop().time()
+
         while True:
+            if asyncio.get_running_loop().time() - started >= self.__deadline:
+                logger.warning(
+                    "Interactive ask exhausted its deadline without a response",
+                    extra={
+                        "event": "signal.ask.deadline",
+                        "component": "adapters.signal",
+                        "workflow.id": self.__workflow_id,
+                        "ask.deadline": float(self.__deadline),
+                    },
+                )
+                raise HITLTimeoutError(workflow_id=self.__workflow_id)
+
             if self.__state.cancelled:
                 logger.info(
                     f"[signal-adapter] workflow={self.__workflow_id} event=ask phase=cancelled"

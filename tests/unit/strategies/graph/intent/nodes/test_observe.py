@@ -121,6 +121,47 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
 
         self.assertTrue(result)
 
+    def test_control_command_success_ignores_screen_change(self) -> None:
+        """
+        Run-83752b18 fix: a successful ASK_USER (delivered + answered) succeeds even though the
+        control operation leaves the screen unchanged — screen change is not its postcondition.
+        """
+
+        effect = ActionEffect(
+            status=ActionEffectStatus.NO_PROGRESS,
+            visual_progress=0.0,
+            phash_distance=0,
+        )
+
+        result = self.__node()._ObserveNode__step_success(  # noqa: SLF001
+            action_type=ActionType.ASK_USER,
+            action_effect=effect,
+            action_execution_kind=ActionExecutionKind.CONTROL,
+            execution_success=True,
+        )
+
+        self.assertTrue(result)
+
+    def test_control_command_failure_stays_unsuccessful(self) -> None:
+        """
+        A control command whose handler failed stays unsuccessful; only the execution result decides.
+        """
+
+        effect = ActionEffect(
+            status=ActionEffectStatus.NO_PROGRESS,
+            visual_progress=0.0,
+            phash_distance=0,
+        )
+
+        result = self.__node()._ObserveNode__step_success(  # noqa: SLF001
+            action_type=ActionType.ASK_USER,
+            action_effect=effect,
+            action_execution_kind=ActionExecutionKind.CONTROL,
+            execution_success=False,
+        )
+
+        self.assertFalse(result)
+
 
 class ObserveNodeExecutedWiringTest(unittest.IsolatedAsyncioTestCase):
     """
@@ -151,6 +192,7 @@ class ObserveNodeExecutedWiringTest(unittest.IsolatedAsyncioTestCase):
         provider.workflow_id = "run-test"
         provider.context.workflow_id = "run-test"
         provider.context.catalog = CommandCatalogProvider().build()
+        provider.context.telemetry.info = AsyncMock()
         provider.is_cancelled = AsyncMock(return_value=False)
         provider.persistence.persist = MagicMock()
         provider.observer.fallback_observation = AsyncMock(return_value=None)

@@ -41,6 +41,14 @@ class Hitl:
         self.__context = context
         self.__aborter = aborter
 
+    def available(self) -> bool:
+        """
+        Return the intervention authority the bridge would ``ask()`` against; an absent service is unavailable.
+        """
+
+        hitl = self.__context.hitl
+        return hitl.available if isinstance(hitl, HITLService) else False
+
     async def prompt(self, *, step: int) -> None:
         """
         Wait for human resume if paused and consume any injected context as guidance.

@@ -8,6 +8,7 @@ from typing import cast
 from fathom.constants import ActionType
 from fathom.constants.messages import GROUNDING_FAILURE_MESSAGE
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
 from fathom.core.exceptions import FathomError
 from fathom.core.services.manifest import ManifestMerger
 from fathom.processing.annotator import ImageAnnotator
@@ -32,10 +33,11 @@ class GroundNode:
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the GROUND node handler.
+        Run the GROUND node handler under the run-scoped grounding timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.GROUND):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """

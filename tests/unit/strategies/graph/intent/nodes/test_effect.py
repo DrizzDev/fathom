@@ -10,14 +10,20 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 from fathom.constants import ActionType
 from fathom.constants.platform import DeviceConnectionType, DevicePlatform
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD
-from fathom.constants.state import IntentStateKey, PlanMetadataKey
+from fathom.constants.state import IntentStateKey
 from fathom.schemas.actions import Action
 from fathom.schemas.artifact import ArtifactRecord, ScreenshotPayload
 from fathom.schemas.artifacts import ScreenArtifact
 from fathom.schemas.effect import ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
-from fathom.schemas.results import ActionTraceAttempt, ActionTraceEvent, PlanResult, TraceEmission
+from fathom.schemas.results import (
+    ActionTraceAttempt,
+    ActionTraceEvent,
+    PlanContext,
+    PlanResult,
+    TraceEmission,
+)
 from fathom.schemas.screens import ScreenCapture, ScreenDiff
 from fathom.schemas.steps import Step
 from fathom.strategies.graph.intent.nodes.effect import PostAction
@@ -124,7 +130,7 @@ class PostActionPlanObservationTest(unittest.TestCase):
     def __plan(*, observation: object) -> PlanResult:
         """
         :class:`PlanResult` fixture carrying the supplied observation
-        under :attr:`PlanMetadataKey.OBSERVATION`. Parameterised on
+        from the plan context observation. Parameterised on
         ``observation`` so each test can drive a different shape
         (string, dict, etc.) through the extractor.
         """
@@ -144,7 +150,7 @@ class PostActionPlanObservationTest(unittest.TestCase):
         )
         return PlanResult(
             step=step,
-            metadata={PlanMetadataKey.OBSERVATION.value: observation},
+            context=PlanContext(observation=observation),
             should_retry=False,
             is_complete=False,
             reason="t",
@@ -161,15 +167,6 @@ class PostActionPlanObservationTest(unittest.TestCase):
             PostAction.plan_observation(state=state),  # type: ignore[arg-type]
             "post-action observation text",
         )
-
-    def test_returns_none_when_observation_not_string(self) -> None:
-        """
-        A non-string observation value yields None instead of leaking the raw payload.
-        """
-
-        state = {IntentStateKey.PLAN: self.__plan(observation={"not": "a string"})}
-
-        self.assertIsNone(PostAction.plan_observation(state=state))  # type: ignore[arg-type]
 
     def test_returns_none_when_plan_absent(self) -> None:
         """

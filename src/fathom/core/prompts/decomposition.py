@@ -28,8 +28,8 @@ class DecompositionPromptBuilder(ABC):
 class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
     """
     Gemini-focused prompt builder for sequential intent decomposition.
-    Produces sub-goals carrying a structured ``directive`` (ActionType enum) so the
-    completion gate can compare planner output against the decomposer's contract.
+    Produces sub-goals carrying an ``objective`` and one typed success ``proposal``
+    (observed, command, or capture) that the boundary translates to canonical success.
     """
 
     def build_system_instruction(self) -> str:
@@ -51,7 +51,7 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             self.__header(intent=intent),
             self.__rules(),
             self.__compound_action_rules(),
-            self.__directive_vocabulary(),
+            self.__proposal_vocabulary(),
             self.__examples(),
             self.__output_schema(),
         ]
@@ -115,129 +115,118 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
         )
 
     @staticmethod
-    def __directive_vocabulary() -> str:
+    def __proposal_vocabulary() -> str:
         """
-        Map natural-language verbs to the structured ``directive`` ActionType.
-
-        This is the load-bearing section that drives the completion gate's
-        type-match check, so the mapping is exhaustive and unambiguous.
+        Describe the three success proposal kinds and the command requirement operations.
         """
 
         return (
-            "DIRECTIVE FIELD (MANDATORY):\n"
-            "Each sub-goal must carry a 'directive' field naming the action type the\n"
-            "planner is expected to emit. Use these exact tokens (lower-case, no spaces):\n"
+            "PROPOSAL FIELD (MANDATORY):\n"
+            "Each sub-goal carries an 'objective' (imperative text, user's exact wording) and one\n"
+            "typed 'proposal' declaring how the sub-goal's success is defined. Pick exactly one kind:\n"
             "\n"
-            "  tap          -> 'Tap {{target}}', 'Click {{target}}', 'Press {{target}}',\n"
-            "                  'Select {{target}}' (when the target is a UI element),\n"
-            "                  'Open {{app_name}} app' (tapping an app icon)\n"
-            "  type         -> 'Enter {{text}}', 'Type {{text}}', 'Input {{text}}',\n"
-            "                  'Fill {{field}} with {{text}}'\n"
-            "  validate     -> 'Validate {{state}}', 'Verify {{state}}', 'Check {{condition}}',\n"
-            "                  'Confirm {{state}}', 'Ensure {{state}} is displayed'\n"
-            "  swipe_up     -> 'Swipe up', 'Scroll up' (when directional and the\n"
-            "                  surface is a vertical list/feed)\n"
-            "  swipe_down   -> 'Swipe down', 'Scroll down'\n"
-            "  swipe_left   -> 'Swipe left', 'Scroll left' (carousels)\n"
-            "  swipe_right  -> 'Swipe right'\n"
-            "  scroll       -> Generic 'Scroll to {{destination}}' when no direction is specified\n"
-            "  wait         -> 'Wait', 'Wait for {{state}}', 'Wait N seconds'\n"
-            "  store        -> 'Store {{value_or_subject}} as {{variable_name}}',\n"
-            "                  'Capture {{value_or_subject}} as {{variable_name}}'\n"
-            "                  (save a visible/context value into a script variable)\n"
-            "  long_press   -> 'Long press {{target}}', 'Hold {{target}}', "
-            "'Press and hold {{target}}'\n"
-            "  back         -> 'Go back', 'Press back', 'Navigate back'\n"
-            "  home         -> 'Go to home', 'Press home'\n"
-            "  hide_keyboard-> 'Dismiss keyboard', 'Hide keyboard'\n"
-            "  ask_user     -> Explicit 'Ask user for X' steps\n"
+            "  observed -> success is an observable screen state. Use this for reaching a screen,\n"
+            "              revealing content, or verifying/confirming a condition.\n"
+            '              Shape: {"kind": "OBSERVED", "assertion": "<observable state>"}\n'
+            "\n"
+            "  command  -> the user explicitly requested a specific device primitive, cited verbatim.\n"
+            '              Shape: {"kind": "COMMAND", "requirement": {<operation + typed params>},\n'
+            '                      "quote": "<exact intent words naming the operation>",\n'
+            '                      "postcondition": {"assertion": "<optional observable result>"}}\n'
+            "              The 'quote' MUST be an exact substring of the intent. Use these operations:\n"
+            '                TAP / LONG_PRESS -> {"operation": "tap", "target": "<element>"}\n'
+            '                TYPE             -> {"operation": "type", "target": "<field>", '
+            '"text": "<text>"}\n'
+            '                SWIPE            -> {"operation": "swipe", '
+            '"direction": "UP|DOWN|LEFT|RIGHT", "target": "<optional surface>"}\n'
+            '                WAIT             -> {"operation": "wait", "condition": "<awaited state>", '
+            '"bound": <seconds>}\n'
+            "\n"
+            "  capture  -> a 'store {value} as {name}' clause: save a visible value into a variable.\n"
+            '              Shape: {"kind": "CAPTURE", "subject": "<what to capture>", '
+            '"name": "<variable name>", "provenance": "USER|MODEL"}\n'
             "\n"
             "Rules:\n"
-            "- Choose the SINGLE most-specific directive for each step.\n"
-            "- Prefer 'swipe_up' / 'swipe_down' / 'swipe_left' / 'swipe_right' over the\n"
-            "  generic 'scroll' whenever a direction is implied.\n"
-            "- A store/capture clause never loses to the final action of a compound step;\n"
-            "  split it into its own 'store' sub-goal before the follow-up action.\n"
-            "- A store/capture sub-goal must describe the capture itself. If the user asks to\n"
-            "  check, verify, validate, or confirm a precondition before storing, emit that\n"
-            "  precondition as a separate 'validate' sub-goal immediately before the store.\n"
-            "- A compound step that ends in tapping (e.g. 'Scroll to X and tap Y') takes\n"
-            "  the directive of the FINAL action -> 'tap', unless it contains a store/capture\n"
-            "  clause that must be split out first.\n"
-            "- A compound step that ends in validation (e.g. 'Go to cart and verify total')\n"
-            "  takes 'validate'."
+            "- Prefer 'observed' when success is defined by an outcome or state rather than a\n"
+            "  specific gesture; an observed goal may take several device actions to satisfy.\n"
+            "- Use 'command' only when the user named an exact primitive and you can cite the quote.\n"
+            "- Reaching, returning to, or leaving a screen is a DESTINATION, not a gesture: type it\n"
+            "  'observed'. The planner presses back/home itself; navigation is never a 'command'.\n"
+            "- Scrolling or swiping to reveal, find, or reach content is defined by the revealed\n"
+            "  STATE, not the gesture or its direction: type it 'observed'. The planner swipes\n"
+            "  whichever way reveals it. Use a 'swipe' command only when the gesture is itself the goal.\n"
+            "- A store/capture clause is always its own 'capture' sub-goal; it never merges into the\n"
+            "  follow-up action. If the user checks a precondition before storing, emit that\n"
+            "  precondition as a separate 'observed' sub-goal immediately before the capture.\n"
+            "- Capture 'provenance': USER when the intent explicitly named the variable (copy that\n"
+            "  name verbatim); MODEL when the user gave no name (propose a valid snake_case\n"
+            "  identifier). Never invent a USER name."
         )
 
     @staticmethod
     def __examples() -> str:
         """
-        Worked examples covering canonical happy-path mappings.
+        Worked examples covering the three proposal kinds and required splits.
         """
 
         return (
-            "EXAMPLES:\n"
+            "EXAMPLES (every sub-goal carries 'objective' and one 'proposal'):\n"
             'GOOD: User says "Tap the login button"\n'
-            '      -> {"description": "Tap the login button", "directive": "tap"}\n'
-            "\n"
-            "GOOD: User says \"Enter password 'test123'\"\n"
-            '      -> {"description": "Enter password \'test123\'", "directive": "type"}\n'
+            '      -> {"objective": "Tap the login button",\n'
+            '          "proposal": {"kind": "COMMAND", "requirement": {"operation": "tap", '
+            '"target": "login button"}, "quote": "Tap the login button"}}\n'
             "\n"
             'GOOD: User says "Open Settings app"\n'
-            '      -> {"description": "Open Settings app", "directive": "tap"}\n'
+            '      -> {"objective": "Open Settings app",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the Settings app is open"}}\n'
             "\n"
             'GOOD: User says "Scroll to labs section and select any category"\n'
-            '      -> {"description": "Scroll to labs section and select any category",\n'
-            '          "directive": "tap"}   (compound: final action wins)\n'
+            '      -> {"objective": "Scroll to labs section and select any category",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "a labs category is selected"}}\n'
             "\n"
             'GOOD: User says "Go to cart and verify total amount"\n'
-            '      -> {"description": "Go to cart and verify total amount",\n'
-            '          "directive": "validate"}\n'
+            '      -> {"objective": "Go to cart and verify total amount",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the cart total is displayed"}}\n'
+            "\n"
+            'GOOD: User says "come back to the home screen"\n'
+            '      -> {"objective": "come back to the home screen",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the home screen is '
+            'displayed"}}\n'
             "\n"
             'GOOD: User says "Swipe up to reveal more results"\n'
-            '      -> {"description": "Swipe up to reveal more results",\n'
-            '          "directive": "swipe_up"}\n'
+            '      -> {"objective": "Swipe up to reveal more results",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "more results are '
+            'displayed"}}\n'
             "\n"
-            'GOOD: User says "Validate srp page is loaded"\n'
-            '      -> {"description": "Validate srp page is loaded",\n'
-            '          "directive": "validate"}\n'
+            'GOOD: User says "Swipe the notification away"\n'
+            '      -> {"objective": "Swipe the notification away",\n'
+            '          "proposal": {"kind": "COMMAND", "requirement": {"operation": "swipe", '
+            '"direction": "LEFT"}, "quote": "Swipe the notification away"}}\n'
             "\n"
             'GOOD: User says "Capture the verification code as otp_code"\n'
-            '      -> {"description": "Capture the verification code as otp_code",\n'
-            '          "directive": "store"}\n'
-            "\n"
-            'GOOD: User says "If upload completed, capture the confirmation ID as confirmation_id '
-            'and close the dialog"\n'
-            '      -> {"description": "Check whether upload completed",\n'
-            '          "directive": "validate"}\n'
-            '      -> {"description": "If upload completed, capture the confirmation ID as '
-            'confirmation_id",\n'
-            '          "directive": "store"}\n'
-            '      -> {"description": "Close the dialog", "directive": "tap"}\n'
+            '      -> {"objective": "Capture the verification code as otp_code",\n'
+            '          "proposal": {"kind": "CAPTURE", "subject": "the verification code", '
+            '"name": "otp_code", "provenance": "USER"}}\n'
             "\n"
             'GOOD: User says "Verify the balance is visible; if it is, store the balance as '
             'account_balance and open transactions"\n'
-            '      -> {"description": "Verify the balance is visible",\n'
-            '          "directive": "validate"}\n'
-            '      -> {"description": "If the balance is visible, store the balance as '
-            'account_balance",\n'
-            '          "directive": "store"}\n'
-            '      -> {"description": "Open transactions", "directive": "tap"}\n'
+            '      -> {"objective": "Verify the balance is visible",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the balance is visible"}}\n'
+            '      -> {"objective": "Store the balance as account_balance",\n'
+            '          "proposal": {"kind": "CAPTURE", "subject": "the balance", '
+            '"name": "account_balance", "provenance": "USER"}}\n'
+            '      -> {"objective": "Open transactions",\n'
+            '          "proposal": {"kind": "OBSERVED", "assertion": "the transactions screen is '
+            'open"}}\n'
             "\n"
             'BAD: User says "Capture the verification code as otp_code and continue"\n'
-            '     -> {"description": "Capture the verification code as otp_code and continue",\n'
-            '         "directive": "tap"}\n'
-            "     Reason: the store clause was merged into the follow-up action.\n"
+            '     -> {"objective": "Capture the verification code as otp_code and continue",\n'
+            '         "proposal": {"kind": "OBSERVED", "assertion": "..."}}\n'
+            "     Reason: the capture clause was merged into the follow-up action.\n"
             "\n"
-            'BAD: User says "Verify the balance is visible; if it is, store the balance as '
-            'account_balance"\n'
-            '     -> {"description": "Verify the balance is visible if it is, store the balance '
-            'as account_balance",\n'
-            '         "directive": "store"}\n'
-            "     Reason: the prerequisite validation was merged into the store command.\n"
-            "\n"
-            "BAD: paraphrasing the user's wording is prohibited.\n"
-            "BAD: omitting the directive field is prohibited.\n"
-            "BAD: inventing tokens outside the directive vocabulary above is prohibited."
+            "BAD: paraphrasing the user's wording in the objective is prohibited.\n"
+            "BAD: omitting the proposal field is prohibited.\n"
+            "BAD: a 'command' quote that is not an exact substring of the intent is prohibited."
         )
 
     @staticmethod
@@ -251,12 +240,11 @@ class GeminiDecompositionPromptBuilder(DecompositionPromptBuilder):
             "{\n"
             '  "sub_goals": [\n'
             "    {\n"
-            '      "description": "<imperative step text using user\'s exact wording>",\n'
-            '      "criterion":   "<observable screen state when the step is complete>",\n'
-            '      "directive":   "<one of: tap | type | validate | swipe_up | swipe_down |\n'
-            "                                 swipe_left | swipe_right | scroll | wait |\n"
-            "                                 store | long_press | back | home |\n"
-            '                                 hide_keyboard | ask_user>"\n'
+            '      "objective": "<imperative step text using user\'s exact wording>",\n'
+            '      "proposal":  {\n'
+            '        "kind": "<one of: OBSERVED | COMMAND | CAPTURE>",\n'
+            '        "...":  "<the fields required by that kind, per the vocabulary above>"\n'
+            "      }\n"
             "    }\n"
             "  ],\n"
             '  "confidence": 0.9\n'

@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 from fathom.constants.interaction import SwipeSpeed
 from fathom.constants.observation import KeyboardVisibility
+from fathom.schemas.actions import Bounds
 from fathom.schemas.configuration import DeviceRuntimeConfiguration
 from fathom.schemas.observation import KeyboardObservation
 from fathom.schemas.results import ActionResult
@@ -83,6 +84,13 @@ class DevicePort(ABC):
 
         raise NotImplementedError
 
+    async def frame(self) -> Optional[Bounds]:
+        """
+        OS-reported focused-window frame in device pixels; None when the platform cannot report one.
+        """
+
+        return None
+
     @abstractmethod
     async def get_current_package(self) -> str:
         """
@@ -130,6 +138,17 @@ class DevicePort(ABC):
         """
 
         raise NotImplementedError
+
+    async def hide_keyboard(self) -> Optional[ActionResult]:
+        """
+        Dismiss the soft keyboard natively; returns None when the adapter has no native dismissal.
+
+        Adapters without a native IME channel inherit this default. ``None``
+        instructs the caller to fall back to the platform Back primitive, which
+        dismisses the keyboard on Android.
+        """
+
+        return None
 
     async def detect_keyboard(self) -> KeyboardObservation:
         """

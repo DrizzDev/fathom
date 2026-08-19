@@ -194,8 +194,10 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
 
         # Runner takes ownership: the dedicated LLM is in owned_resources so
         # runner.cleanup() will close it without the SDK caller tracking it.
+        # owned = dedicated qualifier LLM + the deterministic decomposition sibling.
         owned = runner._FathomRunner__owned_resources  # type: ignore[attr-defined]
-        self.assertEqual(len(owned), 1)
+        self.assertEqual(len(owned), 2)
+        self.assertIn(planner.derive.return_value, owned)
 
     def test_without_assembly_qualifier_runs_on_planner_llm(self) -> None:
         """
@@ -214,8 +216,9 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
             .build()
         )
 
+        # The planner LLM stays caller-owned; only the deterministic decomposition sibling is owned.
         owned = runner._FathomRunner__owned_resources  # type: ignore[attr-defined]
-        self.assertEqual(owned, [])
+        self.assertEqual(owned, [planner.derive.return_value])
 
     def test_with_assembly_respects_explicit_qualifier_override(self) -> None:
         """
@@ -226,10 +229,11 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
 
         explicit = PermissiveIntentQualifier()
         factory = _SpyLLMFactory()
+        planner = MagicMock(spec=LLMPort)
 
         runner = (
             Fathom.builder()
-            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_llm(port=planner)
             .with_device(port=MagicMock(spec=DevicePort))
             .with_perception(port=MagicMock(spec=PerceptionPort))
             .with_assembly(assembly=self.__assembly(), llm_factory=factory)
@@ -240,7 +244,10 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
 
         self.assertEqual(len(factory.captured), 0)
         self.assertIs(runner._FathomRunner__qualifier, explicit)  # type: ignore[attr-defined]
-        self.assertEqual(runner._FathomRunner__owned_resources, [])  # type: ignore[attr-defined]
+        self.assertEqual(
+            runner._FathomRunner__owned_resources,  # type: ignore[attr-defined]
+            [planner.derive.return_value],
+        )
 
     def test_with_assembly_and_disabled_qualifier_skips_factory(self) -> None:
         """

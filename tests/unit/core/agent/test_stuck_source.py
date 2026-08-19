@@ -47,7 +47,10 @@ class StuckSourceResolverTest(unittest.TestCase):
         """
 
         state = AgentFixtures.state(intent="x")
-        state.set_sub_goals([SubGoalFixtures.make(description="active", max_steps=1)])
+        state.set_sub_goals([SubGoalFixtures.make(description="active")])
+        active = state.get_current_sub_goal()
+        assert active is not None
+        active.progress.limit = 1
 
         detector = state.runtime.screen.detector
         screen = ScreenFixtures.state(activity="com.example/.Main", activity_hash="ah")
@@ -65,7 +68,10 @@ class StuckSourceResolverTest(unittest.TestCase):
         """
 
         state = AgentFixtures.state(intent="x")
-        state.set_sub_goals([SubGoalFixtures.make(description="active", max_steps=1)])
+        state.set_sub_goals([SubGoalFixtures.make(description="active")])
+        active = state.get_current_sub_goal()
+        assert active is not None
+        active.progress.limit = 1
         state.record_sub_goal_action()
 
         self.assertFalse(state.is_stuck)

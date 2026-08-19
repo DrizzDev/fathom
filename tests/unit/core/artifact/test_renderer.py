@@ -37,7 +37,6 @@ from fathom.schemas.observation import (
     ScreenObservation,
 )
 from fathom.schemas.screens import ScreenCapture, ScreenHashBundle
-from fathom.schemas.tasks import ExecutionTaskState
 
 
 class _Fixtures:
@@ -439,7 +438,6 @@ class VerificationRendererTest(unittest.TestCase):
             capture=_Fixtures.capture(),
             verdict=CompletionVerdict(
                 complete=True,
-                next_state=ExecutionTaskState.SUCCEEDED,
                 reason="ok",
                 missing=[],
             ),
@@ -458,7 +456,6 @@ class VerificationRendererTest(unittest.TestCase):
             capture=_Fixtures.capture(),
             verdict=CompletionVerdict(
                 complete=False,
-                next_state=ExecutionTaskState.FAILED,
                 reason="missing evidence",
                 missing=[],
             ),

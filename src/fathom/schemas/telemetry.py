@@ -22,6 +22,10 @@ class IntentMessage(BaseModel):
         default="Got it - here is the plan",
         description="Shown once the decomposer has emitted its sub-goal list.",
     )
+    authoring: str = Field(
+        default="Writing up the run...",
+        description="Shown while the run is authored into a replayable script after execution.",
+    )
 
 
 class StepMessage(BaseModel):
@@ -34,6 +38,14 @@ class StepMessage(BaseModel):
     grounding: str = Field(
         default="Looking at the screen...",
         description="Shown while the agent captures and grounds the screen for the next step.",
+    )
+    planning: str = Field(
+        default="Planning the next step...",
+        description="Shown while the planner reasons out the next action, across any internal retries.",
+    )
+    verifying: str = Field(
+        default="Checking whether the step is complete...",
+        description="Shown while the agent visually confirms the active sub-goal after an action.",
     )
 
 

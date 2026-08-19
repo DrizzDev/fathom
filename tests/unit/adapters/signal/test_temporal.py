@@ -5,7 +5,7 @@ import unittest
 from uuid import uuid4
 
 from fathom.adapters.signal.temporal import TemporalSignalAdapter
-from fathom.core.exceptions import WorkflowCancelledError
+from fathom.core.exceptions import HITLTimeoutError, WorkflowCancelledError
 from fathom.infrastructure.temporal.state import SignalStateRegistry
 
 
@@ -69,3 +69,13 @@ class TemporalSignalAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(WorkflowCancelledError):
             await asyncio.wait_for(waiter, timeout=1)
+
+    async def test_ask_raises_typed_timeout_at_deadline(self) -> None:
+        """
+        An unanswered ask must end in HITLTimeoutError at the deadline, never hang.
+        """
+
+        adapter = TemporalSignalAdapter(workflow_id=self.workflow_id, deadline=0.0)
+
+        with self.assertRaises(HITLTimeoutError):
+            await asyncio.wait_for(adapter.ask(prompt="Which account?"), timeout=1)

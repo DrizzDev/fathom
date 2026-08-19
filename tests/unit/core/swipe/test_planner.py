@@ -30,9 +30,9 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         )
 
     @staticmethod
-    def __upward_path(start_y: int = 2008, end_y: int = 800) -> GesturePath:
+    def __upward_path(start_y: int = 1900, end_y: int = 800) -> GesturePath:
         """
-        Build an upward swipe path centered on the device.
+        Build an upward swipe path centered on the device with an anchor inside the addressable area.
         """
 
         return GesturePath(start_x=540, start_y=start_y, end_x=540, end_y=end_y, duration=300)
@@ -93,7 +93,7 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
             direction=RetryDirection.INWARD,
             magnitudes=(0.10, 0.20, 0.30),
         )
-        original = self.__upward_path(start_y=2000, end_y=400)
+        original = self.__upward_path(start_y=1900, end_y=400)
 
         sequence = SwipeRetryPlanner().candidates(
             original=original,
@@ -104,7 +104,7 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
 
         starts = [path.start_y for path in sequence.accepted]
         self.assertEqual(len(starts), 4)
-        self.assertEqual(starts[0], 2000)
+        self.assertEqual(starts[0], 1900)
         self.assertLess(starts[1], starts[0])
         self.assertLess(starts[2], starts[1])
         self.assertLess(starts[3], starts[2])
@@ -193,3 +193,111 @@ class SwipeRetryPlannerHorizontalTest(unittest.TestCase):
         self.assertEqual(starts[0], 200)
         self.assertGreater(starts[1], starts[0])
         self.assertGreater(starts[2], starts[1])
+
+
+class SwipeRetryPlannerFrameTest(unittest.TestCase):
+    """
+    Verify anchor clamping against the OS-reported window frame.
+    """
+
+    @staticmethod
+    def __viewport_bounds() -> Bounds:
+        """
+        Build a 1080x2208 device-pixel viewport rectangle.
+        """
+
+        return Bounds(
+            x=0,
+            y=0,
+            width=1080,
+            height=2208,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    @staticmethod
+    def __frame() -> Bounds:
+        """
+        Build a focused-window frame excluding the status bar and gesture-navigation zone.
+        """
+
+        return Bounds(
+            x=0,
+            y=80,
+            width=1080,
+            height=2000,
+            coordinate_system=CoordinateSystem.DEVICE_PIXEL,
+        )
+
+    def test_anchor_in_gesture_zone_is_confined_into_the_frame(self) -> None:
+        """
+        The Swiggy full-viewport case: a touch-down at the screen bottom edge is pulled inside the frame instead of dispatching there.
+        """
+
+        path = GesturePath(start_x=540, start_y=2190, end_x=540, end_y=800, duration=300)
+        frame = self.__frame()
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+            frame=frame,
+        )
+
+        self.assertEqual(sequence.rejections, ())
+        self.assertEqual(len(sequence.accepted), 1)
+
+        anchor = sequence.accepted[0].start_y
+        self.assertLess(anchor, path.start_y)
+        self.assertLessEqual(anchor, frame.y + frame.height)
+        self.assertEqual(sequence.accepted[0].end_y, path.end_y)
+
+    def test_endpoint_may_leave_the_frame_freely(self) -> None:
+        """
+        Only the anchor is clamped; a swipe ending past the frame bottom stays accepted.
+        """
+
+        path = GesturePath(start_x=540, start_y=1500, end_x=540, end_y=2100, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+            frame=self.__frame(),
+        )
+
+        self.assertEqual(len(sequence.accepted), 1)
+
+    def test_candidates_collapsed_onto_one_anchor_are_dispatched_once(self) -> None:
+        """
+        Shifts too small to escape the reserve collapse onto one anchor and are not dispatched twice.
+        """
+
+        path = GesturePath(start_x=540, start_y=2200, end_x=540, end_y=2160, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=True, magnitudes=(0.10, 0.20, 0.30)),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+        )
+
+        self.assertEqual(len(sequence.accepted), len(set(sequence.accepted)))
+
+    def test_missing_frame_still_confines_the_anchor(self) -> None:
+        """
+        Confinement does not depend on the frame probe, which is unimplemented on the remote device adapters.
+        """
+
+        path = GesturePath(start_x=540, start_y=2190, end_x=540, end_y=800, duration=300)
+
+        sequence = SwipeRetryPlanner().candidates(
+            original=path,
+            bounds=self.__viewport_bounds(),
+            policy=SwipeRetryPolicy(enabled=False),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+        )
+
+        self.assertEqual(len(sequence.accepted), 1)
+        self.assertLess(sequence.accepted[0].start_y, path.start_y)

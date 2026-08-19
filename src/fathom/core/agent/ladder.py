@@ -12,9 +12,9 @@ from fathom.constants.state import (
     LOOP_SCROLL_CONFIDENCE,
     LOOP_SCROLL_RATIONALE,
 )
+from fathom.core.agent.loop import LoopDetector
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import DeviceCapability
-from fathom.schemas.state import LoopDetector
 
 
 class LoopActionLadder:

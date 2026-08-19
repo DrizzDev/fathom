@@ -1,0 +1,17 @@
+# Architecture-governance ownership.
+#
+# These paths control the fitness ratchet; a single PR must not be able to both relax the
+# mode/ownership and change the code it governs. Branch protection must require this owner's
+# review on these paths before Phase 0b (RATCHET) is enabled.
+
+/governance/                                        @aman-drizz
+/governance/debt.json                               @aman-drizz
+/governance/taxonomy.json                           @aman-drizz
+/tests/architecture/                                @aman-drizz
+/tests/unit/governance/                             @aman-drizz
+/.pre-commit-config.yaml                            @aman-drizz
+/.github/CODEOWNERS                                 @aman-drizz
+/.github/workflows/pre-commit.yaml                  @aman-drizz
+/pyproject.toml                                     @aman-drizz
+/.claude/.skills/.engineering/.standards/SKILL.md   @aman-drizz
+/.codex/.skills/.engineering/.standards/SKILL.md    @aman-drizz

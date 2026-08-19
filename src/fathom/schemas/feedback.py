@@ -82,3 +82,10 @@ class VerifierFeedback(FeedbackEntry):
     a completion claim invalid. Use-once: consumed by the next planner
     iteration so the LLM can adjust the next action against the rejection.
     """
+
+
+class CompletionFeedback(FeedbackEntry):
+    """
+    Post-action completion refute: vision judged the active sub-goal not satisfied and cited a reason.
+    Use-once: consumed by the next planner iteration so the LLM can correct its approach.
+    """

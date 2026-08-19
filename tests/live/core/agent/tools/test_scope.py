@@ -4,30 +4,30 @@ from typing import Final, FrozenSet
 
 import pytest
 
-from fathom.constants.tools import ToolName, TurnMode
+from fathom.constants.tools import ToolName
 from fathom.core.agent.tools.registry import DEFAULT_TOOL_POLICIES
 from fathom.core.agent.tools.scope import ToolScope
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.services.decomposer import IntentDecomposer
-from fathom.core.services.directive import DirectivePolicy
+from fathom.core.services.translation import ProposalTranslator
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.subgoal import SubGoal, SubGoalKind
+from fathom.schemas.subgoal import GoalState
 from fathom.schemas.tools import ToolPolicyContext
 from tests.fixtures.intents import VERIFY_TOOLS, IntentCorpus
 
 
-def _tool_set_for(*, sub_goal: SubGoal, hitl: bool) -> FrozenSet[ToolName]:
+def _tool_set_for(*, sub_goal: GoalState, hitl: bool) -> FrozenSet[ToolName]:
     """
-    Reproduce the planner mapping and compute the per-turn tool set.
+    Compute the per-turn tool set for an active goal (mode gate is intent- and variant-independent).
     """
 
-    modes = frozenset({TurnMode.VERIFY}) if sub_goal.kind == SubGoalKind.VALIDATION else frozenset()
+    _ = sub_goal
     return (
         ToolScope(policies=DEFAULT_TOOL_POLICIES)
         .compute(
             context=ToolPolicyContext(
-                modes=modes,
+                modes=frozenset(),
                 capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=hitl)),
             ),
         )
@@ -35,9 +35,9 @@ def _tool_set_for(*, sub_goal: SubGoal, hitl: bool) -> FrozenSet[ToolName]:
     )
 
 
-def _assert_contract(*, sub_goal: SubGoal, intent: str, hitl: bool) -> None:
+def _assert_contract(*, sub_goal: GoalState, intent: str, hitl: bool) -> None:
     """
-    Assert the per-turn tool set obeys the framework contract for one sub-goal.
+    Assert an active goal keeps base UI tactics without VERIFY-only tools, for any success variant.
     """
 
     tools = _tool_set_for(sub_goal=sub_goal, hitl=hitl)
@@ -45,17 +45,10 @@ def _assert_contract(*, sub_goal: SubGoal, intent: str, hitl: bool) -> None:
     assert ToolName.STORE_MEMORY in tools
     assert ToolName.RECALL_MEMORY in tools
     assert (ToolName.ASK_USER in tools) == hitl
-
-    if sub_goal.kind == SubGoalKind.VALIDATION:
-        assert VERIFY_TOOLS.issubset(tools), (
-            f"VALIDATION sub-goal missed verification tools "
-            f"for intent={intent!r} sub_goal={sub_goal.description!r}"
-        )
-    else:
-        assert not (tools & VERIFY_TOOLS), (
-            f"ACTION sub-goal leaked verification tools "
-            f"for intent={intent!r} sub_goal={sub_goal.description!r}"
-        )
+    assert not (tools & VERIFY_TOOLS), (
+        f"active goal leaked verification tools for intent={intent!r} "
+        f"sub_goal={sub_goal.objective!r}"
+    )
 
 
 class TestLiveToolScope:
@@ -78,7 +71,7 @@ class TestLiveToolScope:
         """
 
         sub_goals = await IntentDecomposer(
-            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+            llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         ).decompose(intent=intent)
         assert sub_goals, f"decomposer returned no sub-goals for intent: {intent!r}"
 
@@ -110,7 +103,7 @@ class TestLiveToolScopeFullCorpus:
         """
 
         sub_goals = await IntentDecomposer(
-            llm=llm, directive_policy=DirectivePolicy(catalog=CommandCatalogProvider().build())
+            llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         ).decompose(intent=intent)
         assert sub_goals, f"decomposer returned no sub-goals for intent: {intent!r}"
 

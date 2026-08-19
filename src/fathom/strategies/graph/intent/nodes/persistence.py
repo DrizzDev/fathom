@@ -8,7 +8,6 @@ from fathom.constants.execution import LAUNCHER_PACKAGES
 from fathom.constants.state import IntentStateKey
 from fathom.core.agent.state import AgentState
 from fathom.schemas.steps import StepGoal, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.context import GraphContext
 from fathom.strategies.graph.state import IntentGraphState
 
@@ -132,13 +131,13 @@ class GraphStatePersistence:
         """
 
         sub_goal = self.__context.agent_state.get_current_sub_goal()
-        if not isinstance(sub_goal, SubGoal):
+        if sub_goal is None:
             return None
 
         return StepGoal(
             index=sub_goal.index,
-            description=sub_goal.description,
-            directive=sub_goal.directive.value if sub_goal.directive is not None else None,
+            description=sub_goal.objective,
+            directive=None,
         )
 
     def __build_publisher(self, *, step_number: int) -> Callable[[str], Awaitable[None]]:

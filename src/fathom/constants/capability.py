@@ -28,6 +28,7 @@ class CompletionMode(StrEnum):
     SCREEN_VERIFIED = "SCREEN_VERIFIED"
     CLAIM_OR_TIMEOUT = "CLAIM_OR_TIMEOUT"
     CAPTURE_VERIFIED = "CAPTURE_VERIFIED"
+    OUTCOME_VERIFIED = "OUTCOME_VERIFIED"
 
 
 class RecordMode(StrEnum):
@@ -79,5 +80,14 @@ NON_INTERACTIVE_CHANNELS: Final[FrozenSet[ExecutionChannel]] = frozenset(
         ExecutionChannel.CAPTURE,
         ExecutionChannel.TERMINAL,
         ExecutionChannel.OBSERVATION,
+    }
+)
+
+# Channels an explicit user-requested command requirement may run on. Excludes control,
+# memory, observation, capture, and terminal so those can never become a CommandSuccess.
+COMMAND_REQUIREMENT_CHANNELS: Final[FrozenSet[ExecutionChannel]] = frozenset(
+    {
+        ExecutionChannel.DEVICE,
+        ExecutionChannel.WAIT,
     }
 )

@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple
 
-from fathom.adapters.checkpoint import SqliteCheckpointStore
+from fathom.adapters.checkpoint import LangGraphPlanStore, SqliteCheckpointStore
 from fathom.adapters.signal.noop import NoopSignal
 from fathom.adapters.storage.local import LocalStorage
 from fathom.base.paths import SharedPathManager
@@ -34,6 +34,8 @@ from fathom.schemas.finalization import (
 )
 from fathom.schemas.results import ActionResult
 from fathom.schemas.screens import ScreenCapture
+from fathom.schemas.subgoal import SubGoal
+from fathom.schemas.success import ObservationRequirement, ObservedSuccess
 from fathom.schemas.telemetry import HeartbeatBudget, PhaseMessage
 from fathom.settings.env import FathomSettings
 from fathom.strategies.intent import IntentStrategy
@@ -269,13 +271,18 @@ class DeterministicDecomposer:
     Deterministic decomposer that avoids an LLM call.
     """
 
-    async def decompose(self, *, intent: str) -> List[Any]:
+    async def decompose(self, *, intent: str) -> List[SubGoal]:
         """
-        Return no sub-goals.
+        Return a single deterministic sub-goal so an accepted plan always has one goal.
         """
 
-        _ = intent
-        return []
+        return [
+            SubGoal(
+                index=0,
+                objective=intent,
+                success=ObservedSuccess(observation=ObservationRequirement(assertion=intent)),
+            )
+        ]
 
 
 class TerminalIntentGraph:
@@ -334,6 +341,14 @@ class TerminalIntentGraph:
 
         _ = config
         return SimpleNamespace(next=(), values={})
+
+    async def aupdate_state(self, config: Any, values: Any, as_node: Optional[str] = None) -> Any:
+        """
+        Accept a pre-graph plan seed without persisting (deterministic double).
+        """
+
+        _ = (config, values, as_node)
+        return config
 
 
 class IntentStrategyHarness:
@@ -397,6 +412,7 @@ class IntentStrategyHarnessBuilder:
             summarizer=DeterministicSummarizationPort(),
             storage=LocalStorage(path_manager=path_manager),
             authoring=authoring,
+            plans=LangGraphPlanStore(),
             checkpoint_store=SqliteCheckpointStore(
                 policy=SqliteCheckpointPolicy(),
                 directory=path_manager.get_checkpoint_directory(),

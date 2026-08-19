@@ -5,6 +5,9 @@ from typing import Any, Dict, Optional, cast
 
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
+from fathom.core.services.grounding import GroundingRecorder
+from fathom.schemas.binding import Binding
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import ElementSource
@@ -22,19 +25,26 @@ class SuperviseNode:
     SUPERVISE graph node; resolves/localizes the planned step.
     """
 
-    def __init__(self, *, provider: IntentNodeProvider) -> None:
+    def __init__(
+        self,
+        *,
+        provider: IntentNodeProvider,
+        grounding: Optional[GroundingRecorder] = None,
+    ) -> None:
         """
-        Bind the node to the shared intent provider.
+        Bind the node to the shared intent provider and the grounding recorder.
         """
 
         self.__provider = provider
+        self.__grounding = grounding if grounding is not None else GroundingRecorder()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the SUPERVISE node handler.
+        Run the SUPERVISE node handler under the run-scoped supervise timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.SUPERVISE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """
@@ -170,9 +180,18 @@ class SuperviseNode:
                     reason=resolve_result.reason,
                 )
 
+        binding = self.__grounding.observe(
+            step=step,
+            elements=observation.elements,
+            localization=localization,
+            catalog=self.__provider.context.catalog,
+            workflow_id=self.__provider.context.workflow_id,
+        )
+
         return self.__allow_non_spatial_step(
             step=step,
             state=state,
+            binding=binding,
             capture=screen_capture,
             localization=localization,
         )
@@ -276,6 +295,7 @@ class SuperviseNode:
         capture: ScreenCapture,
         state: IntentGraphState,
         localization: LocalizationResult,
+        binding: Optional[Binding] = None,
     ) -> IntentGraphState:
         """
         Build execution context for a step that should bypass normal gating.
@@ -301,6 +321,7 @@ class SuperviseNode:
         result = cast(
             "IntentGraphState",
             {
+                IntentStateKey.BINDING: binding,
                 IntentStateKey.PLANNED_STEP: step,
                 CommonStateKey.SCREEN_OBSERVATION: observation,
                 IntentStateKey.EXECUTION_CONTEXT: execution_context,

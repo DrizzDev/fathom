@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from logging import getLogger
 from typing import Any, Awaitable, Dict, List, Optional, Tuple, TypeVar, cast
 
+import structlog
 from langchain_core.runnables import RunnableConfig
 
 from fathom.authoring.application import StepDraftComposer
@@ -17,29 +18,32 @@ from fathom.constants.flow import IssueCode
 from fathom.constants.generation import ScriptSource, ScriptStatus
 from fathom.constants.graph import NodeName
 from fathom.constants.state import (
-    TERMINAL_COMPLETION_REASONS,
     CommonStateKey,
     CompletionReason,
     IntentStateKey,
     RunOutcome,
 )
+from fathom.constants.turn.termination import TerminationStatus
+from fathom.core.agent.termination import TerminationResolver
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import (
+    DecompositionError,
     FinalizationTimeoutError,
     LanguageComplianceError,
     WorkflowCancelledError,
 )
 from fathom.core.services.decomposer import IntentDecomposer
-from fathom.core.services.directive import DirectivePolicy
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.core.services.translation import ProposalTranslator
 from fathom.interfaces.authoring import AuthoringPort
 from fathom.interfaces.checkpoint import CheckpointStore, LangGraphCheckpointer
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
 from fathom.interfaces.perception import PerceptionPort
+from fathom.interfaces.plan import PlanStore
 from fathom.interfaces.signal import SignalPort
 from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
@@ -56,6 +60,7 @@ from fathom.schemas.generation import (
     ScriptReview,
 )
 from fathom.schemas.metrics import ExecutionMetrics
+from fathom.schemas.plan import Plan
 from fathom.schemas.results import ExecutionResult
 from fathom.schemas.run import RealignmentPolicy
 from fathom.schemas.steps import StepResult
@@ -103,14 +108,18 @@ class IntentStrategy:
         workflow_id: str,
         execution_id: str,
         package_name: str,
+        requested_package: Optional[str] = None,
         workspace: Optional[str] = None,
         recorder: Optional[ConversationRecorder] = None,
         realignment: Optional[RealignmentPolicy] = None,
         authoring: Optional[AuthoringPort] = None,
+        plans: PlanStore,
         checkpoint_store: Optional[CheckpointStore] = None,
         runtime_configuration: Optional[RuntimeConfigLoader] = None,
+        architect: Optional[LLMPort] = None,
     ) -> None:
         self.__llm = llm
+        self.__architect = architect or llm
         self.__intent = intent
         self.__catalog = catalog
         self.__workflow_id = workflow_id
@@ -172,6 +181,7 @@ class IntentStrategy:
             realignment=realignment,
             execution_id=execution_id,
             package_name=package_name,
+            requested_package=requested_package,
             path_manager=path_manager,
             configuration=configuration,
             ocr=assembly.ocr(),
@@ -196,6 +206,7 @@ class IntentStrategy:
         # is owned by a CheckpointStore async context manager that must stay open for the duration of the graph run.
         self.__graph_builder = builder
         self.__interrupt_nodes = interrupt_nodes
+        self.__plans = plans
         self.__checkpoint_store = checkpoint_store or self.__build_default_checkpoint_store(
             path_manager=path_manager,
             configuration=configuration,
@@ -219,6 +230,10 @@ class IntentStrategy:
         stack = AsyncExitStack()
         budgets = self.__graph_context.configuration.intent.finalization
 
+        # Bind the run identity so every log this run emits — including the stdlib
+        # LoopDetector logs on the shared device stream — carries workflow.id.
+        structlog.contextvars.bind_contextvars(**{"workflow.id": self.__workflow_id})
+
         try:
             checkpointer: LangGraphCheckpointer = await stack.enter_async_context(
                 self.__checkpoint_store.open(workflow_id=self.__workflow_id)
@@ -231,50 +246,7 @@ class IntentStrategy:
             prewarm_task = asyncio.create_task(self.__graph_context.vision.prewarm())
             abort_warmup_task = asyncio.create_task(self.__graph_context.abort_detector.warmup())
 
-            logger.info(
-                f"decomposing intent: {self.__intent}",
-                extra={
-                    "event": "intent.decompose.started",
-                    "workflow.id": self.__workflow_id,
-                },
-            )
-            decomposer = IntentDecomposer.with_configuration(
-                llm=self.__llm,
-                directive_policy=DirectivePolicy(catalog=self.__catalog),
-                configuration=self.__graph_context.configuration.llm,
-            )
-            await self.__phase.intent_decomposing(intent=self.__intent)
-            sub_goals = await decomposer.decompose(intent=self.__intent)
-
-            self.__graph_context.agent_state.set_sub_goals(sub_goals)
-
-            if self.__graph_context.embedding_cache is not None:
-                self.__graph_context.embedding_cache.warm(
-                    texts=tuple(goal.description for goal in sub_goals),
-                )
-            sub_goal_payload = [
-                {
-                    "index": goal.index,
-                    "description": goal.description,
-                    "directive": goal.directive.value if goal.directive is not None else None,
-                }
-                for goal in sub_goals
-            ]
-            logger.info(
-                "Intent decomposed; starting execution",
-                extra={
-                    "event": "intent.decomposed",
-                    "component": "strategies.intent",
-                    "workflow.id": self.__workflow_id,
-                    "intent": self.__intent,
-                    "sub_goals": sub_goal_payload,
-                    "sub_goals.count": len(sub_goals),
-                },
-            )
-            await self.__phase.plan_synthesized(
-                intent=self.__intent,
-                sub_goals=sub_goal_payload,
-            )
+            await self.__resolve_plan()
 
             executor = GraphExecutor(
                 graph=self.__graph,
@@ -297,6 +269,22 @@ class IntentStrategy:
             )
             raise
 
+        except DecompositionError as exception:
+            logger.warning(
+                "intent decomposition failed; executing nothing",
+                extra={
+                    "event": "intent.decomposition.failed",
+                    "workflow.id": self.__workflow_id,
+                    "decomposition.reason": exception.reason,
+                    "completion.reason": CompletionReason.DECOMPOSITION_FAILED.value,
+                },
+            )
+            run_outcome = RunOutcome.FAILED
+            final_state = await self.__finalize_failed_run(
+                budgets=budgets,
+                assembler=assembler,
+            )
+
         except Exception as exception:
             logger.exception(
                 "intent strategy execution failed",
@@ -314,6 +302,8 @@ class IntentStrategy:
             )
 
         finally:
+            structlog.contextvars.unbind_contextvars("workflow.id")
+
             await AbandonablePhase(
                 workflow_id=self.__workflow_id,
                 timeout=budgets.graph.checkpointer_close,
@@ -359,6 +349,99 @@ class IntentStrategy:
 
         return result
 
+    async def __resolve_plan(self) -> None:
+        """
+        Reuse the persisted plan on resume, else run one DecompositionPhase and seed it before graph entry.
+        """
+
+        persisted = await self.__plans.read(run=self.__graph, workflow=self.__workflow_id)
+
+        if persisted is not None:
+            self.__resume_plan(plan=persisted)
+            return
+
+        logger.info(
+            f"decomposing intent: {self.__intent}",
+            extra={
+                "event": "intent.decompose.started",
+                "workflow.id": self.__workflow_id,
+            },
+        )
+        decomposer = IntentDecomposer.with_configuration(
+            llm=self.__architect,
+            translator=ProposalTranslator(catalog=self.__catalog),
+            configuration=self.__graph_context.configuration.llm,
+        )
+        await self.__phase.intent_decomposing(intent=self.__intent)
+        sub_goals = await decomposer.decompose(intent=self.__intent)
+
+        self.__graph_context.agent_state.set_sub_goals(sub_goals)
+        await self.__seed_plan()
+
+        sub_goal_payload = [
+            {
+                "index": goal.index,
+                "objective": goal.objective,
+                "success": goal.success.kind.value,
+            }
+            for goal in sub_goals
+        ]
+        logger.info(
+            "Intent decomposed; starting execution",
+            extra={
+                "event": "intent.decomposed",
+                "component": "strategies.intent",
+                "workflow.id": self.__workflow_id,
+                "intent": self.__intent,
+                "sub_goals": sub_goal_payload,
+                "sub_goals.count": len(sub_goals),
+            },
+        )
+        await self.__phase.plan_synthesized(
+            intent=self.__intent,
+            # Client renders sub-goals off "description"; keep that wire key alongside the domain "objective".
+            sub_goals=[{**goal, "description": goal["objective"]} for goal in sub_goal_payload],
+        )
+
+    def __resume_plan(self, *, plan: Plan) -> None:
+        """
+        Reuse a persisted plan on resume without a decomposition call.
+        """
+
+        agent_state = self.__graph_context.agent_state
+        agent_state.set_sub_goals(list(plan.goals))
+        agent_state.set_current_sub_goal_index(plan.cursor)
+
+        logger.info(
+            "Resuming persisted plan; decomposition skipped",
+            extra={
+                "event": "intent.plan.resumed",
+                "workflow.id": self.__workflow_id,
+                "sub_goal.index": plan.cursor,
+                "sub_goals.count": len(plan.goals),
+            },
+        )
+
+    async def __seed_plan(self) -> None:
+        """
+        Durably persist the accepted plan before graph entry, failing closed on error.
+        """
+
+        agent_state = self.__graph_context.agent_state
+        plan = Plan(
+            intent=self.__intent,
+            goals=tuple(goal_state.goal for goal_state in agent_state.get_all_sub_goals()),
+            cursor=agent_state.current_sub_goal_index,
+        )
+
+        try:
+            await self.__plans.seed(run=self.__graph, workflow=self.__workflow_id, plan=plan)
+        except Exception as exception:
+            raise DecompositionError(
+                intent=self.__intent,
+                reason=f"accepted plan could not be durably persisted before graph entry: {exception}",
+            ) from exception
+
     async def __finalize_run(
         self,
         *,
@@ -403,6 +486,7 @@ class IntentStrategy:
                 assembler=assembler,
             )
         else:
+            await self.__phase.authoring(intent=self.__intent)
             script_data = await self.__run_finalization_phase(
                 assembler=assembler,
                 timeout=budgets.history.script,
@@ -531,23 +615,36 @@ class IntentStrategy:
             )
             return None
 
-    @staticmethod
     def __resolve_script_outcome(
-        *, run_outcome: RunOutcome, final_state: Optional[Any]
+        self, *, run_outcome: RunOutcome, final_state: Optional[Any]
     ) -> RunOutcome:
         """
-        Derive the script event outcome from the terminal graph state when it is available.
+        Derive the script event outcome from the honest termination status, resolved in one place.
         """
 
-        if run_outcome is not RunOutcome.COMPLETED or final_state is None:
-            return run_outcome
-
         completion_reason = (
-            final_state.values.get(CommonStateKey.COMPLETION_REASON)
-            or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
-            or final_state.values.get("completion_reason")
+            (
+                final_state.values.get(CommonStateKey.COMPLETION_REASON)
+                or final_state.values.get(CommonStateKey.COMPLETION_REASON.value)
+                or final_state.values.get("completion_reason")
+            )
+            if final_state is not None
+            else None
         )
-        if completion_reason in TERMINAL_COMPLETION_REASONS:
+        status = TerminationResolver().resolve(outcome=run_outcome, reason=completion_reason)
+
+        logger.info(
+            "Termination resolved",
+            extra={
+                "event": "fathom.intent.termination.resolved",
+                "workflow.id": self.__workflow_id,
+                "termination.status": status.value,
+                "termination.reason": completion_reason,
+                "run.outcome": run_outcome.value,
+            },
+        )
+
+        if run_outcome is RunOutcome.COMPLETED and status is not TerminationStatus.COMPLETED:
             return RunOutcome.FAILED
 
         return run_outcome
@@ -1474,15 +1571,9 @@ class IntentStrategy:
         Get audit trail of executed vs skipped subgoals.
         """
 
-        from fathom.schemas.subgoal import SubGoalStatus
-
         skipped: List[str] = []
         subgoals = self.__graph_context.agent_state.sub_goal_list
-        executed = [
-            sub_goal.description
-            for sub_goal in subgoals
-            if sub_goal.status == SubGoalStatus.COMPLETE
-        ]
+        executed = [sub_goal.objective for sub_goal in subgoals if sub_goal.is_complete()]
 
         return executed, skipped, len(subgoals)
 
@@ -1710,6 +1801,7 @@ class IntentStrategy:
                 CompletionReason.ACTION_BLOCKED.value,
                 CompletionReason.USER_DIRECTIVE.value,
                 CompletionReason.OPERATOR_ABORTED.value,
+                CompletionReason.DECOMPOSITION_FAILED.value,
                 CompletionReason.INTERVENTION_REQUIRED.value,
                 CompletionReason.RETRY_BUDGET_EXHAUSTED.value,
             }

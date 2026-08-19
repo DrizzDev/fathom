@@ -4,8 +4,11 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 from fathom.constants import ActionExecutionKind, ActionType
+from fathom.constants.events import FathomEvent
 from fathom.constants.screen import ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD, ZERO_HASH
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
+from fathom.constants.timing import TimingPhase
+from fathom.core.services.effect import EffectRecorder
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.execution import ExecutionContext
 from fathom.schemas.observation import ScreenObservation
@@ -25,19 +28,26 @@ class ObserveNode:
     OBSERVE graph node; captures post-action evidence and stages RECORD inputs.
     """
 
-    def __init__(self, *, provider: IntentNodeProvider) -> None:
+    def __init__(
+        self,
+        *,
+        provider: IntentNodeProvider,
+        recorder: Optional[EffectRecorder] = None,
+    ) -> None:
         """
-        Bind the node to the shared intent provider.
+        Bind the node to the shared intent provider and the effect-trial recorder.
         """
 
         self.__provider = provider
+        self.__recorder = recorder if recorder is not None else EffectRecorder()
 
     async def __call__(self, state: IntentGraphState) -> IntentGraphState:
         """
-        Run the OBSERVE node handler.
+        Run the OBSERVE node handler under the run-scoped post-action timing bracket.
         """
 
-        return await self.run(state=state)
+        with self.__provider.context.clock.phase(TimingPhase.OBSERVE):
+            return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """
@@ -109,9 +119,20 @@ class ObserveNode:
         )
 
         action_effect = self.__provider.effects.effect_from(diff=screen_diff)
+
         if context.step.action.execution_kind is ActionExecutionKind.DEVICE:
             self.__provider.context.agent_state.record_action_effect(effect=action_effect)
+
         self.__provider.effects.log_diff(screen_diff=screen_diff, action_effect=action_effect)
+
+        reading = self.__recorder.observe(
+            diff=screen_diff,
+            effect=action_effect,
+            package=self.__provider.context.target_authority.package,
+            foreground=post_activity,
+            bounds=context.step.action.bounds,
+            workflow_id=self.__provider.context.workflow_id,
+        )
 
         screen_changed = self.__screen_changed(
             context=context,
@@ -148,6 +169,11 @@ class ObserveNode:
             },
         )
 
+        if self.__is_noop(
+            context=context, screen_changed=screen_changed, executed=execution_result.success
+        ):
+            await self.__emit_noop(context=context)
+
         plan_observation = PostAction.plan_observation(state=state)
         step_result = StepResult(
             step=context.step,
@@ -176,6 +202,7 @@ class ObserveNode:
             CommonStateKey.EXECUTION_DURATION: context.duration / 1000.0,
             CommonStateKey.SCREEN_OBSERVATION: next_observation,
             IntentStateKey.ELEMENTS: state.get(IntentStateKey.ELEMENTS),
+            IntentStateKey.EFFECT_READING: reading,
             IntentStateKey.POST_ACTIVITY: post_activity,
         }
 
@@ -229,23 +256,63 @@ class ObserveNode:
             return False
 
         return self.__provider.effects.changed(
-            screen_diff=screen_diff,
             pre_hash=pre_hash,
             post_hash=post_hash,
+            screen_diff=screen_diff,
             threshold=ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD,
+        )
+
+    def __is_noop(self, *, context: ExecutionContext, screen_changed: bool, executed: bool) -> bool:
+        """
+        Return whether a dispatched, screen-mutating device action left the screen unchanged (a no-op).
+
+        Control-channel commands (validate, wait, store, complete, ask_user) never move the screen by
+        design, so they are excluded — only a real device interaction that should have changed the screen but did not counts as a no-op.
+        """
+
+        action_type = context.step.action.action_type
+
+        return (
+            executed
+            and not screen_changed
+            and context.step.action.execution_kind is ActionExecutionKind.DEVICE
+            and not self.__provider.context.catalog.is_control(action_type=action_type)
+        )
+
+    async def __emit_noop(self, *, context: ExecutionContext) -> None:
+        """
+        Surface a no-op to the client for visibility (planner is not fed a repeat hint).
+        """
+
+        action = context.step.action.action_type.value
+        target = context.step.action.script_target or "the target"
+        notice = f"The last {action} on '{target}' had no visible effect on screen"
+
+        await self.__provider.context.telemetry.info(
+            notice,
+            action=action,
+            target=target,
+            step=context.step.step_number,
+            type=FathomEvent.ACTION_NO_EFFECT,
         )
 
     def __step_success(
         self,
         *,
+        execution_success: bool,
         action_type: ActionType,
         action_effect: ActionEffect,
         action_execution_kind: ActionExecutionKind,
-        execution_success: bool,
     ) -> bool:
         """
         Return the canonical success bit for one recorded step.
         """
+
+        if self.__provider.context.catalog.is_control(action_type=action_type):
+            # A control command's postcondition is not a screen change: a delivered-and-answered
+            # ASK_USER, for example, succeeds without moving the screen. Its recorded success is
+            # the handler's execution result. The run may still replan afterwards.
+            return execution_success
 
         if action_execution_kind is not ActionExecutionKind.DEVICE:
             return False

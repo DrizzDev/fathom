@@ -71,7 +71,7 @@ class EscalationPolicy(BaseModel):
         ge=1,
         le=10,
         description=(
-            "Number of consecutive passive (non-progressive) no-progress turns "
+            "Number of consecutive passive (validate-only) no-progress turns "
             "tolerated in the contributing tail of the loop window. Escalation "
             "fires when the count exceeds this value (default 3 -> 4th triggers)."
         ),

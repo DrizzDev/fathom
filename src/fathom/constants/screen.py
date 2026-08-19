@@ -35,10 +35,26 @@ INTERACTION_TEXT_PREVIEW_LENGTH: int = 30
 # elements share an identical lowercase text label after stripping, keep only the first occurrence.
 REPEATED_TEXT_SUPPRESSION_THRESHOLD: int = 2
 
+HIERARCHY_BREAKER_COOLDOWN_CAPTURES: int = 3
+
+
+class HierarchyProvenance(StrEnum):
+    """
+    Why a capture carries no hierarchy dump.
+    """
+
+    CIRCUIT_OPEN = "CIRCUIT_OPEN"
+    ATTEMPT_FAILED = "ATTEMPT_FAILED"
+
+
 ACTION_EFFECT_SSIM_THRESHOLD: float = 0.98
 ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD: int = 4
 ACTION_EFFECT_SCROLL_DISTANCE_THRESHOLD_PX: float = 5.0
 ACTION_EFFECT_CONTENT_DIFF_RATIO_THRESHOLD: float = 0.005
+
+# Fraction of the action-target region that changed regions must cover before
+# the trial classifier counts the change as attributable to the action itself.
+ACTION_REGION_CHANGE_FLOOR: float = 0.20
 
 # When two frames register as effectively identical (very high SSIM combined with negligible content-pixel diff),
 # :func:`cv2.phaseCorrelate` can still return a small non-zero shift from DC-noise. We gate the scroll computation

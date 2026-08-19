@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import asyncio  # noqa: TC003 — used at runtime for Task types
 import contextlib
 import hashlib
 import json
 import time
 from logging import getLogger
-from typing import Any, Dict, List, Optional, Set, TypedDict
+from typing import Any, Dict, List, Optional
+
+from typing_extensions import NotRequired, TypedDict
 
 from fathom.constants.events import FathomEvent
 from fathom.constants.execution import VISUAL_HASH_LENGTH
+from fathom.constants.perception import VISION_IMAGE_MAX_DIMENSION, VISION_IMAGE_QUALITY
 from fathom.constants.tools import TurnMode
 from fathom.core.agent.tools import DEFAULT_TOOL_POLICIES, ToolScope
 from fathom.core.context.manager import ContextManager
@@ -24,6 +26,7 @@ from fathom.interfaces.telemetry import TelemetryPort
 from fathom.schemas.capabilities import RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn, TurnPart
 from fathom.schemas.observation import LoopObservation, ScreenObservation
+from fathom.schemas.planner import PlannerMetrics
 from fathom.schemas.results import AnalysisResult, GenerateResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.tools import AllowedTools, ToolPolicyContext
@@ -41,6 +44,8 @@ class SubGoalContext(TypedDict):
     index: int
     total: int
     description: str
+    durable: NotRequired[bool]
+    assertion: NotRequired[str]
 
 
 class VisionService:
@@ -70,7 +75,6 @@ class VisionService:
         self.__use_cache = use_cache
         self.__session_id = session_id
         self.__parser = ToolResponseParser()
-        self.__background_tasks: Set[asyncio.Task[Any]] = set()
 
         self.__capabilities = capabilities
         self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
@@ -432,6 +436,7 @@ class VisionService:
 
         analysis.memories = len(knowledge.get("previous_actions", []))
         analysis.metrics["llm_analysis"] = duration
+        analysis.planner = PlannerMetrics(latency=duration, calls=attempt + 1)
         analysis.metrics["memory_retrieval"] = retrieval
         analysis.metrics["tool_scope_ms"] = tool_scope_duration * 1000
         analysis.metrics["manifest_ms"] = manifest_duration * 1000
@@ -463,7 +468,7 @@ class VisionService:
         current_screen_hash: str,
     ) -> List[Dict[str, Any]]:
         """
-        Return successful actions from this workflow on the current screen.
+        Return actions dispatched by this workflow on the current screen; dispatch is not outcome proof.
         """
 
         if not isinstance(trace, list):
@@ -492,9 +497,8 @@ class VisionService:
                 continue
             actions.append(
                 {
-                    "success": True,
-                    "action": action.get("action_type"),
                     "target": str(target),
+                    "action": action.get("action_type"),
                 }
             )
 
@@ -666,9 +670,13 @@ class VisionService:
         if manifest != "N/A":
             payload.append(f"Element Manifest: {manifest}")
 
-        # Image must be last for KV-cache efficiency
-        # Optimization: Reduce resolution (768px) and quality (70) to improve latency
-        optimized = ImageProcessor.optimize_for_vision(image_data=screen)
+        # Image must be last for KV-cache efficiency. Cap the longest edge high enough to preserve
+        # the pixel position that disambiguates near-identical controls; the downscale saves no tokens.
+        optimized = ImageProcessor.optimize_for_vision(
+            image_data=screen,
+            quality=VISION_IMAGE_QUALITY,
+            max_dimension=VISION_IMAGE_MAX_DIMENSION,
+        )
         payload.append(optimized)
 
         return payload

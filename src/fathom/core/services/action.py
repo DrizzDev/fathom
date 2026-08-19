@@ -522,21 +522,17 @@ class ActionExecutor:
         Execute platform-neutral keyboard dismissal.
         """
 
-        if hasattr(self.__device, "hide_keyboard"):
-            return PrimitiveExecution(
-                coords=None,
-                swipe_execution=None,
-                action=await self.__device.hide_keyboard(),
-            )
+        result = await self.__device.hide_keyboard()
 
-        try:
-            result = await self.__device.back()
-        except NotImplementedError as exception:
-            result = ActionResult(
-                duration=0,
-                success=False,
-                error=f"Cannot hide keyboard: device does not support back fallback: {exception}",
-            )
+        if result is None:
+            try:
+                result = await self.__device.back()
+            except NotImplementedError as exception:
+                result = ActionResult(
+                    duration=0,
+                    success=False,
+                    error=f"Cannot hide keyboard: device does not support back fallback: {exception}",
+                )
 
         return PrimitiveExecution(
             coords=None,
@@ -814,6 +810,25 @@ class ActionExecutor:
             source=action.bounds.source or CoordinateSource.MODEL,
         )
 
+    async def __window_frame(self) -> Optional[Bounds]:
+        """
+        Probe the OS-reported focused-window frame; probe failures never block dispatch.
+        """
+
+        try:
+            return await self.__device.frame()
+        except Exception as exception:
+            logger.warning(
+                "Window-frame probe failed; swipe anchors unclamped this turn",
+                extra={
+                    "event": "swipe.frame.unavailable",
+                    "component": "core.services.action",
+                    "exception.type": type(exception).__name__,
+                    "exception.message": str(exception),
+                },
+            )
+            return None
+
     async def __coordinate_and_emit(
         self,
         *,
@@ -834,13 +849,21 @@ class ActionExecutor:
         keyboard = self.__keyboard_observation(observation=observation)
         viewport_bounds = self.__viewport_bounds(region=region, capture=pre_capture)
         policy = self.__device_configuration().interaction.policy.swipe.retry
+        frame = await self.__window_frame()
 
         execution = await self.__swipe_coordinator.execute(
             original=path,
+            frame=frame,
             policy=policy,
             keyboard=keyboard,
             bounds=viewport_bounds,
             original_before=original_before,
+        )
+
+        self.__log_rejections(
+            execution=execution,
+            session_id=session_id,
+            viewport=viewport_bounds,
         )
 
         trace_emissions = await self.__stage_attempt_traces(
@@ -962,6 +985,31 @@ class ActionExecutor:
             emissions.append(emission)
 
         return tuple(emissions)
+
+    @staticmethod
+    def __log_rejections(
+        *,
+        session_id: str,
+        viewport: Bounds,
+        execution: SwipeExecution,
+    ) -> None:
+        """
+        Log every candidate the planner filtered before dispatch, with its reason.
+        """
+
+        for rejection in execution.rejections:
+            logger.warning(
+                "Swipe candidate filtered before dispatch",
+                extra={
+                    "workflow.id": session_id,
+                    "component": "core.services.action",
+                    "event": "swipe.candidate.rejected",
+                    "rejection.index": rejection.index,
+                    "rejection.reason": rejection.reason.value,
+                    "viewport": [viewport.width, viewport.height],
+                    "candidate.anchor": [rejection.path.start_x, rejection.path.start_y],
+                },
+            )
 
     @staticmethod
     def __log_gesture_path(

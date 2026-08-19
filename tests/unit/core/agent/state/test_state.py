@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from pydantic import ValidationError
+
 from fathom.constants import ActionType
 from fathom.constants.retries import (
     DEFAULT_PLANNER_RETRY_LIMIT,
@@ -12,12 +14,11 @@ from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.core.agent.state import AgentState
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.retries import RetryLimits
 from fathom.schemas.screens import ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.schemas.supervision import BlockReason
+from fathom.schemas.target import TargetAuthority
 from tests.builders import SubGoalFixtures
 
 
@@ -160,21 +161,6 @@ class AgentStateSubGoalCursorTest(unittest.TestCase):
 
         return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
 
-    @staticmethod
-    def __completion_signal() -> SubGoalCompletionSignal:
-        """
-        Return a valid completion signal for advancing the cursor.
-        """
-
-        return SubGoalCompletionSignal(
-            llm_confidence=1.0,
-            screen_verified=True,
-            action_executed=True,
-            flagged_complete=True,
-            rationale_verified=True,
-            evidence="unit test",
-        )
-
     def test_current_sub_goal_final_is_false_without_sub_goals(self) -> None:
         """
         Empty sub-goal plans are never treated as final active work.
@@ -192,14 +178,14 @@ class AgentStateSubGoalCursorTest(unittest.TestCase):
         state = AgentState(intent="finish checkout", capabilities=self.__caps())
         state.set_sub_goals(
             [
-                SubGoal(index=0, description="Open cart"),
-                SubGoal(index=1, description="Confirm checkout"),
+                SubGoalFixtures.make(index=0, description="Open cart"),
+                SubGoalFixtures.make(index=1, description="Confirm checkout"),
             ]
         )
 
         self.assertFalse(state.has_active_final_sub_goal())
 
-        state.mark_current_sub_goal_complete(completion_signal=self.__completion_signal())
+        state.advance_current_sub_goal()
 
         self.assertTrue(state.has_active_final_sub_goal())
 
@@ -209,14 +195,34 @@ class AgentStateSubGoalCursorTest(unittest.TestCase):
         """
 
         state = AgentState(intent="finish checkout", capabilities=self.__caps())
-        state.set_sub_goals([SubGoal(index=0, description="Confirm checkout")])
+        state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm checkout")])
 
         self.assertTrue(state.has_active_final_sub_goal())
 
-        state.mark_current_sub_goal_complete(completion_signal=self.__completion_signal())
+        state.advance_current_sub_goal()
 
         self.assertIsNone(state.get_current_sub_goal())
         self.assertFalse(state.has_active_final_sub_goal())
+
+    def test_advance_completes_immutable_goal_with_mutable_progress(self) -> None:
+        """
+        Advancing marks the active goal COMPLETE via mutable progress; the goal definition stays immutable.
+        """
+
+        state = AgentState(intent="finish checkout", capabilities=self.__caps())
+        state.set_sub_goals([SubGoalFixtures.make(index=0, description="Confirm checkout")])
+
+        goal_state = state.get_current_sub_goal()
+        assert goal_state is not None
+
+        with self.assertRaises(ValidationError):
+            goal_state.goal.objective = "mutated"  # type: ignore[misc]
+
+        with self.assertRaises(ValidationError):
+            goal_state.progress.attempts = -1
+
+        state.advance_current_sub_goal()
+        self.assertTrue(goal_state.is_complete())
 
 
 class AgentStateLastActionPersistenceTest(unittest.TestCase):
@@ -841,3 +847,134 @@ class AgentStatePlannerRetryCheckpointTest(unittest.TestCase):
 
         self.assertIsNone(state.last_retry_attempt)
         self.assertEqual(state.retries.planner.count, 0)
+
+
+class AgentStateTargetAuthorityCheckpointTest(unittest.TestCase):
+    """
+    Pins that the run's target authority is durable and separates requested target from foreground.
+
+    The launcher-as-target defect (run 73efe46d) came from promoting the start foreground into
+    target authority. Authority is now checkpoint-durable; legacy checkpoints restore to unbound.
+    """
+
+    @staticmethod
+    def __caps() -> RuntimeCapabilities:
+        """
+        Return autonomous capabilities.
+        """
+
+        return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+
+    def test_requested_authority_round_trips(self) -> None:
+        """
+        An explicitly requested target survives the persist/restore round-trip.
+        """
+
+        state = AgentState(
+            intent="x",
+            capabilities=self.__caps(),
+            target_authority=TargetAuthority.requested(package="com.meesho.supply"),
+        )
+
+        restored = AgentState.from_checkpoint(state.to_checkpoint(), capabilities=self.__caps())
+
+        self.assertTrue(restored.target_authority.bound)
+        self.assertEqual(restored.target_authority.package, "com.meesho.supply")
+
+    def test_default_authority_is_unbound(self) -> None:
+        """
+        With no requested target, authority defaults to unbound (departure detection off).
+        """
+
+        state = AgentState(intent="x", capabilities=self.__caps())
+
+        self.assertFalse(state.target_authority.bound)
+        self.assertIsNone(state.target_authority.package)
+
+    def test_legacy_checkpoint_without_authority_restores_unbound(self) -> None:
+        """
+        Old checkpoints written before this change have no authority key; restore to unbound.
+        """
+
+        state = AgentState(
+            intent="x",
+            capabilities=self.__caps(),
+            target_authority=TargetAuthority.requested(package="com.meesho.supply"),
+        )
+        payload = state.to_checkpoint()
+        payload.pop("target_authority")
+
+        restored = AgentState.from_checkpoint(payload, capabilities=self.__caps())
+
+        self.assertFalse(restored.target_authority.bound)
+
+
+class AgentStateLoopEvidenceSegmentationTest(unittest.TestCase):
+    """
+    Pins that a verified sub-goal completion segments the loop detector's screen evidence.
+
+    Regression for device run 4ee2b518: TAP(progress) -> VALIDATE(no visual change) ->
+    STORE(no visual change) across three sub-goals on the same settled product screen falsely
+    tripped near-duplicate visual repetition and forced an ASK_USER. Completing a sub-goal is
+    semantic progress and must clear the previous goal's screen evidence.
+    """
+
+    @staticmethod
+    def __caps() -> RuntimeCapabilities:
+        """
+        Return autonomous capabilities.
+        """
+
+        return RuntimeCapabilities(hitl=HITLCapability(enabled=False))
+
+    @staticmethod
+    def __screen() -> ScreenState:
+        """
+        Return one fixed settled product screen (identical across the three turns).
+        """
+
+        return ScreenState(
+            timestamp=0,
+            activity="com.meesho.supply",
+            visual_hash="c" * 16,
+            activity_hash="d" * 16,
+        )
+
+    def test_sub_goal_advancement_segments_loop_evidence(self) -> None:
+        """
+        Three turns on one settled screen, each completing its sub-goal, is never stuck.
+        """
+
+        state = AgentState(intent="buy ghar soap", capabilities=self.__caps())
+        state.set_sub_goals(
+            [
+                SubGoalFixtures.make(index=0, description="Scroll to a >= 4.2 product"),
+                SubGoalFixtures.make(index=1, description="Validate rating"),
+                SubGoalFixtures.make(index=2, description="Store price"),
+            ]
+        )
+        detector = state.runtime.screen.detector
+        screen = self.__screen()
+
+        for action in ("tap", "validate", "store"):
+            detector.record(
+                action_type=action, screen=screen, action_description=f"{action} product"
+            )
+            state.advance_current_sub_goal()
+
+        self.assertFalse(state.is_stuck)
+
+    def test_same_screen_without_advancement_is_stuck(self) -> None:
+        """
+        Control: without sub-goal advancement, three identical screens DO trip the detector,
+        proving the segmentation above is what prevents the false stuck (not a weak fixture).
+        """
+
+        state = AgentState(intent="buy ghar soap", capabilities=self.__caps())
+        detector = state.runtime.screen.detector
+        screen = self.__screen()
+
+        for _ in range(detector.threshold):
+            detector.record(action_type="tap", screen=screen, action_description="tap product")
+
+        self.assertTrue(state.is_stuck)

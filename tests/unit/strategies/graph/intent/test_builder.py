@@ -4,7 +4,7 @@ import ast
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
 from unittest.mock import MagicMock, patch
 
 from fathom.constants.graph import NodeName
@@ -638,4 +638,256 @@ class TestIntentGraphBuilderVerifyLoop:
             activity="save-account",
             screen=screen,
             consecutive_rejections=DEFAULT_VERIFICATION_REJECTION_LIMIT,
+        )
+
+
+class TestIntentGraphBuilderRouteCharacterization(unittest.TestCase):
+    """
+    Characterizes the intent-graph routing decisions across the Phase-1 GROUND fix.
+
+    These pin the observable route each conditional edge returns for a given completion / retry
+    / cancellation state. Every router — GROUND included, since the Phase-1 fix — reads the
+    returned graph-state dict rather than the mutable ``context.agent_state``. The destinations
+    asserted here are the parity contract: they are identical to the pre-fix decision table, only
+    the source GROUND consults changed from shared context to durable returned state.
+    """
+
+    __TERMINAL = CompletionReason.STUCK.value
+    __NON_TERMINAL = CompletionReason.SUCCESS.value
+    __STEP = object()
+
+    @staticmethod
+    def __route(
+        *,
+        router: str,
+        state: Optional[Dict[Any, Any]] = None,
+        is_cancelled: bool = False,
+    ) -> str:
+        """
+        Invoke one conditional-edge router against a synthetic context and graph state.
+        """
+
+        builder = IntentGraphBuilder(
+            context=SimpleNamespace(is_cancelled=is_cancelled),  # type: ignore[arg-type]
+        )
+        method = getattr(builder, f"_IntentGraphBuilder__{router}")
+        return cast("str", method(state if state is not None else {}))
+
+    @classmethod
+    def __state(
+        cls,
+        *,
+        is_complete: bool = False,
+        reason: Optional[str] = None,
+        should_retry: bool = False,
+        has_step: bool = False,
+    ) -> Dict[Any, Any]:
+        """
+        Build a graph-state dict with the completion / retry / planned-step keys the routers read.
+        """
+
+        state: Dict[Any, Any] = {
+            CommonStateKey.IS_COMPLETE: is_complete,
+            IntentStateKey.SHOULD_RETRY: should_retry,
+            IntentStateKey.PLANNED_STEP: cls.__STEP if has_step else None,
+        }
+        if reason is not None:
+            state[CommonStateKey.COMPLETION_REASON] = reason
+        return state
+
+    def test_ground_incomplete_routes_to_analyze(self) -> None:
+        """
+        GROUND with an incomplete run advances to ANALYZE.
+        """
+
+        self.assertEqual(self.__route(router="route_after_ground"), NodeName.ANALYZE)
+
+    def test_ground_complete_terminal_routes_to_end(self) -> None:
+        """
+        GROUND completed with a terminal reason ends the run.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__TERMINAL)
+        self.assertEqual(self.__route(router="route_after_ground", state=state), NodeName.END)
+
+    def test_ground_complete_non_terminal_routes_to_analyze(self) -> None:
+        """
+        GROUND completed with a non-terminal reason still advances to ANALYZE.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__NON_TERMINAL)
+        self.assertEqual(self.__route(router="route_after_ground", state=state), NodeName.ANALYZE)
+
+    def test_analyze_cancelled_routes_to_end(self) -> None:
+        """
+        ANALYZE ends immediately when the run is cancelled.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_analyze", state=self.__state(), is_cancelled=True),
+            NodeName.END,
+        )
+
+    def test_analyze_complete_terminal_routes_to_end(self) -> None:
+        """
+        ANALYZE completed with a terminal reason ends the run.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__TERMINAL)
+        self.assertEqual(self.__route(router="route_after_analyze", state=state), NodeName.END)
+
+    def test_analyze_complete_non_terminal_routes_to_verify(self) -> None:
+        """
+        ANALYZE completed with a non-terminal reason routes to VERIFY.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__NON_TERMINAL)
+        self.assertEqual(self.__route(router="route_after_analyze", state=state), NodeName.VERIFY)
+
+    def test_analyze_should_retry_routes_to_ground(self) -> None:
+        """
+        ANALYZE with a soft retry re-grounds.
+        """
+
+        state = self.__state(should_retry=True, has_step=True)
+        self.assertEqual(self.__route(router="route_after_analyze", state=state), NodeName.GROUND)
+
+    def test_analyze_missing_step_routes_to_ground(self) -> None:
+        """
+        ANALYZE with no planned step re-grounds.
+        """
+
+        state = self.__state(has_step=False)
+        self.assertEqual(self.__route(router="route_after_analyze", state=state), NodeName.GROUND)
+
+    def test_analyze_with_step_routes_to_supervise(self) -> None:
+        """
+        ANALYZE with a planned step advances to SUPERVISE.
+        """
+
+        state = self.__state(has_step=True)
+        self.assertEqual(
+            self.__route(router="route_after_analyze", state=state), NodeName.SUPERVISE
+        )
+
+    def test_supervise_cancelled_routes_to_end(self) -> None:
+        """
+        SUPERVISE ends when cancelled.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_supervise", state=self.__state(), is_cancelled=True),
+            NodeName.END,
+        )
+
+    def test_supervise_should_retry_routes_to_ground(self) -> None:
+        """
+        SUPERVISE re-grounds when it asks for a retry.
+        """
+
+        state = self.__state(should_retry=True)
+        self.assertEqual(self.__route(router="route_after_supervise", state=state), NodeName.GROUND)
+
+    def test_supervise_default_routes_to_execute(self) -> None:
+        """
+        SUPERVISE advances to EXECUTE by default.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_supervise", state=self.__state()), NodeName.EXECUTE
+        )
+
+    def test_execute_cancelled_routes_to_end(self) -> None:
+        """
+        EXECUTE ends when cancelled.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_execute", state=self.__state(), is_cancelled=True),
+            NodeName.END,
+        )
+
+    def test_execute_complete_terminal_routes_to_end(self) -> None:
+        """
+        EXECUTE completed with a terminal reason ends the run.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__TERMINAL)
+        self.assertEqual(self.__route(router="route_after_execute", state=state), NodeName.END)
+
+    def test_execute_complete_non_terminal_routes_to_verify(self) -> None:
+        """
+        EXECUTE completed with a non-terminal reason routes to VERIFY.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__NON_TERMINAL)
+        self.assertEqual(self.__route(router="route_after_execute", state=state), NodeName.VERIFY)
+
+    def test_execute_should_retry_routes_to_ground(self) -> None:
+        """
+        EXECUTE re-grounds on a soft retry.
+        """
+
+        state = self.__state(should_retry=True)
+        self.assertEqual(self.__route(router="route_after_execute", state=state), NodeName.GROUND)
+
+    def test_execute_default_routes_to_observe(self) -> None:
+        """
+        EXECUTE advances to OBSERVE by default.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_execute", state=self.__state()), NodeName.OBSERVE
+        )
+
+    def test_verify_cancelled_routes_to_end(self) -> None:
+        """
+        VERIFY ends when cancelled.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_verify", state=self.__state(), is_cancelled=True),
+            NodeName.END,
+        )
+
+    def test_verify_complete_routes_to_end(self) -> None:
+        """
+        VERIFY ends when the run is complete, terminal or not.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__NON_TERMINAL)
+        self.assertEqual(self.__route(router="route_after_verify", state=state), NodeName.END)
+
+    def test_verify_incomplete_routes_to_ground(self) -> None:
+        """
+        VERIFY re-grounds when verification has not completed the run.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_verify", state=self.__state()), NodeName.GROUND
+        )
+
+    def test_record_complete_terminal_routes_to_end(self) -> None:
+        """
+        RECORD completed with a terminal reason ends the run.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__TERMINAL)
+        self.assertEqual(self.__route(router="route_after_record", state=state), NodeName.END)
+
+    def test_record_complete_non_terminal_routes_to_verify(self) -> None:
+        """
+        RECORD completed with a non-terminal reason routes to VERIFY.
+        """
+
+        state = self.__state(is_complete=True, reason=self.__NON_TERMINAL)
+        self.assertEqual(self.__route(router="route_after_record", state=state), NodeName.VERIFY)
+
+    def test_record_incomplete_routes_to_ground(self) -> None:
+        """
+        RECORD re-grounds when the run is not complete.
+        """
+
+        self.assertEqual(
+            self.__route(router="route_after_record", state=self.__state()), NodeName.GROUND
         )

@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from tests.builders import SubGoalFixtures
+
 from fathom.constants import ActionType
 from fathom.constants.state import CompletionReason
 from fathom.core.agent.planner import StepPlanner
@@ -15,7 +17,6 @@ from fathom.schemas.escalation import EscalationPolicy
 from fathom.schemas.loop import LoopReason
 from fathom.schemas.results import AnalysisResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
-from fathom.schemas.subgoal import SubGoal
 
 
 class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCase):
@@ -110,7 +111,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True)),
         )
         state.set_sub_goals(
-            [SubGoal(description="Validate srp page is loaded", index=0, max_steps=10)]
+            [SubGoalFixtures.make(description="Validate srp page is loaded", index=0)]
         )
         self.__seed_validate_only_loop(state=state)
 
@@ -127,15 +128,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         planner = StepPlanner(vision_tool=vision)
         context = self.__context()
 
-        result = await planner.plan_step(
-            state=state,
-            reasoner=reasoner,
-            capture=self.__capture(),
-            context_manager=context,
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=reasoner,
+                capture=self.__capture(),
+                context_manager=context,
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         # ASK_USER was NOT produced; the planner fell through to analysis.
         self.assertEqual(state.deferral_count, 1)
@@ -156,7 +159,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state = AgentState(
             intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
         )
-        state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="Validate srp page", index=0)])
         self.__seed_validate_only_loop(state=state)
         # Simulate two earlier deferrals on this sub-goal.
         state.record_deferral()
@@ -164,15 +167,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state.record_deferral()  # Now at 3 (above default limit of 2).
 
         planner = StepPlanner(vision_tool=Mock())
-        result = await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -189,7 +194,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state = AgentState(
             intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
         )
-        state.set_sub_goals([SubGoal(description="Validate srp page", index=0, max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="Validate srp page", index=0)])
         detector = state.runtime.screen.detector
         for _ in range(4):
             detector.record(
@@ -200,15 +205,17 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             )
 
         planner = StepPlanner(vision_tool=Mock())
-        result = await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -223,22 +230,27 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
         )
         # max_steps=1 means a single recorded action exhausts the budget.
-        state.set_sub_goals([SubGoal(description="active", index=0, max_steps=1)])
+        state.set_sub_goals([SubGoalFixtures.make(description="active", index=0)])
+        current = state.get_current_sub_goal()
+        assert current is not None
+        current.progress.limit = 1
         state.record_sub_goal_action()
 
         self.assertFalse(state.is_stuck)
         self.assertTrue(state.current_sub_goal_over_budget)
 
         planner = StepPlanner(vision_tool=Mock())
-        result = await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None
@@ -254,7 +266,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state = AgentState(
             intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
         )
-        state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="v", index=0)])
         state.record_deferral()
         state.record_deferral()
         self.assertEqual(state.deferral_count, 2)
@@ -287,22 +299,24 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
         state = AgentState(
             intent="x", capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=True))
         )
-        state.set_sub_goals([SubGoal(description="v", index=0, max_steps=10)])
+        state.set_sub_goals([SubGoalFixtures.make(description="v", index=0)])
         self.__seed_validate_only_loop(state=state)
 
         planner = StepPlanner(
             vision_tool=Mock(),
             escalation_policy=EscalationPolicy(enabled=False),
         )
-        result = await planner.plan_step(
-            state=state,
-            reasoner=Mock(),
-            capture=self.__capture(),
-            context_manager=self.__context(),
-            screen_width=1080,
-            screen_height=2400,
-            prompt_if_stuck=True,
-        )
+        result = (
+            await planner.plan_step(
+                state=state,
+                reasoner=Mock(),
+                capture=self.__capture(),
+                context_manager=self.__context(),
+                screen_width=1080,
+                screen_height=2400,
+                prompt_if_stuck=True,
+            )
+        ).plan
 
         self.assertIsNotNone(result.step)
         assert result.step is not None

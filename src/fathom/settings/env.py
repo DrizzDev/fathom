@@ -39,7 +39,7 @@ class FathomSettings(BaseSettings):
 
     # Gemini settings
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-3-flash-preview", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-3.5-flash", alias="GEMINI_MODEL")
 
     capacity_enabled: bool = Field(
         default=True,
@@ -245,6 +245,8 @@ class FathomSettings(BaseSettings):
     # Perception subsystem toggles. CV stays off by default because its
     # anonymous visual-control boxes are still too noisy for production
     # grounding and can pollute both prompts and debug artifacts.
+    oracle_enabled: bool = Field(default=True, alias="FATHOM_ORACLE_ENABLED")
+
     observation_ocr_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OCR")
     observation_cv_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_CV")
     observation_icon_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_ICON")

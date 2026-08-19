@@ -9,6 +9,7 @@ from fathom.constants import ActionType, StepEvent
 from fathom.constants.tools import DiagnosticSeverity, StateNamespace
 from fathom.core.exceptions import ToolValidationError, VisionError
 from fathom.schemas.actions import Action
+from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.delta import DeltaSignal
 from fathom.schemas.gemini_tools import (
     AskUserArgs,
@@ -31,6 +32,7 @@ from fathom.schemas.tools import (
     ToolDiagnostic,
     ToolResponse,
 )
+from fathom.schemas.validation import Validation
 
 logger = getLogger(__name__)
 
@@ -112,6 +114,14 @@ class ToolResponseParser:
                 arguments=primary_call.args,
             )
 
+            # Shadow visual assessment is a common optional field on any primary response, parsed
+            # separately from the live action so a malformed assessment never rejects a valid action.
+            assessment, malformed = self.__extract_visual_assessment(arguments=primary_call.args)
+            if assessment is not None or malformed:
+                result = result.model_copy(
+                    update={"visual_assessment": assessment, "assessment_malformed": malformed}
+                )
+
             # Process non-command tool calls into the typed model-tool response envelope.
             if non_command_calls:
                 tool_response = result.tool_response or ToolResponse()
@@ -147,6 +157,21 @@ class ToolResponseParser:
         except Exception as exception:
             logger.exception("Failed to parse tool response")
             raise VisionError(f"Response parsing failed: {exception}") from exception
+
+    @staticmethod
+    def __extract_visual_assessment(*, arguments: Any) -> Tuple[Optional[VisualAssessment], bool]:
+        """
+        Extract the optional shadow visual assessment, returning (assessment, malformed) and never fabricating one.
+        """
+
+        raw = arguments.get("visual_assessment") if isinstance(arguments, Mapping) else None
+        if raw is None:
+            return None, False
+
+        try:
+            return VisualAssessment.model_validate(raw), False
+        except ValidationError:
+            return None, True
 
     def __dispatch_parse(self, name: str, arguments: Any) -> AnalysisResult:
         """
@@ -568,10 +593,11 @@ class ToolResponseParser:
         screen = args.current_screen
 
         action_type = ActionType.COMPLETE if completed else ActionType.VALIDATE
-        validation_subject = self.__first_text(
-            args.subgoal_completion_reason,
-            args.goal_completion_reason,
-            screen,
+        validation = Validation.goal(
+            assertion=args.assertion,
+            subgoal=args.subgoal_completion_reason,
+            goal=args.goal_completion_reason,
+            screen=screen,
         )
         result = AnalysisResult(
             action=Action(
@@ -580,8 +606,9 @@ class ToolResponseParser:
                 target=screen,
                 event_type=StepEvent.VALIDATION,
                 action_type=action_type,
-                validation_subject=validation_subject,
+                validation_subject=validation.subject if validation is not None else None,
             ),
+            validation=validation,
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
@@ -601,18 +628,6 @@ class ToolResponseParser:
             raw_goal_completed=raw_goal_completed,
             raw_sub_goal_completed=raw_sub_goal_completed,
         )
-
-    @staticmethod
-    def __first_text(*values: Optional[str]) -> str:
-        """
-        Return the first non-empty text value.
-        """
-
-        for value in values:
-            if value and (text := value.strip()):
-                return text
-
-        return ""
 
     def __parse_state_validation(self, arguments: Any) -> AnalysisResult:
         """
@@ -638,6 +653,7 @@ class ToolResponseParser:
         if args.condition_met is not None:
             metadata["condition_met"] = args.condition_met
 
+        validation = Validation.state(condition=condition)
         result = AnalysisResult(
             action=Action(
                 confidence=1.0,
@@ -645,8 +661,9 @@ class ToolResponseParser:
                 event_type=StepEvent.VALIDATION,
                 action_type=ActionType.VALIDATE,
                 rationale=f"{reason} | Evidence: {evidence}",
-                validation_subject=condition.strip(),
+                validation_subject=validation.subject if validation is not None else None,
             ),
+            validation=validation,
             alternatives=[],
             reasoning=reason,
             is_goal_complete=completed,
@@ -741,6 +758,11 @@ class ToolResponseParser:
             alternatives=[],
             reasoning=message,
             metadata={},
+            validation=(
+                Validation.command(subject=data.validation_subject)
+                if action_type is ActionType.VALIDATE
+                else None
+            ),
             tool_response=ToolResponse(
                 command=ToolCommand(action_type=action_type, payload=data),
                 updates=self.__updates(memory_updates=args.memory_updates),

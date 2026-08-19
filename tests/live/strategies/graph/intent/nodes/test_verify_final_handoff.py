@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from PIL import Image, ImageDraw
+from tests.builders import SubGoalFixtures
 
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
@@ -18,11 +19,9 @@ from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.llm import StructuredOutput
-from fathom.schemas.reasoning import SubGoalCompletionSignal
 from fathom.schemas.results import GenerateResult, PlanResult
 from fathom.schemas.screens import ScreenCapture, ScreenState
 from fathom.schemas.steps import Step, StepResult
-from fathom.schemas.subgoal import SubGoal
 from fathom.strategies.graph.intent.nodes.record import RecordNode
 from fathom.strategies.graph.intent.nodes.verify import VerifyNode
 
@@ -381,20 +380,11 @@ class TestSalarySeFinalVerifyLive:
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap address selector"),
-                SubGoal(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=0, description="Tap address selector"),
+                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
             ]
         )
-        agent_state.mark_current_sub_goal_complete(
-            completion_signal=SubGoalCompletionSignal(
-                llm_confidence=1.0,
-                screen_verified=True,
-                action_executed=True,
-                flagged_complete=True,
-                rationale_verified=True,
-                evidence="address selector opened",
-            )
-        )
+        agent_state.advance_current_sub_goal()
         return agent_state
 
     @staticmethod
@@ -417,25 +407,20 @@ class TestSalarySeFinalVerifyLive:
         )
         agent_state.set_sub_goals(
             [
-                SubGoal(index=0, description="Tap on the current address or change address option"),
-                SubGoal(index=1, description="Type HSR Layout into the address search field"),
-                SubGoal(index=2, description="Tap HSR Layout from the search results"),
-                SubGoal(
+                SubGoalFixtures.make(
+                    index=0, description="Tap on the current address or change address option"
+                ),
+                SubGoalFixtures.make(
+                    index=1, description="Type HSR Layout into the address search field"
+                ),
+                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
+                SubGoalFixtures.make(
                     index=3, description="Tap the button to confirm or save the address change"
                 ),
             ]
         )
         for _ in range(3):
-            agent_state.mark_current_sub_goal_complete(
-                completion_signal=SubGoalCompletionSignal(
-                    llm_confidence=1.0,
-                    screen_verified=True,
-                    action_executed=True,
-                    flagged_complete=True,
-                    rationale_verified=True,
-                    evidence="prior HSR sub-goal complete",
-                )
-            )
+            agent_state.advance_current_sub_goal()
         return agent_state
 
     @staticmethod

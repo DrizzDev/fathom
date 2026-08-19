@@ -84,7 +84,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         assembly = RunAssemblyBuilder(
             settings=FathomSettings(
                 gemini_api_key="x",
-                gemini_model="gemini-3-flash-preview",
+                gemini_model="gemini-3.5-flash",
             )
         )
         configuration = assembly.build_qualifier_model_configuration(
