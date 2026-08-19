@@ -14,7 +14,7 @@ class LocalStorage(StoragePort):
 
     def __init__(self, path_manager: SharedPathManager) -> None:
         """
-        Initialize local storage adapter.
+        Build the local image-storage backend from the shared path manager.
         """
         self.__storage = LocalImageStorage(path_manager=path_manager)
 

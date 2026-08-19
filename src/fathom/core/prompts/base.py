@@ -7,7 +7,7 @@ from fathom.schemas.tools import AllowedTools
 
 
 class PromptBuilder(ABC):
-    """Abstract base class for building model-specific system prompts."""
+    """Model-specific prompt builder: a stable tool-scoped system prompt plus a dynamic user context."""
 
     @abstractmethod
     def build(self, *, tools: AllowedTools) -> str:

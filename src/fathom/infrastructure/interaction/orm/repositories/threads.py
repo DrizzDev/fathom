@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 class ThreadRepository:
     """
-    persistent-store backed repository for durable conversation threads.
+    Persistent-store backed repository for durable conversation threads.
     """
 
     def __init__(self, *, lifecycle: LifecycleRecorder, transaction: TransactionScope) -> None:

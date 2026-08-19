@@ -97,6 +97,7 @@ INTERACTION_POSTGRES_DEFAULT_SSL: Final[PostgresSslMode] = PostgresSslMode.PREFE
 # wildcards in user-supplied search prefixes (e.g. `%`, `_`) remain literal.
 INTERACTION_SQL_LIKE_ESCAPE_CHARACTER: Final[str] = "\\"
 
-# SQL LIKE wildcard characters that must be neutralized when user-supplied substrings reach the predicate as literal matchers.
+# SQL LIKE wildcard characters that must be neutralized when user-supplied substrings
+# reach the predicate as literal matchers.
 SQL_LIKE_WILDCARD_PERCENT: Final[str] = "%"
 SQL_LIKE_WILDCARD_UNDERSCORE: Final[str] = "_"

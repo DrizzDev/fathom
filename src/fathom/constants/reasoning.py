@@ -6,13 +6,8 @@ RATIONALE_CONTEXT_RELEVANCE_THRESHOLD: float = 0.60
 # Ratio threshold for keyword-based completion match.
 RATIONALE_KEYWORD_MATCH_THRESHOLD: float = 0.72
 
-# Floor below which similarity is too low for keyword-based rationale verification.
-# Raised from 0.10 to 0.35: the old floor accepted any rationale that mentioned
-# a generic completion keyword (``done``, ``complete``, ``finished``…) with as
-# little as 10% string overlap against the target. That admitted unrelated
-# narrations that happened to use a completion word, causing false rationale
-# verifications. 0.35 still admits paraphrases (good) but rejects rationales
-# that share virtually nothing with the target text (the regression mode).
+# Floor below which similarity is too low for keyword-based rationale verification;
+# admits paraphrases of the target while rejecting rationales that barely overlap it.
 RATIONALE_MIN_SIMILARITY_FLOOR: float = 0.35
 
 # Below this rationale-to-sub-goal similarity an asserted claim is flagged as lateral credit; observe-only.
@@ -34,14 +29,9 @@ LOW_DELTA_PROGRESS_THRESHOLD: float = 0.3
 # permanent imperative on later screens.
 USER_GUIDANCE_ANALYZE_TTL: int = 3
 
-# Number of consecutive ``validate`` + ``flagged_complete`` emits the planner
-# may produce against a non-validate directive before the completion gate
-# accepts the divergence as an implicit-completion claim. Bridges the gap
-# between (a) the original validate-shortcut bug (one stray validate must NOT
-# bypass a tap directive) and (b) genuine app-flow variance where the app
-# skips an intermediate screen and the named action is no longer reachable.
-# Threshold of 2 means: first validate is rejected (keeps the LLM honest);
-# second consecutive validate is accepted (lets stale sub-goals resolve).
+# Consecutive ``validate`` + ``flagged_complete`` emits against a non-validate
+# directive before the completion gate accepts the divergence as an implicit
+# completion. At 2, the first validate is rejected and the second is accepted.
 IMPLICIT_COMPLETION_THRESHOLD: int = 2
 
 # Action confidence floor; below this the action is rejected outright.

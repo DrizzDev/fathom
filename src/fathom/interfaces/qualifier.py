@@ -9,9 +9,10 @@ class IntentQualifierPort(ABC):
     """
     Domain contract for deciding whether an intent describes an executable UI task.
 
-    The port carries exactly one method. Resource lifecycle (LLM construction, teardown of dedicated infrastructure)
-    is the composition root's concern and deliberately does NOT live on this port — see runtime/qualifier/composer.py
-    and the QualifierComposition / RunnerComposition schemas for how owned resources are tracked at the runtime layer.
+    The port carries exactly one method. Resource lifecycle (LLM construction, teardown of
+    dedicated infrastructure) is the composition root's concern and deliberately does NOT live on
+    this port; see runtime/qualifier/composer.py and the QualifierComposition / RunnerComposition
+    schemas for how owned resources are tracked at the runtime layer.
     """
 
     @abstractmethod

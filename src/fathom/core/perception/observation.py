@@ -516,7 +516,9 @@ class ScreenObservationService:
     def __element_from_token(self, *, token: OcrToken, index: int) -> PerceivedElement:
         """
         Convert one OCR token into a perceived element.
-        The Document AI layout level is woven into the identifier so production traces attribute snaps to the level the merge structure came from.
+
+        The Document AI layout level is woven into the identifier so production traces
+        attribute snaps to the level the merge structure came from.
         """
 
         return PerceivedElement(

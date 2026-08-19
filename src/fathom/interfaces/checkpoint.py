@@ -79,5 +79,6 @@ class CheckpointStore(Protocol):
 
     async def sweep_stale(self) -> list[str]:
         """
-        Remove orphaned checkpoint state older than the configured retention; return removed workflow identifiers.
+        Remove orphaned checkpoint state older than the configured retention;
+        return removed workflow identifiers.
         """

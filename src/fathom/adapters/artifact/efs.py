@@ -6,10 +6,11 @@ from fathom.schemas.artifact import ArtifactMetadata, ArtifactReceipt
 
 class EfsSink(ArtifactSinkPort):
     """
-    Sink that explicitly retains the EFS-staged copy.
+    Sink that keeps the locally staged copy as the durable artifact.
 
-    The pipeline stages bytes to EFS before invoking any sink. This sink reports success without doing any remote work and asks the pipeline to keep the local file,
-    distinguishing the "local-only by design" path from :class:`NoopSink` (which represents "drop everything; tests don't care about artifacts").
+    The pipeline stages bytes to local disk before any sink runs; this sink does no remote work
+    and asks the pipeline to keep that file, marking the local-only-by-design path.
+    It differs from :class:`NoopSink`, whose empty receipt means no durable artifact is kept.
     """
 
     async def persist(

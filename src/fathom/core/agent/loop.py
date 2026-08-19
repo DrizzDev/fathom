@@ -213,9 +213,8 @@ class LoopDetector(BaseModel):
         }
         logger.info("LoopDetector.is_stuck evaluating", extra=snapshot)
 
-        # 0. Inert-action repetition fires at the tightest threshold so
-        # the planner can pivot after one wasted action — independent
-        # of how much screen / action history has accumulated.
+        # Inert-action repetition fires at the tightest threshold so the planner can pivot after one wasted
+        # action — independent of how much screen / action history has accumulated.
         if self.__detect_inert_repetition():
             logger.info(
                 "LoopDetector.is_stuck=True via inert_repetition",
@@ -239,9 +238,7 @@ class LoopDetector(BaseModel):
             )
             return False
 
-        # Screen-based detectors require sufficient screen history.
         if has_enough_screens:
-            # 1. Direct Repetition (screen + action counts)
             if self.__detect_repetition():
                 logger.info(
                     "LoopDetector.is_stuck=True via screen_repetition",
@@ -249,7 +246,7 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 2. Near-duplicate Visual Repetition (visual pHash only).
+            # Near-duplicate visual repetition (visual pHash only).
             # Catches the case where DOM micro-changes (overlay animation frames,
             # map redraws, transient spinners) flip ``xml_hash``/``interaction_hash``
             # and force ``is_same_screen`` to return False even though the screen
@@ -266,7 +263,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 3. State Oscillation (A-B-A-B or A-B-C-A)
             if self.__detect_oscillation():
                 logger.info(
                     "LoopDetector.is_stuck=True via oscillation",
@@ -274,7 +270,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 4. Scroll Stalling (Repetitive scrolling with minimal progress)
             if self.__detect_scroll_stall():
                 logger.info(
                     "LoopDetector.is_stuck=True via scroll_stall",
@@ -282,7 +277,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 5. Action Velocity (Rapid firing with no progress)
             if self.__detect_action_velocity_loop():
                 logger.info(
                     "LoopDetector.is_stuck=True via action_velocity",
@@ -367,15 +361,8 @@ class LoopDetector(BaseModel):
         """
         Detect simple screen repetition.
 
-        The previous implementation carved out scroll/swipe/flick action
-        sequences entirely on the assumption that scrolling legitimately
-        produces same-looking screens. That assumption breaks the moment
-        scrolling no longer advances content (a non-scrollable list, an
-        already-revealed CTA, an exhausted feed), so the carve-out is
-        replaced with a screen-convergence check: if action diversity is
-        high we still treat that as legitimate exploration, but identical
-        screens with similar actions and converging visual hashes are
-        flagged as stuck regardless of action kind.
+        High action diversity is treated as legitimate exploration; identical screens with similar actions
+        and converging visual hashes are flagged as stuck regardless of action kind.
         """
 
         for index in range(len(self.__recent_screens)):
@@ -465,19 +452,10 @@ class LoopDetector(BaseModel):
         """
         Detect repeated identical actions regardless of screen state.
 
-        Survives screen resets (advance) so it can catch loops where each
-        action produces a visually-different screen (e.g. tapping a
-        counter button that increments a number).
-
-        Scroll-like actions (swipe / scroll / flick) used to be carved
-        out entirely. That's wrong when the scroll target has nothing
-        left to reveal — scrolling produces near-duplicate screens and
-        the agent loops indefinitely. Replace the carve-out with a
-        screen-convergence check: scroll-like actions only suppress
-        repetition detection when the screens they produced are still
-        diverging (productive scroll). When the screens converge into a
-        near-duplicate cluster (stuck scroll) they trip stuck like any
-        other repeated action.
+        Survives screen resets (advance) so it catches loops where each action produces a visually-different
+        screen (e.g. tapping a counter button that increments a number). Scroll-like actions suppress detection
+        only while the screens they produce keep diverging (productive scroll); once those screens converge into
+        a near-duplicate cluster (stuck scroll) they trip stuck like any other repeated action.
         """
 
         action_counts: Dict[str, int] = {}
@@ -542,16 +520,9 @@ class LoopDetector(BaseModel):
         repeat_threshold: int = 3,
     ) -> bool:
         """
-        Check if the same tap/type action has been executed N+ times on the same screen.
-        Excludes swipe/scroll actions which legitimately repeat on the same screen.
+        Whether the same tap/type action has run at or above ``repeat_threshold`` times on this screen.
 
-        Args:
-            action_description: The action being proposed.
-            screen_hash: Visual hash of the current screen.
-            repeat_threshold: Number of repeats before triggering (default 3).
-
-        Returns:
-            True if the action has been repeated on this screen at or above threshold.
+        Swipe/scroll actions are excluded — they legitimately repeat on the same screen.
         """
 
         action_lower = action_description.lower()
@@ -653,12 +624,9 @@ class LoopDetector(BaseModel):
         streak_hashes = [hash_ for hash_ in list(self.__recent_hashes)[streak_start:] if hash_]
         distance = ScreenState.hamming_distance(left_hash=first_hash, right_hash=last_hash)
 
-        # Stall must show both low net movement AND all streak hashes
-        # clustered tightly around the anchor. The previous
-        # ``unique_hash_count <= 2`` check was too strict: pHash jitter
-        # routinely produces 3+ unique short hashes even when the screen
-        # is visually identical, so it never fired in practice. The
-        # cluster-hamming check is jitter-tolerant.
+        # Stall must show both low net movement AND all streak hashes clustered tightly around the anchor.
+        # The cluster-hamming check is jitter-tolerant: pHash jitter routinely produces 3+ unique short hashes
+        # even when the screen is visually identical.
         all_clustered = True
         if streak_hashes:
             anchor = streak_hashes[0]

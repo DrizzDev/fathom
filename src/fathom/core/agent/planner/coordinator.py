@@ -34,7 +34,7 @@ from fathom.schemas.screens import ScreenCapture
 
 class StepPlanner:
     """
-    Plans and prepares steps for execution.
+    Produces the next planned step for a turn from the current screen and goal.
     """
 
     def __init__(

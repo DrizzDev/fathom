@@ -23,7 +23,7 @@ class RemotePerceptionAdapter(PerceptionPort):
 
     def __init__(self, *, device: DevicePort, include_hierarchy: bool) -> None:
         """
-        Initialize the remote perception adapter.
+        Bind the remote device adapter, whether to include the hierarchy dump, and a fresh hierarchy breaker.
         """
 
         self.__device = device

@@ -52,12 +52,7 @@ class FathomBuilder:
     """
 
     def __init__(self, path_manager: Optional[SharedPathManager] = None) -> None:
-        """
-        Initialize builder with no ports configured.
-
-        Args:
-            path_manager: Optional shared path manager instance
-        """
+        """Initialize the builder with no ports configured."""
 
         self.__device: Optional[DevicePort] = None
         self.__perception: Optional[PerceptionPort] = None
@@ -107,7 +102,7 @@ class FathomBuilder:
         strategy. Required for any deployment whose env-var names
         differ from fathom's own ``FATHOM_*`` /
         ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` aliases (e.g.
-        genymotion's ``DRIZZ_`` prefix).
+        a deployment using a ``DRIZZ_`` prefix).
 
         The loader is an Application-layer object. The caller (e.g.
         Temporal worker registry) constructs it as
@@ -120,99 +115,43 @@ class FathomBuilder:
         return self
 
     def with_device(self, port: DevicePort) -> FathomBuilder:
-        """
-        Configure device port.
-
-        Args:
-            port: Device port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the device port used to drive the target."""
 
         self.__device = port
         return self
 
     def with_llm(self, port: LLMPort) -> FathomBuilder:
-        """
-        Configure LLM port.
-
-        Args:
-            port: LLM port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the planner LLM port that drives step decisions."""
 
         self.__llm = port
         return self
 
     def with_perception(self, port: PerceptionPort) -> FathomBuilder:
-        """
-        Configure perception port.
-
-        Args:
-            port: Perception port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the perception port that reads on-screen state."""
 
         self.__perception = port
         return self
 
     def with_memory(self, port: MemoryPort) -> FathomBuilder:
-        """
-        Configure memory port.
-
-        Args:
-            port: Memory port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the memory port backing durable run knowledge."""
 
         self.__memory = port
         return self
 
     def with_interaction(self, port: InteractionPort) -> FathomBuilder:
-        """
-        Configure interaction port.
-
-        Args:
-            port: Interaction port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the interaction-storage port for conversation records."""
 
         self.__interaction = port
         return self
 
     def with_knowledge(self, port: KnowledgePort) -> FathomBuilder:
-        """
-        Configure knowledge port.
-
-        Args:
-            port: Knowledge port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the knowledge port holding learned screen data."""
 
         self.__knowledge = port
         return self
 
     def with_signal(self, port: SignalPort) -> FathomBuilder:
-        """
-        Configure signal port.
-
-        Args:
-            port: Signal port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the signal port carrying pause, resume, and cancel."""
 
         self.__signal = port
         return self
@@ -232,85 +171,37 @@ class FathomBuilder:
         return self
 
     def with_telemetry(self, port: TelemetryPort) -> FathomBuilder:
-        """
-        Configure telemetry port.
-
-        Args:
-            port: Telemetry port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the telemetry port for client-facing run events."""
 
         self.__telemetry = port
         return self
 
     def with_summarizer(self, port: SummarizationPort) -> FathomBuilder:
-        """
-        Configure summarization port.
-
-        Args:
-            port: Summarization port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the summarization port for run digests."""
 
         self.__summarizer = port
         return self
 
     def with_config(self, configuration: FathomConfiguration) -> FathomBuilder:
-        """
-        Configure Fathom settings.
-
-        Args:
-            configuration: Complete Fathom configuration
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Replace the full Fathom configuration."""
 
         self.__config = configuration
         return self
 
     def with_execution_config(self, configuration: ExecutionConfiguration) -> FathomBuilder:
-        """
-        Configure execution engine settings.
-
-        Args:
-            configuration: Execution configuration
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Set the execution engine configuration."""
 
         self.__config.engine = configuration
         return self
 
     def with_intent_config(self, configuration: IntentConfiguration) -> FathomBuilder:
-        """
-        Configure intent strategy settings.
-
-        Args:
-            configuration: Intent configuration
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Set the intent strategy configuration."""
 
         self.__config.intent = configuration
         return self
 
     def with_exploration_config(self, configuration: ExplorationConfiguration) -> FathomBuilder:
-        """
-        Configure exploration strategy settings.
-
-        Args:
-            configuration: Exploration configuration
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Set the exploration strategy configuration."""
 
         self.__config.exploration = configuration
         return self
@@ -325,15 +216,7 @@ class FathomBuilder:
         return self
 
     def with_qualifier(self, port: IntentQualifierPort) -> FathomBuilder:
-        """
-        Configure intent qualifier port.
-
-        Args:
-            port: Intent qualifier port implementation
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register a pre-built intent qualifier port, bypassing composition."""
 
         self.__qualifier = port
         return self
@@ -356,14 +239,6 @@ class FathomBuilder:
         notebooks). When omitted, the qualifier falls back to running on
         the caller-supplied planner LLM and inference.* settings are
         ignored — preserves existing behavior for callers that don't opt in.
-
-        Args:
-            assembly: RunAssemblyBuilder bound to settings the qualifier
-                LLM should resolve credentials and project from.
-            llm_factory: Optional LLM factory. Defaults to LLMFactory().
-
-        Returns:
-            Builder instance for chaining.
         """
 
         self.__assembly = assembly
@@ -371,27 +246,14 @@ class FathomBuilder:
         return self
 
     def with_realignment(self, policy: RealignmentPolicy) -> FathomBuilder:
-        """
-        Configure realignment policy.
-
-        Args:
-            policy: Realignment policy instance
-
-        Returns:
-            Builder instance for chaining
-        """
+        """Register the realignment policy governing context re-evaluation."""
 
         self.__realignment = policy
         return self
 
     def build(self) -> FathomRunner:
         """
-        Build configured Fathom instance.
-
-        Validates required ports and applies defaults.
-
-        Returns:
-            FathomRunner instance with all ports configured
+        Validate the configured ports, apply defaults, and construct the runner.
 
         Raises:
             ConfigurationError: If required ports (device, llm) are not configured
@@ -530,14 +392,6 @@ class Fathom:
 
     @staticmethod
     def builder(path_manager: Optional[SharedPathManager] = None) -> FathomBuilder:
-        """
-        Create a new builder instance.
-
-        Args:
-            path_manager: Optional shared path manager
-
-        Returns:
-            New FathomBuilder instance
-        """
+        """Create a new builder instance."""
 
         return FathomBuilder(path_manager=path_manager)

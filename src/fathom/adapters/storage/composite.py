@@ -17,7 +17,7 @@ class CompositeStorage(StoragePort):
 
     def __init__(self, storages: List[StoragePort]) -> None:
         """
-        Initialize composite storage adapter.
+        Bind the ordered list of storage ports to fan writes out to.
         """
 
         self.__storages = storages

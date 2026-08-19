@@ -57,13 +57,13 @@ class ScreenState(BaseModel):
         """
         Check if two screen states represent the same screen.
 
-        Uses Multi-Layer State Identity Algorithm (MLSIA):
+        Compares layered signals in order:
         1. Activity check (must match)
         2. Structural check (XML tree structure + content)
-        3. Interaction check (Clickable elements)
+        3. Interaction check (clickable elements)
         4. Visual check (pHash distance)
 
-        Returns True ONLY if ALL available signals match.
+        Returns True only if all available signals match.
         """
 
         if self.activity_hash != other.activity_hash:
@@ -102,9 +102,7 @@ class ScreenState(BaseModel):
 
     @staticmethod
     def hamming_distance(*, left_hash: str, right_hash: str) -> int:
-        """
-        Calculate hamming distance between two hex hash strings.
-        """
+        """Calculate hamming distance between two hex hash strings."""
 
         if not left_hash or not right_hash or len(left_hash) != len(right_hash):
             return MAX_VISUAL_HASH_DISTANCE
@@ -187,9 +185,7 @@ class ScreenDiff(BaseModel):
         return self.__has_visual_signal() or self.__has_action_scroll_signal()
 
     def __has_visual_signal(self) -> bool:
-        """
-        True when phash / ssim / content_diff crosses the action-effect threshold.
-        """
+        """True when phash / ssim / content_diff crosses the action-effect threshold."""
 
         if self.phash_distance > ACTION_EFFECT_PHASH_DISTANCE_THRESHOLD:
             return True
@@ -204,9 +200,7 @@ class ScreenDiff(BaseModel):
 
     @property
     def is_genuinely_different_state(self) -> bool:
-        """
-        Moderate-sensitivity check for loop detection and state transitions.
-        """
+        """Moderate-sensitivity check for loop detection and state transitions."""
 
         signal_weight = 0
 
@@ -237,9 +231,7 @@ class ScreenDiff(BaseModel):
         return signal_weight >= MEANINGFUL_STATE_SIGNAL_WEIGHT_THRESHOLD
 
     def __has_action_scroll_signal(self) -> bool:
-        """
-        Return whether scroll displacement indicates any action effect.
-        """
+        """Return whether scroll displacement indicates any action effect."""
 
         if self.scroll_translation is None:
             return False
@@ -253,9 +245,7 @@ class ScreenDiff(BaseModel):
         )
 
     def __has_meaningful_scroll_signal(self) -> bool:
-        """
-        Return whether scroll displacement indicates a meaningful state transition.
-        """
+        """Return whether scroll displacement indicates a meaningful state transition."""
 
         if self.scroll_translation is None:
             return False
@@ -270,9 +260,7 @@ class ScreenDiff(BaseModel):
 
 
 class ScreenChangeRegion(BaseModel):
-    """
-    Rectangular content region that changed between two captures.
-    """
+    """Rectangular content region that changed between two captures."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -283,9 +271,7 @@ class ScreenChangeRegion(BaseModel):
 
 
 class ScreenScrollTranslation(BaseModel):
-    """
-    Estimated translation between two captures in pixels.
-    """
+    """Estimated translation between two captures in pixels."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -294,9 +280,7 @@ class ScreenScrollTranslation(BaseModel):
 
 
 class ScreenHashBundle(BaseModel):
-    """
-    Precomputed screen hashes derived from one capture.
-    """
+    """Precomputed screen hashes derived from one capture."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -306,9 +290,7 @@ class ScreenHashBundle(BaseModel):
 
 
 class StructuralComparisonSignals(BaseModel):
-    """
-    Structural comparison signals derived from two screen states.
-    """
+    """Structural comparison signals derived from two screen states."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -318,9 +300,7 @@ class StructuralComparisonSignals(BaseModel):
 
 
 class PostActionScreenComparison(BaseModel):
-    """
-    Result of post-action capture comparison for one executed step.
-    """
+    """Result of post-action capture comparison for one executed step."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -342,9 +322,7 @@ class PostActionScreenComparison(BaseModel):
 
 
 class ScreenCapture(BaseModel):
-    """
-    Screen capture with image data and metadata.
-    """
+    """Screen capture with image data and metadata."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -404,9 +382,7 @@ class ScreenCapture(BaseModel):
 
     @property
     def identity(self) -> str:
-        """
-        Stable screen identity from the perceived visual hash, else the activity name.
-        """
+        """Stable screen identity from the perceived visual hash, else the activity name."""
 
         if self.state is not None and self.state.visual_hash:
             return self.state.visual_hash[:16]
@@ -415,9 +391,7 @@ class ScreenCapture(BaseModel):
 
 
 class HierarchySnapshot(BaseModel):
-    """
-    One perception snapshot with the provenance explaining any missing hierarchy.
-    """
+    """One perception snapshot with the provenance explaining any missing hierarchy."""
 
     model_config = ConfigDict(frozen=True)
 

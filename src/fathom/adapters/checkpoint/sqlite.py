@@ -1,12 +1,4 @@
-"""
-Per-workflow SQLite-backed LangGraph checkpoint store adapter.
-
-This adapter carries the production fix for the shared-checkpoint hang. The
-CheckpointStore port alone changes nothing without this implementation: it
-isolates each workflow into its own database file, applies fail-fast SQLite
-pragmas, discards files on workflow completion, and sweeps orphans on a
-throttled schedule.
-"""
+"""Per-workflow SQLite-backed LangGraph checkpoint store adapter."""
 
 from __future__ import annotations
 

@@ -8,7 +8,8 @@ DEFAULT_TENANT: Final[str] = "default"
 DEFAULT_OPERATOR: Final[str] = "operator"
 
 # Canonical agent actor identifiers used by the recorder and CLI principal resolver.
-# Other runtimes (host-driven REST/Temporal hosts) may supply their own ids; these defaults exist so the CLI never silently invents one.
+# Other runtimes (host-driven REST/Temporal hosts) may supply their own ids; these defaults
+# exist so the CLI never silently invents one.
 DEFAULT_AGENT_ID: Final[str] = "agent:fathom"
 DEFAULT_PLANNER_AGENT_ID: Final[str] = "agent:planner"
 DEFAULT_EXECUTOR_AGENT_ID: Final[str] = "agent:executor"

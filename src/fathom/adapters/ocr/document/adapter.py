@@ -177,12 +177,10 @@ class DocumentAiOcr(OcrPort):
         pixel size whichever convention the adapter used, and is a no-op for the
         adapters that already report pixels.
 
-        Live incident 2026-08-06 (MatrixCare, iPad Air 4, logical 1180x820 /
-        pixel 2360x1640): OCR located "Add Visit" at (936, 631) — dead on the
-        button — and the tap was dispatched to (485, 318), ~590px away in the
-        middle of the calendar. Reproduced identically in runs HXPBk, HawUV and
-        QgzIM. Near the origin the error is a few pixels and goes unnoticed;
-        at the bottom-right of the screen it misses entirely.
+        On a retina device where the reported dimensions are logical, treating
+        them as pixels doubly divides by the scale factor: the error is a few
+        pixels near the origin but grows toward the bottom-right until taps miss
+        their target entirely.
 
         Mirrors ``ActionExecutor.__resolve_pixel_dimensions``. Falls back to the
         logical pair when the bytes cannot be decoded — that is the pre-existing

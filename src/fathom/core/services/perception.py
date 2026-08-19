@@ -87,7 +87,7 @@ class PerceptionService:
         step_number: int,
     ) -> Optional[Path]:
         """
-        Stage the screen capture through the artifact pipeline and return the EFS-staged path.
+        Stage the screen capture through the artifact pipeline and return the locally staged path.
         Caller stamps the path onto ``capture.screenshot_uri`` so downstream consumers read bytes from local disk.
         """
 

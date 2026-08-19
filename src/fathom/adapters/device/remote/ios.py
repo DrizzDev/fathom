@@ -26,7 +26,7 @@ class IOSRemoteDeviceAdapter(DevicePort):
         delegate: Optional[ADBRemoteDeviceAdapter] = None,
     ) -> None:
         """
-        Initialize the remote iOS adapter.
+        Wrap a remote ADB delegate for transport, constructing one from configuration when none is given.
         """
 
         self.__delegate = delegate or ADBRemoteDeviceAdapter(configuration=configuration)

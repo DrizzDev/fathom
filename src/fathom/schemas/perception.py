@@ -35,9 +35,7 @@ class DocumentAiCredentials(BaseModel):
 
 
 class OcrConfiguration(BaseModel):
-    """
-    Boot-time configuration for the OCR subsystem.
-    """
+    """Boot-time configuration for the OCR subsystem."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -52,9 +50,7 @@ class OcrConfiguration(BaseModel):
 
 
 class CvConfiguration(BaseModel):
-    """
-    Boot-time configuration for the OpenCV visual-control labeler.
-    """
+    """Boot-time configuration for the OpenCV visual-control labeler."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -69,9 +65,7 @@ class CvConfiguration(BaseModel):
 
 
 class IconConfiguration(BaseModel):
-    """
-    Boot-time configuration for the icon-template detector.
-    """
+    """Boot-time configuration for the icon-template detector."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -85,9 +79,7 @@ class IconConfiguration(BaseModel):
 
 
 class OverlayConfiguration(BaseModel):
-    """
-    Boot-time configuration for the pixel-overlay detector.
-    """
+    """Boot-time configuration for the pixel-overlay detector."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -101,9 +93,7 @@ class OverlayConfiguration(BaseModel):
 
 
 class KeyboardConfiguration(BaseModel):
-    """
-    Boot-time configuration for keyboard detection.
-    """
+    """Boot-time configuration for keyboard detection."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -117,9 +107,7 @@ class KeyboardConfiguration(BaseModel):
 
 
 class JournalConfiguration(BaseModel):
-    """
-    Boot-time configuration for the runtime-journal adapter.
-    """
+    """Boot-time configuration for the runtime-journal adapter."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -131,14 +119,14 @@ class JournalConfiguration(BaseModel):
 
 class PerceptionConfiguration(BaseModel):
     """
-    Boot-time configuration for the perception layer (OCR, CV, icon, overlay).
+    Boot-time configuration for the perception layer.
 
-    Every perception subsystem is opt-in. When all four flags are False
-    the runtime falls back to the original XML+LLM-only flow: drawer
-    extracts elements from the platform XML, LLM grounds against that
-    manifest, snap-to-label resolves coordinates. Each ``enabled`` flag
-    turns its subsystem into a fallback contributor that augments the
-    manifest when the primary path has insufficient evidence.
+    Every perception subsystem is opt-in. With all subsystems disabled the
+    runtime uses the XML+LLM-only flow: the drawer extracts elements from the
+    platform XML, the LLM grounds against that manifest, and snap-to-label
+    resolves coordinates. Each ``enabled`` flag turns its subsystem into a
+    fallback contributor that augments the manifest when the primary path has
+    insufficient evidence.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -170,9 +158,7 @@ class PerceptionConfiguration(BaseModel):
 
 
 class LocalizationEnsembleConfiguration(BaseModel):
-    """
-    Boot-time configuration for the ensemble vision-localizer layer.
-    """
+    """Boot-time configuration for the ensemble vision-localizer layer."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

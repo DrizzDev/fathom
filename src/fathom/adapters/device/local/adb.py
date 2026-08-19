@@ -47,7 +47,8 @@ class ADBDevice(DevicePort):
         configuration: Optional[ADBConfiguration] = None,
     ) -> None:
         """
-        Initialize ADB device adapter.
+        Bind an explicit :class:`ADBConfiguration` when given, or derive one from ``serial`` or defaults,
+        then precompute the device runtime configuration.
         """
 
         if configuration:
@@ -97,7 +98,7 @@ class ADBDevice(DevicePort):
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
         """
-        Returns the tool configuration.
+        The resolved device runtime configuration.
         """
 
         return self.__runtime_configuration
@@ -212,7 +213,8 @@ class ADBDevice(DevicePort):
         speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
-        Execute swipe gesture.
+        Execute a swipe gesture. ADB exposes no speed control, so ``speed`` is ignored;
+        ``duration`` alone drives the gesture.
         """
 
         if speed is not None:
@@ -750,7 +752,6 @@ class ADBDevice(DevicePort):
 
         return image, xml
 
-    # Helper methods copied from original tool
     async def __shell(self, command: str, *, capture_output: bool = False) -> ActionResult:
         """
         Execute ADB shell command with terminal logging.
@@ -795,7 +796,7 @@ class ADBDevice(DevicePort):
 
     def __build_arguments(self, parts: List[str]) -> List[str]:
         """
-        Builds full command list.
+        Assemble the adb argv: the executable, an optional ``-s <serial>``, then the command parts.
         """
 
         cmd = [self.__configuration.executable_path]
@@ -807,7 +808,7 @@ class ADBDevice(DevicePort):
 
     def __escape(self, text: str) -> str:
         """
-        Escapes text for ADB.
+        Escape backslashes and double quotes, and encode spaces as ``%s`` for ``input text``.
         """
 
         return text.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "%s")

@@ -20,7 +20,7 @@ class IOSNativePerceptionAdapter(PerceptionPort):
 
     def __init__(self, *, device: DevicePort) -> None:
         """
-        Initialize native iOS perception adapter.
+        Bind the iOS device adapter used for screenshot capture.
         """
 
         self.__device = device
@@ -83,7 +83,7 @@ class IOSEnhancedPerceptionAdapter(PerceptionPort):
 
     def __init__(self, *, device: DevicePort) -> None:
         """
-        Initialize enhanced iOS perception adapter.
+        Bind the iOS device adapter and a fresh hierarchy breaker.
         """
 
         self.__device = device

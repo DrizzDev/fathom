@@ -106,7 +106,6 @@ class ToolResponseParser:
             if not primary_call:
                 primary_call = non_command_calls.pop(0) if non_command_calls else function_calls[0]
 
-            # Parse primary tool call
             result = self.__dispatch_parse(name=primary_call.name, arguments=primary_call.args)
             result.metadata["tool_name"] = primary_call.name
             result.metadata["tool_args"] = self.__metadata_args(
@@ -555,7 +554,7 @@ class ToolResponseParser:
                 normalized_confidence = None
                 confidence_source = None
 
-        # For now, we treat delta_observed as already boolean-normalized by the schema.
+        # delta_observed is already boolean-normalized by the schema.
         normalized_observed: Optional[bool] = raw_observed
 
         return DeltaSignal(

@@ -16,7 +16,7 @@ PromptPart = Union[str, bytes, Dict[str, str]]
 
 class LLMPort(ABC):
     """
-    Abstract interface for language model interactions.
+    Provider-neutral port for language-model generation.
     """
 
     @property
@@ -40,20 +40,11 @@ class LLMPort(ABC):
         structured_output: Optional[StructuredOutput] = None,
     ) -> GenerateResult:
         """
-        Generate response from LLM.
+        Generate one response, optionally constrained by a structured-output contract.
 
-        Args:
-            prompt: List of text parts and image bytes
-            system_instruction: Optional system prompt
-            tools: Optional tool definitions
-            conversation_history: Optional prior turns for multi-turn feedback loops.
-                Each entry is a provider-neutral ConversationTurn.
-                When provided, prompt is appended as the final user turn.
-            structured_output: Optional vendor-neutral constrained-decoding contract.
-                Adapters translate it into their provider's structured-output API.
-
-        Returns:
-            GenerateResult with content and tool calls
+        conversation_history supplies provider-neutral prior turns for multi-turn feedback
+        loops; when present, prompt is appended as the final user turn. structured_output is
+        a vendor-neutral constrained-decoding contract that adapters map to their provider's API.
         """
 
         raise NotImplementedError

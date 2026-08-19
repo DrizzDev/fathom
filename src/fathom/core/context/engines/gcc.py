@@ -31,13 +31,8 @@ class GitContextEngine(ContextEngine):
 
     def __init__(self, *, context_window: int = 7) -> None:
         """
-        Initialize the Git engine with a default main branch.
-
-        Args:
-            context_window:
-                Number of recent items to keep in shadow_buffer after commit.
-                Balances context continuity with memory efficiency.
-                Default: 7 (provides ~7 steps of recent detailed history for better continuity)
+        Start on the ``main`` branch; ``context_window`` is how many recent trace items the shadow
+        buffer keeps after each commit, trading memory for cross-commit reasoning continuity.
         """
 
         self.__current_branch: str = "main"

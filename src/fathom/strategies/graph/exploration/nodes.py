@@ -32,8 +32,7 @@ logger = logging.getLogger(__name__)
 
 class ExplorationNodeProvider:
     """
-    Provides LangGraph nodes for application exploration.
-    Encapsulates dependencies and shared private logic.
+    Builds the exploration-graph nodes and owns the shared dependencies they read.
     """
 
     def __init__(self, context: GraphContext) -> None:

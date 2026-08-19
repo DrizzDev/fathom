@@ -110,7 +110,7 @@ class VerifyNode:
 
         start_time = time.time()
 
-        # 1. Capture the latest screen state
+        # Capture the latest screen state
         try:
             capture = await self.__provider.context.perception.perceive(
                 session_id=self.__provider.context.workflow_id,
@@ -169,7 +169,7 @@ class VerifyNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        # 2. Construct binary validation prompt from explicit VERIFY mode.
+        # Construct binary validation prompt from explicit VERIFY mode.
         user_guidance = [
             guidance.content
             for guidance in self.__provider.context.context_manager.get_user_guidance()
@@ -180,7 +180,7 @@ class VerifyNode:
             user_guidance=user_guidance,
         )
 
-        # 3. Ask the LLM
+        # Ask the LLM
         await self.__provider.context.phase.verifying(intent=self.__provider.context.intent)
         try:
             llm_result = await self.__provider.context.llm.generate(
@@ -245,7 +245,6 @@ class VerifyNode:
         )
 
         # Verification artefact emission suppressed; no downstream reader today.
-        # await self.__emit_verification_artifact(capture=capture, complete=is_truly_complete, reason=reason)
 
         if (
             is_truly_complete

@@ -452,7 +452,8 @@ class ThreadNotFoundError(InteractionError):
 
 class ThreadConflictError(InteractionError):
     """
-    Error raised when a thread create request collides with an existing thread of the same identifier but different content
+    Error raised when a thread create request collides with an existing thread of the same
+    identifier but different content.
     """
 
     def __init__(self, *, thread: str, message: str) -> None:

@@ -40,12 +40,7 @@ class GroundNode:
             return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
-        """
-        Capture the screen and update state.
-
-        ERROR BOUNDARY: All exceptions are caught and converted to terminal states
-        to ensure graph execution completes gracefully even on device failures.
-        """
+        """Capture the screen and update state; exceptions convert to terminal states so the graph always completes."""
 
         logger.info(
             "Starting grounding node",
@@ -72,7 +67,6 @@ class GroundNode:
             },
         )
 
-        # ERROR BOUNDARY: Wrap entire node in try/except
         try:
             if await self.__provider.is_cancelled():
                 logger.warning(
@@ -119,7 +113,7 @@ class GroundNode:
 
             start_time = time.time()
 
-            # 1. Capture State (Screenshot + optional hierarchy)
+            # Capture state (screenshot + optional hierarchy)
             screen = await self.__provider.context.perception.perceive(
                 session_id=self.__provider.context.workflow_id,
                 step_number=self.__provider.context.agent_state.step_count + 1,
@@ -150,7 +144,7 @@ class GroundNode:
                     },
                 )
 
-            # 2. Capture Dimensions (Independent hardware metadata)
+            # Capture dimensions (independent hardware metadata)
             width = screen.width
             height = screen.height
             logger.info(f"Device dimension is {height=}x{width=}")

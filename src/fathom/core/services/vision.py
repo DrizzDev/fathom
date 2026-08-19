@@ -134,15 +134,14 @@ class VisionService:
         prior_rejection_history: Optional[List[ConversationTurn]] = None,
     ) -> AnalysisResult:
         """
-        Coordinates the analysis flow mirroring GeminiVisionTool strictly.
+        Run one planner turn: assemble the ANALYZE prompt from memory and context, generate with
+        multi-turn schema-repair, and parse the tool call into an AnalysisResult.
         """
 
         analyze_start = time.time()
 
-        # Note: Screenshot persistence is now handled upstream by PerceptionService.
-        # No background persistence needed here.
+        # Screenshot persistence is handled upstream by PerceptionService; none is needed here.
 
-        # 1. BRAIN RETRIEVAL
         fingerprint = self.__resolve_capture_fingerprint(capture=capture, visual_hash=visual_hash)
         prompt_image = self.__resolve_prompt_image(capture=capture)
 
@@ -160,7 +159,6 @@ class VisionService:
             if not key.startswith(("context:", "ctx_v3:", "ctx_"))
         }
 
-        # Log filtered entries for debugging
         filtered_count = len(all_memory_raw) - len(all_memory)
         if filtered_count > 0:
             filtered_keys = [key for key in all_memory_raw if key not in all_memory]
@@ -172,7 +170,6 @@ class VisionService:
 
         retrieval = time.time() - start
 
-        # Log memory stats
         memory_store = knowledge.get("memory_store", {})
         prev_actions = knowledge.get("previous_actions", [])
 
@@ -186,7 +183,6 @@ class VisionService:
             f"duration={retrieval:.3f}s"
         )
 
-        # 2. PROMPT & TOOL SCOPING
         # Dynamic context from ContextManager (GCC-Inspired)
         full_context = context_manager.get_full_context()
         guidance = full_context.get("guidance")
@@ -284,7 +280,6 @@ class VisionService:
         allowed_tools = ToolRegistry.definitions(names=tools.names)
         tool_scope_duration = time.time() - tool_scope_start
 
-        # 3. CONTENT ASSEMBLY
         manifest_start = time.time()
         manifest = self.__format_elements(elements=elements)
         manifest_duration = time.time() - manifest_start
@@ -301,7 +296,6 @@ class VisionService:
         )
         payload_duration = time.time() - payload_start
 
-        # Log assembly performance
         logger.info(
             f"[VISION] Assembly | Manifest: {manifest_duration:.3f}s | Payload: {payload_duration:.3f}s"
         )
@@ -314,11 +308,8 @@ class VisionService:
             payload=self.__sanitize_recursive(data=payload),
         )
 
-        # Log prompt context for console visibility
         self.__auditor.log_prompt(payload=payload, instruction=instruction)
 
-        # 4. EXECUTION WITH MULTI-TURN FEEDBACK LOOP
-        #
         # Instead of appending error text to a flat prompt (stateless retry), we use
         # Gemini's native multi-turn conversation: on rejection, the model sees its own
         # rejected tool call as a prior model turn, followed by a user turn explaining
@@ -348,14 +339,12 @@ class VisionService:
             )
             duration = time.time() - commence
 
-            # Log Raw LLM output
             raw_text = response.content[:200].replace("\n", " ") if response.content else "No text"
             logger.info(
                 f"[VISION] LLM Response | Duration: {duration:.3f}s | "
                 f"Model: {self.__llm.model_name} | Raw: {raw_text}..."
             )
 
-            # 5. PARSE & ENRICH
             parse_start = time.time()
             try:
                 analysis = self.__parser.parse(response)
@@ -416,7 +405,6 @@ class VisionService:
         if analysis is None or response is None:
             raise VisionError("Vision analysis did not produce a valid result.", retryable=False)
 
-        # Update metrics & metadata
         if response.metrics:
             analysis.metrics.update(response.metrics)
 
@@ -446,7 +434,6 @@ class VisionService:
         analysis.metrics["llm_analysis_ms"] = duration * 1000
         analysis.metrics["memory_retrieval_ms"] = retrieval * 1000
 
-        # 6. BRAIN UPDATE (Store observation)
         await self.__memory.store_observation(
             screen=ScreenState(
                 activity=capture.activity,
@@ -642,7 +629,7 @@ class VisionService:
         failures: Optional[List[str]] = None,
     ) -> List[Any]:
         """
-        Assembles request with token-locality (strictly mirrored).
+        Assemble the ordered prompt parts, placing the screenshot last for KV-cache locality.
         """
 
         payload: List[Any] = []

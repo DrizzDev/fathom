@@ -52,7 +52,9 @@ class ConversationService:
     ) -> None:
         """
         Initialize the service with explicit durable ledger ports and a signer.
-        Hosts that deploy without object storage construct NoopSigner at the composition root and pass it here; the service no longer carries an adapter default.
+
+        Hosts that deploy without object storage construct a NoopSigner at the composition root
+        and pass it here; the signer is a required port with no adapter default.
         """
 
         self.__ports = ports
@@ -1019,8 +1021,8 @@ class ConversationService:
         entry: ConversationSchemas.EntryView,
     ) -> ConversationSchemas.EntryView:
         """
-        Sign URIs embedded inside artifact-kind timeline entry payloads
-        and annotate the payload with typed status fields. Non-artifact entries pass through untouched.
+        Sign URIs embedded inside artifact-kind timeline entry payloads and annotate the payload
+        with typed status fields; non-artifact entries pass through untouched.
         """
 
         if entry.kind != EntryKind.ARTIFACT or not isinstance(entry.payload, dict):

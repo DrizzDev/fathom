@@ -34,7 +34,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         workflow = StateGraph(cast("Any", ExplorationGraphState))
         nodes = ExplorationGraphFactory.build(self.__context)
 
-        # 1. Add Nodes
+        # Nodes
         workflow.add_node(NodeName.GROUND, nodes[NodeName.GROUND])
 
         workflow.add_node(NodeName.SCAN, nodes[NodeName.SCAN])
@@ -44,7 +44,7 @@ class ExplorationGraphBuilder(GraphBuilder):
         workflow.add_node(NodeName.NAVIGATE, nodes[NodeName.NAVIGATE])
         workflow.add_node(NodeName.BFS_ROUTE, nodes[NodeName.BFS_ROUTE])
 
-        # 2. Define Entry & Edges
+        # Entry point and edges
         workflow.set_entry_point(NodeName.GROUND)
         workflow.add_edge(NodeName.GROUND, NodeName.SCAN)
 

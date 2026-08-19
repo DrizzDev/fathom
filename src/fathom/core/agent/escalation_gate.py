@@ -109,13 +109,9 @@ class EscalationGate:
             )
 
         if passive_run == 0:
-            # No positive evidence of a passive-only pattern in the contributing
-            # tail. The loop detector classified the window as stuck for some
-            # other reason (screen repetition without recorded effects, action
-            # repetition with UNCERTAIN effects). Per the reviewer's "be
-            # conservative about not suppressing forever, not about fabricating
-            # no-progress evidence" rule, allow escalation rather than defer
-            # on absent evidence.
+            # No positive evidence of a passive-only pattern in the contributing tail. The loop detector
+            # classified the window as stuck for some other reason (screen repetition without recorded effects,
+            # action repetition with UNCERTAIN effects), so allow escalation rather than defer on absent evidence.
             return EscalationDecision(
                 allow=True,
                 reason=EscalationReason.ACTIVE_STALL,

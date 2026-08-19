@@ -52,8 +52,10 @@ class VerifyMode(StrEnum):
     PENDING_FINAL_COMMIT = "PENDING_FINAL_COMMIT"
 
 
-# Completion reasons that must terminate the graph immediately (route to END, never to VERIFY) and surface as ``RunOutcome.FAILED`` to callers.
-# The router in ``builder.py`` and the outcome assembler in ``intent.py`` MUST both consult this single source so new fatal reasons cannot be missed in one place but not the other.
+# Completion reasons that must terminate the graph immediately (route to END, never to VERIFY)
+# and surface as ``RunOutcome.FAILED`` to callers.
+# The router in ``builder.py`` and the outcome assembler in ``intent.py`` MUST both consult this single source
+# so new fatal reasons cannot be missed in one place but not the other.
 TERMINAL_COMPLETION_REASONS: Final[Tuple[str, ...]] = (
     CompletionReason.STUCK.value,
     CompletionReason.FAILED.value,

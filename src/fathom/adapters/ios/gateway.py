@@ -19,7 +19,7 @@ class IOSAutomationGateway:
 
     def __init__(self, *, configuration: IOSConfiguration) -> None:
         """
-        Initialize iOS automation gateway configuration.
+        Bind the WebDriverAgent configuration used to build each request.
         """
 
         self.__configuration = configuration

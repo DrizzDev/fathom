@@ -82,9 +82,8 @@ class ScreenComparator:
         scroll_start = time.time()
         scroll: Optional[ScreenScrollTranslation]
         if self.__frames_effectively_identical(ssim_score=ssim_score, pixel_diff=pixel_diff):
-            # Phase correlation on near-identical frames returns small
-            # DC-noise shifts (~0.5 px). Short-circuit to zero translation
-            # so no-op actions do not produce bogus scroll evidence.
+            # Phase correlation on near-identical frames returns small DC-noise shifts (~0.5 px).
+            # Short-circuit to zero translation so no-op actions do not produce bogus scroll evidence.
             scroll = ScreenScrollTranslation(dx=0.0, dy=0.0)
         else:
             scroll = self.__compute_scroll_translation(after=after.image, before=before.image)
@@ -403,12 +402,11 @@ class ScreenComparator:
         pixel_diff: Optional[float],
     ) -> bool:
         """
-        Whether two captures are so similar that a non-zero scroll
-        translation can only be DC-noise from phase correlation.
+        Whether two captures are so similar that a non-zero scroll translation can only be DC-noise
+        from phase correlation.
 
-        Returns ``False`` when either signal is unavailable — without
-        both, we cannot prove identity, so the scroll computation must
-        run as the unbiased fallback.
+        Returns ``False`` when either signal is unavailable — without both, we cannot prove identity,
+        so the scroll computation must run as the unbiased fallback.
         """
 
         if ssim_score is None or pixel_diff is None:

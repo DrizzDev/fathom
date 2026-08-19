@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 @runtime_checkable
 class RunnerLifecycle(Protocol):
     """
-    Minimum runtime lifecycle a composition root needs to manage a runner.
+    Lifecycle-only view of a runner: the cleanup and cancel a composition root drives.
 
     Used by RunnerComposition.runner so the schema layer can stay decoupled
     from the concrete FathomRunner implementation while still expressing the

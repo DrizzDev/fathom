@@ -23,13 +23,9 @@ logger = getLogger(__name__)
 
 class ContextManager:
     """
-    Coordinator for the agent context and memory lifecycle.
-
-    Responsibilities:
-    - HITL guidance injection.
-    - Distributed state persistence (via MemoryPort).
-    - Background summarization management (Zero Latency).
-    - Delegation of versioning/branching to a ContextEngine.
+    Coordinates the agent's context and memory lifecycle: human-in-the-loop guidance injection,
+    state persistence through the :class:`MemoryPort`, non-blocking background summarization, and
+    delegation of versioning and branching to a :class:`ContextEngine`.
     """
 
     def __init__(
@@ -41,13 +37,8 @@ class ContextManager:
         summarizer: Optional[SummarizationPort] = None,
     ) -> None:
         """
-        Initialize the manager.
-
-        Args:
-            memory: Distributed persistence port.
-            workflow_id: Unique session identifier.
-            engine: Memory construction strategy (defaults to GCC).
-            summarizer: Intelligence port for semantic compression.
+        Wire the manager to its persistence port and, when omitted, default the context engine to
+        GCC; ``summarizer`` supplies the semantic-compression backend for background distillation.
         """
 
         self.__memory = memory
@@ -73,14 +64,10 @@ class ContextManager:
         # Async Lifecycle
         self.__background_tasks: Set[asyncio.Task[None]] = set()
 
-        # Persistence Queue for Non-Blocking I/O.
-        # Currently DISABLED: GCC context is not persisted to Ledger (see
-        # __persistence_worker docstring). Fields kept so call sites and
-        # shutdown logic stay valid; re-enable by uncommenting the spawn below.
+        # Persistence queue for non-blocking I/O. Currently disabled: GCC context is not persisted to Ledger
+        # (see __persistence_worker). Fields kept so call sites and shutdown logic stay valid.
         self.__persistence_task: Optional[asyncio.Task[None]] = None
         self.__persist_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
-
-        # self.__start_persistence_loop()
 
     def __start_persistence_loop(self) -> None:
         """
@@ -89,9 +76,6 @@ class ContextManager:
 
         loop = asyncio.get_running_loop()
         self.__persistence_task = loop.create_task(self.__persistence_worker())
-
-        # self.__background_tasks.add(self.__persistence_task)
-        # self.__persistence_task.add_done_callback(self.__background_tasks.discard)
 
     async def __persistence_worker(self) -> None:
         """
@@ -115,10 +99,8 @@ class ContextManager:
                 break
 
             try:
-                # GCC context is NOT persisted to Ledger by design.
-                # Ledger is reserved for user-actionable memory only.
-                # If you need GCC persistence, implement separate context storage
-                # by replacing the no-op below with serialization + memory.set.
+                # GCC context is not persisted to Ledger by design; Ledger is reserved for user-actionable
+                # memory only. To add GCC persistence, serialize state_data into a separate context store.
                 logger.info(
                     "[ContextManager] skipping GCC persistence to Ledger",
                     extra={
@@ -128,12 +110,6 @@ class ContextManager:
                         "state_keys": list(state_data.keys()),
                     },
                 )
-                # Reference implementation for when separate context storage is added:
-                #     json_data = await asyncio.to_thread(json.dumps, state_data)
-                #     await self.__memory.set(
-                #         key=f"context:v3:{self.__workflow_id}",
-                #         value=json_data,
-                #     )
             except Exception as exception:
                 logger.error(
                     "[ContextManager] background persistence failure",
@@ -161,30 +137,13 @@ class ContextManager:
         - If persistence is needed, implement separate context storage
         """
 
-        # GCC context is NOT loaded from Ledger
-        # Each session starts fresh, If GCC persistence is required, implement separate context storage
-
+        # GCC context is not loaded from Ledger; each session starts fresh. If GCC persistence is required,
+        # implement a separate context store.
         logger.info(
             f"[ContextManager] Starting fresh session | "
             f"workflow_id={self.__workflow_id} | "
             f"gcc_persistence=disabled"
         )
-
-        """
-        try:
-            if state_raw := await self.__memory.get(key=f"context:v3:{self.__workflow_id}"):
-                data = await asyncio.to_thread(json.loads, state_raw)
-                self.__roadmap_intent = data.get("intent", "unknown")
-                self.__user_guidance = [
-                    UserGuidance(**guidance) for guidance in data.get("guidance", [])
-                ]
-                # Delegate engine hydration
-                await self.__engine.hydrate(data=data.get("engine", {}))
-
-            logger.info(f"Context: Hydrated session {self.__workflow_id}")
-        except Exception as exception:
-            logger.error(f"Context: Hydration failure: {exception}")
-        """
 
     async def __enqueue_persist(self) -> None:
         """
@@ -197,56 +156,34 @@ class ContextManager:
         """
 
         return
-        # Reference snapshot composition for when persistence is re-enabled:
-        #     try:
-        #         state_data = {
-        #             "intent": self.__roadmap_intent,
-        #             "engine": self.__engine.dehydrate(),
-        #             "guidance": [g.model_dump() for g in self.__user_guidance],
-        #         }
-        #         self.__persist_queue.put_nowait(state_data)
-        #     except Exception as exception:
-        #         logger.error(
-        #             "[ContextManager] failed to enqueue persistence",
-        #             extra={
-        #                 "component": "context",
-        #                 "event": "enqueue_failed",
-        #                 "workflow_id": self.__workflow_id,
-        #                 "error": str(exception),
-        #             },
-        #         )
 
     async def commit(self, *, observation: str, thought: str, action: Action) -> None:
         """
         Record an atomic reasoning cycle.
         """
 
-        # Clean action dump
         action_data = action.model_dump() if hasattr(action, "model_dump") else {"raw": str(action)}
 
         await self.__engine.record(observation=observation, thought=thought, action=action_data)
 
-        # Log trace length after record
         trace_len = len(self.__engine.get_context().get("trace", []))
         logger.info(f"[ContextManager] After record: trace_length={trace_len}")
 
-        # Non-blocking persist
         await self.__enqueue_persist()
 
     async def branch(self) -> None:
         """
-        Triggers non-blocking semantic compression (The GCC COMMIT logic).
-        Offloads summarization to a background task to maintain Zero Latency (P0).
+        Trigger non-blocking semantic compression (the GCC commit logic), offloading
+        summarization to a background task to keep foreground latency low.
         """
 
         logger.info(
             f"[ContextManager] branch() called, trace_length_before={len(self.__engine.get_context().get('trace', []))}"
         )
 
-        # 1. Prepare engine for background work
-        # (GitContextEngine moves active log to shadow buffer)
+        # GitContextEngine moves the active log to the shadow buffer for background summarization.
         if not hasattr(self.__engine, "prepare_summarization"):
-            # If engine doesn't support semantic branching, we do nothing or simple commit
+            # Engines without semantic branching skip compression entirely.
             return
 
         engine_with_summarization = cast("Any", self.__engine)
@@ -258,10 +195,8 @@ class ContextManager:
             f"[ContextManager] After prepare_summarization: segment_length={len(segment)}, trace_length={len(self.__engine.get_context().get('trace', []))}"
         )
 
-        # 2. Persist structural change immediately (non-blocking)
         await self.__enqueue_persist()
 
-        # 3. Offload intelligence
         if not self.__summarizer:
             await self.__engine.commit(summary=f"Captured {len(segment)} steps.")
             logger.info(
@@ -424,7 +359,6 @@ class ContextManager:
         Gracefully shuts down all background tasks and the persistence worker.
         """
 
-        # 1. Wait for in-flight summarization tasks with bounded timeout
         pending = [task for task in self.__background_tasks if not task.done()]
         if pending:
             logger.info(
@@ -443,7 +377,6 @@ class ContextManager:
                     if not task.done():
                         task.cancel()
 
-        # 2. Drain the persistence queue
         if self.__persistence_task:
             if not self.__persist_queue.empty():
                 try:

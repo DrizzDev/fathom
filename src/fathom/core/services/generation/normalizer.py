@@ -99,7 +99,7 @@ class RunTraceNormalizer:
 
     def __package(self, *, activity: Optional[str]) -> Optional[str]:
         """
-        Extract the package base from an 'package/Activity' string, or None when absent.
+        Extract the package base from a 'package/Activity' string, or None when absent.
         """
 
         if not activity:

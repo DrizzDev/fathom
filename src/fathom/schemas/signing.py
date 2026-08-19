@@ -34,7 +34,7 @@ class SigningOutcome(BaseModel):
 
 class GcsSigningConfiguration(BaseModel):
     """
-    Configuration for the GCS artifact signer.
+    Credentials and URL lifetime the GCS signer uses to mint presigned artifact URLs.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -54,7 +54,7 @@ class GcsSigningConfiguration(BaseModel):
 
 class S3SigningConfiguration(BaseModel):
     """
-    Configuration for the S3 artifact signer.
+    Region and URL lifetime the S3 signer uses to mint presigned artifact URLs.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

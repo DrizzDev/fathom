@@ -6,8 +6,10 @@ from typing import Any, Dict, List
 
 class ContextEngine(ABC):
     """
-    Abstract base class for memory construction strategies.
-    Supports atomic operations for trace recording, branching, and context assembly.
+    Port for the versioned reasoning memory that feeds each planner turn.
+
+    Records are appended cheaply during a step and periodically compressed into versioned units,
+    so the planner reads a bounded multi-tier view instead of the full raw trace.
     """
 
     @abstractmethod

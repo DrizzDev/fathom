@@ -196,7 +196,6 @@ class FathomRunner:
             message=self.__config.telemetry.phase,
         )
 
-        # Wire core components
         self.__catalog = CommandCatalogProvider().build()
         self.__capture_store = CaptureStore()
         self.__engine = ExecutionEngine(
@@ -420,11 +419,9 @@ class FathomRunner:
         # isolated by workflow id.
         namespace = thread if context_scope == ContextScope.CONVERSATION else workflow_id
 
-        # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=namespace)
         self.__context_manager.set_roadmap(intent=intent)
 
-        # Create and execute strategy
         strategy = IntentStrategy(
             intent=intent,
             tenant=tenant,
@@ -458,18 +455,14 @@ class FathomRunner:
         self.__current_strategy = strategy
 
         try:
-            # Execute strategy
             execution_result = await strategy.execute()
 
-            # Get progress info
             progress = strategy.get_progress()
 
-            # Get subgoal execution audit trail
             executed_subgoals, skipped_subgoals, subgoal_count = (
                 strategy.get_subgoal_execution_audit()
             )
 
-            # Collect metrics from strategy - use to_report_dict() for proper format
             strategy_metrics = strategy.get_metrics()
             metrics = strategy_metrics.to_report_dict() if strategy_metrics else {}
 
@@ -482,7 +475,6 @@ class FathomRunner:
 
             memory_summary: Dict[str, JsonValue] = raw_memory_summary if raw_memory_summary else {}
 
-            # Build IntentResult
             duration = time.time() - start_time
             is_cancelled = execution_result.is_cancelled
 
@@ -672,7 +664,6 @@ class FathomRunner:
 
         self.__sync_telemetry_identity(workflow=workflow_id)
 
-        # Use provided package name or fetch from device
         if not package_name:
             package_name = await self.__device.get_current_package()
 
@@ -720,7 +711,6 @@ class FathomRunner:
 
         identity = InteractionIdentity(execution=execution_id)
 
-        # Initialize context
         self.__context_manager = ContextManager(memory=self.__memory, workflow_id=workflow_id)
         self.__context_manager.set_roadmap(intent=intent)
 
@@ -750,18 +740,15 @@ class FathomRunner:
         self.__current_strategy = strategy
 
         try:
-            # Execute strategy
             execution_result = await strategy.execute()
 
-            # Get progress info
             progress = strategy.get_progress()
             stats = progress.get("stats", {})
 
-            # Extract discovered activities from graph
             graph = strategy.graph
             discovered_activities = list({node.activity for node in graph.nodes.values()})
 
-            # Calculate coverage (percentage of screens explored vs total discovered)
+            # Coverage is the fraction of discovered screens that were actually explored.
             unexplored = stats.get("unexplored", 0)
             unique_screens = stats.get("unique_screens", 0)
 
@@ -771,10 +758,8 @@ class FathomRunner:
                 else 0.0
             )
 
-            # Export graph structure
             screen_graph = await self.__export_graph(graph=graph)
 
-            # Build ExplorationResult
             duration = time.time() - start_time
 
             result = ExplorationResult(

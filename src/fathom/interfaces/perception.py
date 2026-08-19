@@ -11,7 +11,7 @@ from fathom.schemas.screens import ScreenCapture
 
 class PerceptionPort(ABC):
     """
-    Abstract interface for runtime perception and screen-state capture.
+    Captures screen state and probes soft-keyboard visibility for the runtime.
     """
 
     @property

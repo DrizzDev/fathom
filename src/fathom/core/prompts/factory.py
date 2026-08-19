@@ -29,7 +29,8 @@ class PromptFactory:
     @classmethod
     def get_builder(cls, model_name: str) -> PromptBuilder:
         """
-        Returns a concrete builder instance.
+        Resolve the system-prompt builder for the model. Only Gemini is wired today;
+        gpt and claude are placeholders that fall back to the Gemini builder.
         """
 
         kind = "gemini"
@@ -46,7 +47,7 @@ class PromptFactory:
     @staticmethod
     def resolve_version(model_name: str, use_xml: bool) -> str:
         """
-        Determines the optimal prompt version based on model capabilities.
+        Pick the prompt variant "{tier}_{strategy}": flash or pro by model name, xml or vision by grounding.
         """
 
         is_flash = "flash" in model_name.lower()
@@ -59,7 +60,8 @@ class PromptFactory:
     @classmethod
     def get_export_builder(cls, model_name: str) -> ExportPromptBuilder:
         """
-        Returns a concrete export prompt builder instance.
+        Resolve the export-prompt builder for the model. Only Gemini is wired today;
+        gpt and claude are placeholders that fall back to the Gemini builder.
         """
 
         kind = "gemini"
@@ -76,7 +78,8 @@ class PromptFactory:
     @classmethod
     def get_decomposition_builder(cls, model_name: str) -> DecompositionPromptBuilder:
         """
-        Returns a concrete decomposition prompt builder instance.
+        Resolve the decomposition-prompt builder for the model. Only Gemini is wired today;
+        gpt and claude are placeholders that fall back to the Gemini builder.
         """
 
         kind = "gemini"

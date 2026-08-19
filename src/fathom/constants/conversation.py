@@ -12,7 +12,7 @@ RECORDER_BUILDER: Final[str] = "recorder@1"
 REQUEST_EXPIRY_DAYS: Final[int] = 30
 
 
-# These are build-time defaults, NOT deployment-tunable's:
+# These are build-time defaults, NOT deployment-tunables:
 TIMELINE_MAX_LIMIT: Final[int] = 500
 TIMELINE_DEFAULT_LIMIT: Final[int] = 100
 
@@ -63,7 +63,8 @@ CURSOR_VERSION: Final[str] = "v1"
 SHA256_HEX_LENGTH: Final[int] = 64
 
 
-# Default retention windows used by the conversation cleanup service. Hosts override these per-tenant via CleanupRequest fields.
+# Default retention windows used by the conversation cleanup service.
+# Hosts override these per-tenant via CleanupRequest fields.
 # Stored as timedelta so the unit is encoded in the type rather than the identifier suffix.
 CLEANUP_DEFAULT_BATCH_LIMIT: Final[int] = 1_000
 CLEANUP_DEFAULT_EVENT_RETENTION: Final[timedelta] = timedelta(days=90)
@@ -73,9 +74,7 @@ CLEANUP_DEFAULT_SOFT_DELETED_RETENTION: Final[timedelta] = timedelta(days=30)
 
 
 class EntryKind(StrEnum):
-    """
-    Renderable conversation timeline entry categories.
-    """
+    """Renderable conversation timeline entry categories."""
 
     EVENT = "event"
     MESSAGE = "message"
@@ -84,9 +83,7 @@ class EntryKind(StrEnum):
 
 
 class TimelineSource(StrEnum):
-    """
-    Ledger sources consumed by the composite timeline cursor.
-    """
+    """Ledger sources consumed by the composite timeline cursor."""
 
     EVENTS = "events"
     CONTEXTS = "contexts"
@@ -95,18 +92,14 @@ class TimelineSource(StrEnum):
 
 
 class SequenceScope(StrEnum):
-    """
-    Durable sequence namespaces inside one conversation.
-    """
+    """Durable sequence namespaces inside one conversation."""
 
     EVENT = "event"
     MESSAGE = "message"
 
 
 class Visibility(StrEnum):
-    """
-    Timeline visibility modes for client, debug, and audit rendering.
-    """
+    """Timeline visibility modes for client, debug, and audit rendering."""
 
     USER = "user"
     DEBUG = "debug"
@@ -115,9 +108,7 @@ class Visibility(StrEnum):
 
 
 class VisibilityRank(IntEnum):
-    """
-    Numeric visibility ordering used for deterministic timeline filtering.
-    """
+    """Numeric visibility ordering used for deterministic timeline filtering."""
 
     USER = 10
     DEBUG = 20
@@ -126,9 +117,7 @@ class VisibilityRank(IntEnum):
 
 
 class ConversationFailureReason(StrEnum):
-    """
-    Stable client-facing reasons for conversation API failures.
-    """
+    """Stable client-facing reasons for conversation API failures."""
 
     RUN_NOT_FOUND = "RUN.NOT_FOUND"
     TENANT_REQUIRED = "TENANT_REQUIRED"
@@ -139,9 +128,7 @@ class ConversationFailureReason(StrEnum):
 
 
 class RecorderEvent(StrEnum):
-    """
-    Stable recorder operation event names.
-    """
+    """Stable recorder operation event names."""
 
     RUN_STARTED = "conversation.run.started"
     RUN_FINISHED = "conversation.run.finished"
@@ -161,9 +148,7 @@ class RecorderEvent(StrEnum):
 
 
 class RunScriptOutcomeStatus(StrEnum):
-    """
-    Stable script lookup dispositions returned alongside the script payload.
-    """
+    """Stable script lookup dispositions returned alongside the script payload."""
 
     AVAILABLE = "AVAILABLE"
     IN_FLIGHT = "IN_FLIGHT"
@@ -171,9 +156,7 @@ class RunScriptOutcomeStatus(StrEnum):
 
 
 class RunState(StrEnum):
-    """
-    Client-facing lifecycle state of one run inside a conversation.
-    """
+    """Client-facing lifecycle state of one run inside a conversation."""
 
     FAILED = "failed"
     UNKNOWN = "unknown"
@@ -183,9 +166,7 @@ class RunState(StrEnum):
 
 
 class ProgressStatus(StrEnum):
-    """
-    Client-facing lifecycle state of one progress milestone.
-    """
+    """Client-facing lifecycle state of one progress milestone."""
 
     FAILED = "failed"
     COMPLETED = "completed"

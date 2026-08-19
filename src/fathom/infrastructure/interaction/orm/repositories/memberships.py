@@ -30,7 +30,7 @@ from fathom.schemas.interaction import (
 
 class MembershipRepository:
     """
-    persistent-store backed repository for actor membership in conversation threads.
+    Persistent-store backed repository for actor membership in conversation threads.
     """
 
     def __init__(self, *, lifecycle: LifecycleRecorder, transaction: TransactionScope) -> None:

@@ -29,7 +29,7 @@ class ArtifactPipeline:
     Centralized observer for every artifact-producing lifecycle stage.
 
     Producers (perception, action, hierarchy, verification, script) call ``emit(record=...)``
-    and the pipeline takes ownership of: staging bytes onto the EFS-backed :class:`SharedPathManager`
+    and the pipeline takes ownership of: staging bytes onto the local-disk-backed :class:`SharedPathManager`
     synchronously (the durability boundary), dispatching the metadata + bytes to the
     :class:`ArtifactSinkPort` in a background task, and draining pending work at shutdown.
     """
@@ -60,7 +60,7 @@ class ArtifactPipeline:
         """
         Stage durably and enqueue background upload; never raises.
 
-        Returns the EFS payload path on success so producers can wire the same path into downstream metadata (``storage_id``, ``capture.metadata["path"]``)
+        Returns the staged payload path on success so producers can wire the same path into downstream metadata (``storage_id``, ``capture.metadata["path"]``)
         without performing a second write against :class:`StoragePort`. Returns ``None`` when the record was rejected or the renderer raised.
         """
 
@@ -149,7 +149,7 @@ class ArtifactPipeline:
         metadata: ArtifactMetadata,
     ) -> Path:
         """
-        Synchronously write the payload bytes to EFS and return the path.
+        Synchronously write the payload bytes to local disk and return the path.
         """
 
         payload_path = self.__path_manager.get_artifact_path(
@@ -271,7 +271,7 @@ class ArtifactPipeline:
     @staticmethod
     def __unlink(*, payload_path: Path) -> None:
         """
-        Remove the EFS payload after a successful upload.
+        Remove the staged payload after a successful upload.
         """
 
         with contextlib.suppress(FileNotFoundError):

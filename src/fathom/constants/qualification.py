@@ -12,12 +12,9 @@ DEFAULT_REJECTION_MESSAGE: str = (
     f"See {FATHOM_DOCS_URL} for help and examples."
 )
 
-# Eval-validated qualifier inference defaults (see scripts/qualifier_model_eval.py).
-# gemini-2.5-flash-lite — Google's "fastest, most budget-friendly multimodal model";
-# avg 0.79s / max 1.48s on the 73-case qualifier corpus, 73/73 accurate.
+# Qualifier inference defaults.
 DEFAULT_QUALIFIER_MODEL: str = "gemini-2.5-flash-lite"
-# Per-attempt wall-clock cap. With eval p95 of ~1.12s, 5s gives ~4x headroom while
-# preventing the preview-model unbounded tail latency we saw in production.
+# Per-attempt wall-clock cap that bounds tail latency.
 DEFAULT_QUALIFIER_TIMEOUT: float = 5.0
 # Retries after the initial attempt; adapter handles backoff + jitter.
 DEFAULT_QUALIFIER_MAX_RETRIES: int = 2
@@ -30,18 +27,14 @@ DEFAULT_QUALIFIER_THINKING_LEVEL: Literal["minimal", "low", "medium", "high"] = 
 
 
 class QualificationLabel(StrEnum):
-    """
-    Binary executability classification for a user intent.
-    """
+    """Binary executability classification for a user intent."""
 
     EXECUTABLE = "EXECUTABLE"
     NOT_EXECUTABLE = "NOT_EXECUTABLE"
 
 
 class RationaleCategory(StrEnum):
-    """
-    Reasoning bucket for a qualification verdict.
-    """
+    """Reasoning bucket for a qualification verdict."""
 
     EMPTY = "empty"
     OTHER = "other"

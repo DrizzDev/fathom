@@ -69,7 +69,7 @@ class UuidIdentifierSource:
 
 class RawConnectionAdapter:
     """
-    Adapts an store connection client to the raw SQL executor protocol.
+    Adapts a store connection client to the raw SQL executor protocol.
     """
 
     def __init__(self, *, connection: DatabaseConnection) -> None:

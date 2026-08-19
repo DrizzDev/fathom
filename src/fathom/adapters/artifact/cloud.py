@@ -17,7 +17,7 @@ class CloudSink(ArtifactSinkPort):
     Sink that uploads to the configured :class:`StoragePort` and requests local cleanup when the upload succeeds.
 
     On any upload failure (network, throttling, auth), the sink reports ``local_cleanup=False``
-    so the pipeline leaves the EFS file in place. The next process's ``replay()`` will pick it up.
+    so the pipeline leaves the local copy in place. The next process's ``replay()`` will pick it up.
     """
 
     def __init__(
@@ -42,10 +42,8 @@ class CloudSink(ArtifactSinkPort):
         """
         Upload the artifact and report whether local cleanup is safe.
 
-        When the upload fails (exception or empty identifier returned by
-        the underlying composite storage) we set ``local_cleanup=False``
-        so the pipeline preserves the EFS copy for replay and the
-        operator sees the artifact route on the next run.
+        On failure (an exception, or an empty identifier that means the storage backend dropped the
+        write) we set ``local_cleanup=False`` so the pipeline keeps the local copy for a later replay.
         """
 
         started = time.monotonic()

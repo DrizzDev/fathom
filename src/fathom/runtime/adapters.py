@@ -232,8 +232,8 @@ class AdapterAssembly:
 
         When ``"CLOUD"`` is enabled and a bucket is configured, the
         pipeline uploads to the cloud :class:`StoragePort` and clears
-        the EFS-staged copy on success. Otherwise the pipeline retains
-        the EFS-staged copy via :class:`EfsSink` — the local copy IS
+        the locally staged copy on success. Otherwise the pipeline retains
+        the locally staged copy via :class:`EfsSink` — the local copy is
         the durable artifact in that mode.
         """
 
@@ -320,7 +320,8 @@ class AdapterAssembly:
         """
         Build one ensemble member by its typed name.
 
-        ``DOCUMENT_AI_LAYOUT`` is a downstream consumer of OCR tokens — it has nothing to localize against when OCR is disabled or un-configured.
+        ``DOCUMENT_AI_LAYOUT`` is a downstream consumer of OCR tokens —
+        it has nothing to localize against when OCR is disabled or un-configured.
         Drop it at composition so the ensemble never carries a member that can only ever return ``None``.
         """
 
@@ -354,7 +355,7 @@ class AdapterAssembly:
         producer just wrote and race downstream readers.
 
         Local-only deployments fall back to :class:`EfsSink`, which
-        keeps the EFS-staged copy as the durable artifact and reports
+        keeps the locally staged copy as the durable artifact and reports
         no remote cleanup so the pipeline never deletes the local file.
         """
 

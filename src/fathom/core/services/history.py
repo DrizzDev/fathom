@@ -44,7 +44,7 @@ logger = getLogger(__name__)
 
 class HistoryService:
     """
-    Service responsible for persisting execution history and generating scripts.
+    Persists execution history and generates automation scripts.
     All outputs are saved to assets/history/{date}/{package}/{session}/ directory.
     """
 
@@ -957,11 +957,8 @@ class HistoryService:
         review_reason: Optional[str] = None,
     ) -> None:
         """
-        Hand the generated automation script to the artifact pipeline.
-
-        Replaces the legacy ``__storage.save(category="history", ...)``
-        direct upload — the pipeline owns durable EFS staging, async
-        cloud upload, and replay-on-crash for every artifact kind.
+        Hand the generated automation script to the artifact pipeline, which owns durable staging,
+        async cloud upload, and replay-on-crash for every artifact kind.
         """
 
         if self.__pipeline is None:

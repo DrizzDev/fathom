@@ -13,7 +13,7 @@ from fathom.schemas.results import ActionResult
 
 class DevicePort(ABC):
     """
-    Abstract interface for environment action execution.
+    Port for driving a target device: dispatch input gestures and capture screen state.
     """
 
     @property

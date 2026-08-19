@@ -43,7 +43,8 @@ class ReferenceResolutionService:
         self.__ref_pattern: Pattern[str] = re.compile(r"\$(memory|env)\.([a-zA-Z0-9_]+)")
 
         # Regex to parse bounds string: [x1,y1][x2,y2]. Accepts negative coordinates (off-viewport scroll containers etc.)
-        # The clamp step in :meth:`__snap_to_label` is responsible for bringing them back into the viewport before they reach an executor.
+        # The clamp step in :meth:`__snap_to_label` is responsible for bringing them back into the viewport
+        # before they reach an executor.
         self.__bounds_pattern: Pattern[str] = re.compile(
             r"^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$"
         )
@@ -688,7 +689,6 @@ class ReferenceResolutionService:
         if not text or "$" not in text:
             return text
 
-        # Find all matches
         matches = self.__ref_pattern.findall(text)
         if not matches:
             return text
@@ -698,7 +698,6 @@ class ReferenceResolutionService:
         for source, key in matches:
             value = await self.__fetch_value(source=source, key=key)
             if value:
-                # Replace strict match $source.key
                 token = f"${source}.{key}"
                 resolved_text = resolved_text.replace(token, str(value))
                 logger.info(f"Resolved reference '{token}' to '{value}'")

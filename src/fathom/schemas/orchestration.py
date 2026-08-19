@@ -21,9 +21,7 @@ __all__ = [
 
 
 class StepContext(BaseModel):
-    """
-    Context for a single step execution.
-    """
+    """Context for a single step execution."""
 
     step_id: str = Field(..., description="Unique identifier for the step")
     step_number: int = Field(..., description="Sequential number of the step")
@@ -36,9 +34,7 @@ class StepContext(BaseModel):
 
     @property
     def duration(self) -> float:
-        """
-        Step duration in seconds.
-        """
+        """Step duration in seconds."""
 
         if self.end_time is None:
             return time.time() - self.start_time
@@ -46,9 +42,7 @@ class StepContext(BaseModel):
         return self.end_time - self.start_time
 
     def complete(self, success: bool, error: Optional[str] = None) -> None:
-        """
-        Mark step as complete.
-        """
+        """Mark step as complete."""
 
         self.end_time = time.time()
 
@@ -60,13 +54,8 @@ class ExecutionContext(BaseModel):
     """
     Context for tracking workflow execution.
 
-    Provides:
-    - Run-level metadata (workflow_id, run_id, timestamps)
-    - Step tracking with timing
-    - Serializable state for checkpointing
-    - Correlation IDs for distributed tracing
-
-    Thread-safe for async operations.
+    Carries run-level metadata, timed step tracking, correlation IDs for tracing,
+    and serializable state for checkpointing.
     """
 
     workflow_id: str = Field(..., description="ID of the workflow being executed")
@@ -88,34 +77,26 @@ class ExecutionContext(BaseModel):
 
     @property
     def elapsed(self) -> float:
-        """
-        Elapsed time in seconds.
-        """
+        """Elapsed time in seconds."""
 
         end = self.end_time or time.time()
         return end - self.start_time
 
     @property
     def steps_executed(self) -> int:
-        """
-        Number of steps executed.
-        """
+        """Number of steps executed."""
 
         return len(self.steps)
 
     @property
     def successful_steps(self) -> int:
-        """
-        Number of successful steps.
-        """
+        """Number of successful steps."""
 
         return sum(1 for step in self.steps if step.success)
 
     @property
     def failed_steps(self) -> int:
-        """
-        Number of failed steps.
-        """
+        """Number of failed steps."""
 
         return sum(1 for step in self.steps if not step.success and step.end_time is not None)
 
@@ -157,9 +138,7 @@ class ExecutionContext(BaseModel):
         step.metadata["action"] = result.step.action.to_description()
 
     def finish(self) -> None:
-        """
-        Mark execution as finished.
-        """
+        """Mark execution as finished."""
 
         self.end_time = time.time()
 
@@ -184,9 +163,7 @@ class ExecutionContext(BaseModel):
         ]
 
     def get_history_summary(self) -> List[str]:
-        """
-        Get summary of previous actions.
-        """
+        """Get summary of previous actions."""
 
         return [
             f"Step {step.step_number}: {step.metadata.get('action', 'unknown')} "
@@ -239,7 +216,7 @@ class ExecutionContext(BaseModel):
 
 class ExecutionRoadmap(BaseModel):
     """
-    Roadmap for intent-based execution.
+    An intent paired with the ordered high-level steps planned to achieve it.
     """
 
     intent: str = Field(..., description="Goal intent")
@@ -248,7 +225,7 @@ class ExecutionRoadmap(BaseModel):
 
 class RunnerConfig(BaseModel):
     """
-    Configuration for workflow runner.
+    Workflow runner settings: whether to checkpoint state and the callback that persists it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -264,9 +241,7 @@ class RunnerConfig(BaseModel):
 
 
 class RunnerResult(BaseModel):
-    """
-    Result from workflow runner.
-    """
+    """Result from workflow runner."""
 
     model_config = ConfigDict(frozen=True)
 

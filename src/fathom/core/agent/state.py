@@ -48,15 +48,7 @@ logger = getLogger(__name__)
 
 class AgentState:
     """
-    Stateful agent context for planning and execution.
-
-    Manages:
-    - Screen state history with deduplication
-    - Action history with success/failure tracking
-    - Interaction tracking for behavioral constraints
-    - Loop detection with recovery strategies
-
-    Thread-safe for async operations. Serializable for checkpointing.
+    Stateful agent context for planning and execution; serializable for checkpointing.
     """
 
     def __init__(
@@ -184,7 +176,7 @@ class AgentState:
     @property
     def completion_reason(self) -> Optional[str]:
         """
-        Returns Completion Reason
+        Why the run is considered complete, if set.
         """
 
         return self.__completion_reason
@@ -425,13 +417,7 @@ class AgentState:
 
     def update_screen(self, screen: ScreenState) -> bool:
         """
-        Update current screen state.
-
-        Args:
-            screen: New screen state.
-
-        Returns:
-            True if this is a new screen, False if seen before.
+        Record the observed screen and return whether it is one not seen before this run.
         """
 
         previous_screen = self.__runtime.screen.current
@@ -516,10 +502,7 @@ class AgentState:
 
     def record_step(self, result: StepResult) -> None:
         """
-        Record a completed step.
-
-        Args:
-            result: Result of the executed step.
+        Record a completed step and fold its outcome into the run's counters and history.
         """
 
         self.__step_count += 1
@@ -648,10 +631,7 @@ class AgentState:
 
     def mark_complete(self, reason: str) -> None:
         """
-        Mark the intent as complete.
-
-        Args:
-            reason: Why the intent is considered complete.
+        Mark the intent complete with the given reason.
         """
 
         self.__is_complete = True
@@ -749,10 +729,7 @@ class AgentState:
 
     def set_sub_goals(self, sub_goals: List[SubGoal]) -> None:
         """
-        Set the decomposed sub-goals for this intent.
-
-        Args:
-            sub_goals: List of sequential sub-goals to execute.
+        Set the decomposed sub-goals and activate the first one as in-progress.
         """
 
         self.__sub_goals = [GoalState(goal=goal) for goal in sub_goals]
@@ -771,10 +748,7 @@ class AgentState:
 
     def get_current_sub_goal(self) -> Optional[GoalState]:
         """
-        Get the currently active sub-goal.
-
-        Returns:
-            Current sub-goal or None if no sub-goals defined.
+        Return the active sub-goal, or None when none are defined or the cursor is past the end.
         """
 
         if not self.__sub_goals or self.__current_sub_goal_index >= len(self.__sub_goals):
@@ -791,10 +765,7 @@ class AgentState:
 
     def set_current_sub_goal_index(self, index: int) -> None:
         """
-        Set the current sub-goal index (used for checkpoint restore).
-
-        Args:
-            index: Index to set (will be clamped to valid range)
+        Set the active sub-goal index (clamped to range) and mark it in-progress; used by checkpoint restore.
         """
 
         if self.__sub_goals:
@@ -948,10 +919,7 @@ class AgentState:
 
     def all_sub_goals_complete(self) -> bool:
         """
-        Check if all sub-goals have been completed.
-
-        Returns:
-            True if all sub-goals are complete or no sub-goals defined.
+        Whether every sub-goal is complete; True when none are defined.
         """
 
         if not self.__sub_goals:
@@ -961,10 +929,7 @@ class AgentState:
 
     def get_sub_goal_progress(self) -> Tuple[int, int]:
         """
-        Get current progress through sub-goals.
-
-        Returns:
-            Tuple of (current_index, total_count).
+        Return progress through the sub-goals as ``(current_index, total_count)``.
         """
 
         if not self.__sub_goals:
@@ -974,20 +939,14 @@ class AgentState:
 
     def get_all_sub_goals(self) -> List[GoalState]:
         """
-        Get all sub-goals.
-
-        Returns:
-            List of all sub-goals.
+        Return a copy of the full sub-goal list.
         """
 
         return self.__sub_goals.copy()
 
     def has_sub_goals(self) -> bool:
         """
-        Check if sub-goals are defined.
-
-        Returns:
-            True if sub-goals exist.
+        Whether any sub-goals are defined.
         """
 
         return len(self.__sub_goals) > 0
@@ -1192,13 +1151,7 @@ class AgentState:
 
     def should_avoid_action(self, action: Action) -> bool:
         """
-        Check if an action should be avoided due to recent failures.
-
-        Args:
-            action: Proposed action.
-
-        Returns:
-            True if action has failed recently.
+        Whether the action has failed recently enough to be worth avoiding.
         """
 
         return self.__action_history.has_repeated_failure(action=action)
@@ -1349,13 +1302,7 @@ class AgentState:
 
     def is_action_repeating_on_screen(self, action: Action) -> bool:
         """
-        Check if a tap/type action has been executed 3+ times on the current screen.
-
-        Args:
-            action: Proposed action.
-
-        Returns:
-            True if the same action has been repeated 3+ times on the current screen.
+        Whether this tap/type action has already run 3+ times on the current screen.
         """
 
         if (current := self.__runtime.screen.current) is None:
@@ -1368,10 +1315,7 @@ class AgentState:
 
     def to_checkpoint(self) -> Dict[str, object]:
         """
-        Serialize state for checkpointing.
-
-        Returns:
-            Dictionary suitable for JSON serialization.
+        Serialize the full agent state into a JSON-ready checkpoint dictionary.
         """
 
         return {

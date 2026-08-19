@@ -6,7 +6,7 @@ from typing import Optional
 
 class Normalizer:
     """
-    Service for normalizing and cleaning natural language text.
+    Normalizes freeform text and builds canonical action/validation descriptions with stable grammar.
     """
 
     __MULTISPACE_RE = re.compile(pattern=r"\s+")

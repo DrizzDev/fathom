@@ -26,10 +26,7 @@ class SocketSignal(SignalPort):
 
     def __init__(self, socket_path: str = "/tmp/fathom.sock") -> None:  # nosec B108
         """
-        Initialize socket listener.
-
-        Args:
-            socket_path: Path for UDS (Unix) or host:port for TCP.
+        Bind the control endpoint (a Unix socket path or ``host:port``) and start the async socket server.
         """
 
         self.__socket_path = socket_path
@@ -89,7 +86,7 @@ class SocketSignal(SignalPort):
 
     async def __start_serving(self) -> None:
         """
-        Internal server starter.
+        Bind the Unix socket server and serve until it is closed.
         """
 
         self.__server = await asyncio.start_unix_server(
@@ -128,7 +125,7 @@ class SocketSignal(SignalPort):
         self, payload: Dict[str, Any], writer: asyncio.StreamWriter
     ) -> None:
         """
-        Dispatches commands with zero-latency notifications.
+        Dispatch one control command (pause/resume/inject/answer/cancel) and reply with a status line.
         """
 
         cmd = payload.get("cmd", "").lower()
@@ -266,8 +263,6 @@ class SocketSignal(SignalPort):
         while True:
             cmd_data = await self.__command_queue.get()
             if cmd_data.get("cmd") == "answer":
-                # Ensure we return a string, not Any/None
                 return str(cmd_data.get("data", ""))
 
-        # Should be unreachable, but satisfies mypy
         return ""

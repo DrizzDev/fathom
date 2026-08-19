@@ -47,8 +47,9 @@ class LLMIntentQualifier(IntentQualifierPort):
         """
         Classify the intent's executability and return a verdict.
 
-        Fail-open semantics: any LLM, parse, or schema failure yields an EXECUTABLE verdict tagged with QUALIFIER_ERROR
-        so the gate explicitly passes the run through; the qualifier can never cause a false rejection.
+        Fail-open semantics: any LLM, parse, or schema failure yields an EXECUTABLE verdict tagged
+        with QUALIFIER_ERROR so the gate explicitly passes the run through; the qualifier can never
+        cause a false rejection.
         """
 
         normalized = intent.strip() if intent else ""

@@ -110,10 +110,9 @@ class LoopDetectorState(BaseModel):
 
 class InteractionTracker(BaseModel):
     """
-    Elegantly tracks the cadence and repetition of agent interactions.
+    Tracks the run of consecutive same-type actions and per-type totals.
 
-    Provides deterministic data on consecutive action sequences to enforce
-    behavioral constraints (e.g., 'Don't swipe more than 3 times').
+    Feeds behavioral limits such as "don't swipe more than 3 times" with a deterministic count.
     """
 
     __consecutive_count: int = PrivateAttr(default=0)

@@ -10,7 +10,7 @@ from fathom.schemas.screens import ScreenState
 
 class MemoryPort(ABC):
     """
-    Abstract interface for session state and cross-run memory.
+    Session key-value store plus cross-run recall of screen observations and action outcomes.
     """
 
     @abstractmethod

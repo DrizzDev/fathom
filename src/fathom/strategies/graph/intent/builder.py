@@ -152,12 +152,12 @@ class IntentGraphBuilder(GraphBuilder):
             f"planned_step_type={type(planned_step).__name__}"
         )
 
-        # 1. Cancellation overrides everything
+        # Cancellation overrides everything
         if self.__context.is_cancelled:
             logger.info("[ROUTING] -> END (Cancelled)")
             return NodeName.END
 
-        # 2. Fatal Errors and Completion override retry logic
+        # Fatal errors and completion override retry logic
         if is_complete:
             reason = state.get(cast("str", CommonStateKey.COMPLETION_REASON), "")
 
@@ -175,12 +175,12 @@ class IntentGraphBuilder(GraphBuilder):
             logger.info("[ROUTING] -> VERIFY (is_complete=True)")
             return NodeName.VERIFY
 
-        # 3. Soft Retries (e.g. missing elements, LLM asked to retry)
+        # Soft retries (e.g. missing elements, LLM asked to retry)
         if should_retry:
             logger.info("[ROUTING] -> GROUND (should_retry=True)")
             return NodeName.GROUND
 
-        # 4. Incomplete but missing step -> Error fallback
+        # Incomplete but missing step -> error fallback
         if not planned_step:
             logger.info(f"[ROUTING] -> GROUND (no planned_step, value={planned_step})")
             return NodeName.GROUND
@@ -198,11 +198,9 @@ class IntentGraphBuilder(GraphBuilder):
             return NodeName.END
 
         if state.get(cast("str", IntentStateKey.SHOULD_RETRY)):
-            # SUPERVISE detected incomplete upstream state (missing
-            # capture or planned_step) and asked for a re-ground.
-            # Routing to GROUND avoids the silent EXECUTE→OBSERVE→RECORD
-            # cascade that would otherwise end with the misleading
-            # ``record.missing.step_result`` Sentry alert.
+            # SUPERVISE found incomplete upstream state (missing capture or planned_step) and asked for a
+            # re-ground; routing to GROUND avoids the silent EXECUTE->OBSERVE->RECORD cascade that would
+            # otherwise end with a misleading missing-step-result error.
             logger.info("[ROUTING] After SUPERVISE -> GROUND (should_retry=True)")
             return NodeName.GROUND
 

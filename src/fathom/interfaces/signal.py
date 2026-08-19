@@ -6,8 +6,7 @@ from typing import Optional
 
 class SignalPort(ABC):
     """
-    Abstract interface for control signals.
-    Defines the contract for external interruptions and context injection.
+    Control-signal channel for external pause/resume interruptions and human context injection.
     """
 
     @property
@@ -26,10 +25,7 @@ class SignalPort(ABC):
     @abstractmethod
     async def check_signal(self) -> Optional[str]:
         """
-        Non-blocking check for an active signal.
-
-        Returns:
-            SignalType value (str) if present, else None.
+        Non-blocking check for an active signal; returns the SignalType value as a string, or None.
         """
 
         raise NotImplementedError
@@ -98,13 +94,7 @@ class SignalPort(ABC):
     @abstractmethod
     async def ask(self, *, prompt: str) -> str:
         """
-        Request specific input from the human.
-
-        Args:
-            prompt: The question to ask.
-
-        Returns:
-            The user's response.
+        Ask the human a question and block until they respond.
         """
 
         raise NotImplementedError
