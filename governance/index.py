@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 - governance shells out to git to scope the source index
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List
