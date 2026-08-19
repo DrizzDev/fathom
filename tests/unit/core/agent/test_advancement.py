@@ -214,7 +214,6 @@ class TestCommandActionMatch:
         evidence = _turn(execution=_result(_step(action, requirement=requirement)))
         assert _decide(success, evidence) is AdvanceKind.RETAIN
 
-
     def test_missing_dispatch_retains(self) -> None:
         requirement = PressRequirement(operation=ActionType.TAP, target="Login")
         success = _command_success(requirement)
@@ -396,7 +395,9 @@ class TestStallResolution:
         )
 
     @staticmethod
-    def _validating(*, verdict: Verdict, observation: Optional[ObservationRequirement] = None) -> TurnEvidence:
+    def _validating(
+        *, verdict: Verdict, observation: Optional[ObservationRequirement] = None
+    ) -> TurnEvidence:
         # A validate while a command is pending: the step carries no matching requirement, so the
         # command adjudication retains; the oracle verdict is the only outcome signal available.
         return _turn(

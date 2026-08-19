@@ -63,10 +63,10 @@ class SuccessUnionTest(unittest.TestCase):
         """
 
         success = CommandSuccess(
-            requirement=SwipeRequirement(
-                operation=ActionType.SWIPE, direction=SwipeDirection.UP
+            requirement=SwipeRequirement(operation=ActionType.SWIPE, direction=SwipeDirection.UP),
+            source=SourceSpan(
+                quote="Swipe up to Settings", location=SourceLocation(start=0, end=20)
             ),
-            source=SourceSpan(quote="Swipe up to Settings", location=SourceLocation(start=0, end=20)),
             postcondition=ObservationRequirement(assertion="Settings is visible"),
         )
 

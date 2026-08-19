@@ -13,8 +13,7 @@ from governance.schemas.selector import Selector
 class PurityRule(Rule):
     """
     Enforces domain purity: pure-domain packages must not import logging, telemetry,
-    or heavy-compute libraries (SKILL section 10). The pure-domain scope is injected from
-    the taxonomy configuration, not hardcoded.
+    or heavy-compute libraries. The pure-domain scope is injected from the taxonomy configuration, not hardcoded.
     """
 
     __FORBIDDEN_ROOTS: FrozenSet[str] = frozenset({"logging", "structlog", "cv2", "numpy", "PIL"})

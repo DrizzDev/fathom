@@ -15,12 +15,10 @@ from fathom.constants.state import (
     VerifyMode,
 )
 from fathom.constants.tools import StateNamespace
-from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.exceptions import ToolValidationError
 from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
-from fathom.schemas.advancement import Advancement
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.results import (
     AnalysisResult,
@@ -33,11 +31,8 @@ from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.steps import Step, StepResult
 from fathom.schemas.tools import StateUpdate
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
-from fathom.strategies.graph.intent.nodes.completion import ProbeResult
 from tests.builders.agent import AgentFixtures
 from tests.builders.subgoals import SubGoalFixtures
-
-RETAIN_PROBE = ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
 
 
 class _Persistence:
@@ -69,7 +64,6 @@ class AnalyzeNodeFailureBoundaryTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=cancelled),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -317,7 +311,6 @@ class AnalyzeNodeScreenResolutionTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         provider = SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -393,7 +386,6 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         provider = SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -474,7 +466,6 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         provider = SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -542,7 +533,6 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
                 provider = SimpleNamespace(
-                    completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
                     is_cancelled=AsyncMock(return_value=False),
                     persistence=_Persistence(),
                     hitl=SimpleNamespace(prompt=AsyncMock()),
@@ -630,7 +620,6 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         provider = SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             is_cancelled=AsyncMock(return_value=False),
@@ -703,7 +692,6 @@ class AnalyzeNodeAnalysisStatePublicationTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         provider = SimpleNamespace(
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             is_cancelled=AsyncMock(return_value=False),
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),

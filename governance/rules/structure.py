@@ -12,9 +12,8 @@ from governance.schemas.selector import Selector
 
 class DataclassRule(Rule):
     """
-    Forbids any ``@dataclass`` decorator; Pydantic ``BaseModel`` is the required entity model
-    (SKILL section 7). The ban is implementation-agnostic: standard-library and Pydantic
-    dataclasses, aliased imports, and assignment aliases all resolve to the same violation.
+    Forbids any ``@dataclass`` decorator; Pydantic ``BaseModel`` is the required entity model.
+    The ban is implementation-agnostic: standard-library and Pydantic dataclasses, aliased imports, and assignment aliases all resolve to the same violation.
     """
 
     __DECORATOR: str = "dataclass"
@@ -40,17 +39,19 @@ class DataclassRule(Rule):
         Flag every class decorated with ``dataclass``, resolving import and assignment aliases first.
         """
 
+        violations: List[Violation] = []
         names = self.__aliases(tree=module.tree)
 
-        violations: List[Violation] = []
         for node in ast.walk(module.tree):
             if not isinstance(node, ast.ClassDef):
                 continue
+
             for decorator in node.decorator_list:
                 if self.__is_dataclass(node=decorator, names=names):
                     violations.append(
                         self.__violation(module=module, line=decorator.lineno, name=node.name)
                     )
+
         return violations
 
     def __aliases(self, *, tree: ast.Module) -> FrozenSet[str]:
@@ -59,20 +60,24 @@ class DataclassRule(Rule):
         """
 
         names: Set[str] = set()
+
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 for alias in node.names:
                     if alias.name == self.__DECORATOR:
                         names.add(alias.asname or alias.name)
 
-        assignments = self.__assignments(tree=tree)
         changed = True
+        assignments = self.__assignments(tree=tree)
+
         while changed:
             changed = False
+
             for target, value in assignments:
                 if target not in names and self.__resolves(node=value, names=frozenset(names)):
                     names.add(target)
                     changed = True
+
         return frozenset(names)
 
     @staticmethod
@@ -82,17 +87,21 @@ class DataclassRule(Rule):
         """
 
         pairs: List[Tuple[str, ast.expr]] = []
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and len(node.targets) == 1:
                 target = node.targets[0]
+
                 if isinstance(target, ast.Name):
                     pairs.append((target.id, node.value))
+
             elif (
                 isinstance(node, ast.AnnAssign)
                 and isinstance(node.target, ast.Name)
                 and node.value is not None
             ):
                 pairs.append((node.target.id, node.value))
+
         return pairs
 
     def __is_dataclass(self, *, node: ast.expr, names: FrozenSet[str]) -> bool:
@@ -122,7 +131,7 @@ class DataclassRule(Rule):
         """
 
         return Violation(
-            selector=Selector(rule=self.identifier, path=module.relative, detail=name),
             line=line,
+            selector=Selector(rule=self.identifier, path=module.relative, detail=name),
             message=f"Class '{name}' uses @dataclass; use a Pydantic BaseModel instead.",
         )

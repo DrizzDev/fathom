@@ -20,7 +20,6 @@ from fathom.core.capability.catalog import CommandCatalogProvider as _CommandCat
 from fathom.core.services.criterion import CriterionObserver as _CriterionObserverBase
 from fathom.schemas.actions import Action
 from fathom.schemas.actions import Bounds as _Bounds
-from fathom.schemas.advancement import Advancement
 from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
@@ -37,11 +36,8 @@ from fathom.schemas.results import AnalysisResult, PlanContext, PlanResult, Plan
 from fathom.schemas.retries import RetryLimits
 from fathom.schemas.screens import ScreenHashBundle as _ScreenHashBundle
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
-from fathom.strategies.graph.intent.nodes.completion import ProbeResult
 from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator as _SubGoalEvaluator
 from fathom.strategies.graph.state import IntentGraphState
-
-RETAIN_PROBE = ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
 
 
 class _Persistence:
@@ -108,7 +104,6 @@ class _RealPlannerHarness:
             persistence=self.__persistence,
             hitl=SimpleNamespace(prompt=AsyncMock()),
             is_cancelled=AsyncMock(return_value=False),
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             context=SimpleNamespace(
                 max_steps=10,
                 use_xml=True,
@@ -515,7 +510,6 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
             persistence=_Persistence(),
             hitl=SimpleNamespace(prompt=AsyncMock()),
             is_cancelled=AsyncMock(return_value=False),
-            completion=SimpleNamespace(probe=AsyncMock(return_value=RETAIN_PROBE)),
             context=SimpleNamespace(
                 max_steps=10,
                 use_xml=True,

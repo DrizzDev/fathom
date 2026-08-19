@@ -3,8 +3,6 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from fathom.constants.assessment import VisualVerdict
 from fathom.constants.completion import RetainReason
 from fathom.constants.observability import CompletionEvent
@@ -36,7 +34,6 @@ from fathom.schemas.steps import StepResult
 from fathom.schemas.subgoal import GoalState
 from fathom.schemas.success import (
     ObservationRequirement,
-    ObservedSuccess,
     Success,
 )
 from fathom.schemas.turn import TurnEvidence
@@ -46,19 +43,6 @@ from fathom.strategies.graph.intent.nodes.shadow import ShadowRunner
 from fathom.strategies.graph.state import IntentGraphState
 
 logger = getLogger(__name__)
-
-
-class ProbeResult(BaseModel):
-    """
-    The pre-dispatch live decision and, when it advanced, the graph transition it produced.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
-
-    advancement: Advancement = Field(description="The live pre-dispatch advancement decision.")
-    transition: Optional[IntentGraphState] = Field(
-        default=None, description="Graph transition when the probe advanced, else None."
-    )
 
 
 class SubGoalEvaluator:
@@ -135,28 +119,31 @@ class SubGoalEvaluator:
         assessment = await self.__vision(active=active, receipt=step_result, trace=trace)
         turn = await self.__post_dispatch_evidence(
             active=active,
-            analysis=analysis,
             binding=binding,
             reading=reading,
+            analysis=analysis,
+            assessment=assessment,
             step_result=step_result,
             observation=observation,
-            assessment=assessment,
         )
         advancement = self.__policy.decide(success=active.success, evidence=turn)
         self.__log_adjudicated(active=active, advancement=advancement, step_result=step_result)
+
         await self.__surface_refute(
             assessment=assessment,
             advancement=advancement,
-            progressed=step_result.screen_changed,
             step=step_result.step.step_number,
+            progressed=step_result.screen_changed,
         )
 
         if advancement.kind in (AdvanceKind.ADVANCE, AdvanceKind.SATISFIED_PRIOR):
             patch: Optional[IntentGraphState] = self.__advance_or_complete(
                 current=active, accumulated=accumulated
             )
+
         elif advancement.kind in (AdvanceKind.ESCALATE, AdvanceKind.UNSATISFIABLE):
             patch = self.__escalate(active=active, advancement=advancement, accumulated=accumulated)
+
         else:
             self.__log_retained(active=active, advancement=advancement, step_result=step_result)
             patch = None
@@ -164,58 +151,13 @@ class SubGoalEvaluator:
         self.__record_executed(
             plan=plan,
             active=active,
-            receipt=step_result,
-            observation=observation,
             live=advancement,
+            receipt=step_result,
             assessment=assessment,
+            observation=observation,
         )
+
         return patch
-
-    async def probe(self, *, observation: Optional[ScreenObservation]) -> ProbeResult:
-        """
-        Return the real pre-dispatch live decision for the active goal, advancing an already-satisfied
-        ObservedSuccess as SATISFIED_PRIOR; command and capture goals always retain until they execute.
-        """
-
-        agent_state = self.__context.agent_state
-        active = agent_state.get_current_sub_goal()
-
-        if active is None or not agent_state.has_sub_goals():
-            return ProbeResult(advancement=Advancement(kind=AdvanceKind.RETAIN))
-
-        success = active.success
-        verdict = (
-            await self.__observe(
-                index=active.index, requirement=success.observation, observation=observation
-            )
-            if isinstance(success, ObservedSuccess)
-            else None
-        )
-        turn = TurnEvidence(
-            execution=None,
-            verdict=verdict,
-            claim=ClaimEvidence(asserted=False),
-            phase=ObservationPhase.PRE_DISPATCH,
-            action=ActionEvidence(dispatched=False, executed=False),
-            observation=self.__observed_requirement(success=success),
-        )
-
-        advancement = self.__policy.decide(success=success, evidence=turn)
-        if advancement.kind is not AdvanceKind.SATISFIED_PRIOR:
-            return ProbeResult(advancement=advancement)
-
-        logger.info(
-            "Sub-goal satisfied before dispatch; advancing via SATISFIED_PRIOR",
-            extra={
-                **self.__log_context(),
-                "sub_goal.index": active.index,
-                "event": CompletionEvent.CRITERION_OBSERVED.value,
-            },
-        )
-        return ProbeResult(
-            advancement=advancement,
-            transition=self.__advance_or_complete(current=active, accumulated=[]),
-        )
 
     async def __post_dispatch_evidence(
         self,
@@ -302,8 +244,8 @@ class SubGoalEvaluator:
         if (
             progressed
             or assessment is None
-            or assessment.verdict is not VisualVerdict.NOT_SATISFIED
             or advancement.kind is not AdvanceKind.RETAIN
+            or assessment.verdict is not VisualVerdict.NOT_SATISFIED
         ):
             return
 
@@ -538,10 +480,10 @@ class SubGoalEvaluator:
         self,
         *,
         plan: Any,
+        live: Advancement,
         active: GoalState,
         receipt: StepResult,
         observation: Optional[ScreenObservation],
-        live: Advancement,
         assessment: Optional[VisualAssessment] = None,
     ) -> None:
         """
@@ -551,6 +493,7 @@ class SubGoalEvaluator:
         draft = self.__draft(plan=plan)
         if draft is None:
             return
+
         self.__emit(
             record=self.__runner.finalize_executed(
                 live=live,
@@ -579,17 +522,18 @@ class SubGoalEvaluator:
         draft = self.__draft(plan=plan)
         if draft is None:
             return
+
         self.__emit(
             record=self.__runner.finalize_failed(
                 draft=draft,
                 active=active,
                 receipt=receipt,
+                cursor_after=self.__cursor(active=active),
+                screen=self.__post_screen(observation=observation),
+                foreground=self.__post_foreground(observation=observation),
                 live=Advancement(
                     kind=AdvanceKind.RETAIN, reason=RetainReason.STEP_EXECUTION_FAILED
                 ),
-                screen=self.__post_screen(observation=observation),
-                foreground=self.__post_foreground(observation=observation),
-                cursor_after=self.__cursor(active=active),
             )
         )
 

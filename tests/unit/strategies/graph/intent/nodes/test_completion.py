@@ -8,7 +8,6 @@ from fathom.constants import ActionType
 from fathom.constants.assessment import VisualVerdict
 from fathom.constants.observation import KeyboardVisibility
 from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
-from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.state import AgentState
 from fathom.core.services.criterion import CriterionObserver
 from fathom.core.services.outcome import OutcomeObserver
@@ -362,21 +361,6 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertEqual(outcome.calls, 1)
 
-    async def test_pre_dispatch_observed_satisfaction_advances_via_probe(self) -> None:
-        """
-        An observed goal already satisfied on the settled screen advances before any dispatch.
-        """
-
-        state = self.__agent_state(self.__two_goals(SuccessFixtures.observed(assertion="home")))
-        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
-
-        result = await evaluator.probe(observation=self.__observation())
-
-        self.assertIs(result.advancement.kind, AdvanceKind.SATISFIED_PRIOR)
-        assert result.transition is not None
-        self.assertTrue(result.transition.get(IntentStateKey.SHOULD_RETRY))
-        self.assertEqual(state.current_sub_goal_index, 1)
-
     async def test_observed_goal_retains_when_vision_not_satisfied(self) -> None:
         """
         A NOT_SATISFIED vision verdict retains the observed goal (the refute path escalates only under a stall).
@@ -409,19 +393,6 @@ class SubGoalEvaluatorTest(unittest.IsolatedAsyncioTestCase):
             quote="tap",
             intent=self.__LOGIN,
         )
-
-    async def test_command_goal_never_advances_pre_dispatch(self) -> None:
-        """
-        A command goal is never advanced before its command executes, even when probed.
-        """
-
-        state = self.__agent_state([SubGoalFixtures.make(success=self.__command())])
-        evaluator = self.__evaluator(state=state, verdict=CriterionVerdict.SATISFIED)
-
-        result = await evaluator.probe(observation=self.__observation())
-
-        self.assertIsNone(result.transition)
-        self.assertIs(result.advancement.kind, AdvanceKind.RETAIN)
 
     async def test_command_goal_retains_on_preparatory_action(self) -> None:
         """

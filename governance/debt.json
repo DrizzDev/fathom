@@ -6,49 +6,49 @@
       "selector": {"rule": "domain.purity", "path": "src/fathom/core/agent/advancement.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; domain logging moves to an outer layer during Track 3 decomposition."
+      "reason": "Baseline exception; domain logging to move to an outer layer in a later refactor."
     },
     {
       "reference": "ARCH-PURE-002",
       "selector": {"rule": "domain.purity", "path": "src/fathom/core/agent/loop.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; LoopDetector logging moves to an injected observer during Track 3."
+      "reason": "Baseline exception; LoopDetector logging to move to an injected observer in a later refactor."
     },
     {
       "reference": "ARCH-PURE-003",
       "selector": {"rule": "domain.purity", "path": "src/fathom/core/agent/planner.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; planner logging moves out during the guard-chain decomposition."
+      "reason": "Baseline exception; planner logging to move out of the domain layer in a later refactor."
     },
     {
       "reference": "ARCH-PURE-004",
       "selector": {"rule": "domain.purity", "path": "src/fathom/core/agent/reasoner.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; reasoner logging moves out during Track 3 decomposition."
+      "reason": "Baseline exception; reasoner logging to move out of the domain layer in a later refactor."
     },
     {
       "reference": "ARCH-PURE-005",
       "selector": {"rule": "domain.purity", "path": "src/fathom/core/agent/state.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; AgentState logging moves out during the state-authority consolidation."
+      "reason": "Baseline exception; AgentState logging to move out of the domain layer in a later refactor."
     },
     {
       "reference": "ARCH-PURE-006",
       "selector": {"rule": "domain.purity", "path": "src/fathom/schemas/configuration.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; configuration schema logging moves to the boundary during Track 3."
+      "reason": "Baseline exception; configuration schema logging to move to the boundary in a later refactor."
     },
     {
       "reference": "ARCH-PURE-007",
       "selector": {"rule": "domain.purity", "path": "src/fathom/schemas/state.py", "detail": "logging"},
       "owner": "UNASSIGNED",
       "ticket": "TBD",
-      "reason": "Phase 0a baseline; state schema logging moves to the boundary during Track 3."
+      "reason": "Baseline exception; state schema logging to move to the boundary in a later refactor."
     }
   ]
 }
