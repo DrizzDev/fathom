@@ -206,7 +206,9 @@ class ResolutionUnresolvedKindTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.unresolved_kind, UnresolvedKind.GENERIC_CONTAINER)
 
     async def test_high_iou_textless_view_snaps_label(self) -> None:
-        """Text less View whose bounds the LLM bbox overlaps (IoU above the agreement floor) must trust the label_id and resolve via snap — avoiding an unnecessary perception round-trip when the LLM and manifest already agree on the region."""
+        """
+        Text less View whose bounds the LLM bbox overlaps (IoU above the agreement floor) must trust the label_id and resolve via snap — avoiding an unnecessary perception round-trip when the LLM and manifest already agree on the region.
+        """
 
         service = self.__build_service()
         elements: Dict[str, Any] = {

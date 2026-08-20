@@ -74,7 +74,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             provider = SQLiteMemoryProvider(database_path=Path(directory) / "memory.db")
-            screen = self.__screen(activity="in.delivery.android")
+            screen = self.__screen(activity="com.example.delivery")
 
             await provider.store_observation(screen=screen, description="Delivery home.")
             await provider.store_experience(

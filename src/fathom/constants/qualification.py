@@ -27,14 +27,18 @@ DEFAULT_QUALIFIER_THINKING_LEVEL: Literal["minimal", "low", "medium", "high"] = 
 
 
 class QualificationLabel(StrEnum):
-    """Binary executability classification for a user intent."""
+    """
+    Binary executability classification for a user intent.
+    """
 
     EXECUTABLE = "EXECUTABLE"
     NOT_EXECUTABLE = "NOT_EXECUTABLE"
 
 
 class RationaleCategory(StrEnum):
-    """Reasoning bucket for a qualification verdict."""
+    """
+    Reasoning bucket for a qualification verdict.
+    """
 
     EMPTY = "empty"
     OTHER = "other"

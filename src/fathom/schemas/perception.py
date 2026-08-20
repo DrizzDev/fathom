@@ -32,7 +32,9 @@ class DocumentAiCredentials(BaseModel):
 
 
 class OcrConfiguration(BaseModel):
-    """Boot-time configuration for the OCR subsystem."""
+    """
+    Boot-time configuration for the OCR subsystem.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -47,7 +49,9 @@ class OcrConfiguration(BaseModel):
 
 
 class CvConfiguration(BaseModel):
-    """Boot-time configuration for the OpenCV visual-control labeler."""
+    """
+    Boot-time configuration for the OpenCV visual-control labeler.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -62,7 +66,9 @@ class CvConfiguration(BaseModel):
 
 
 class IconConfiguration(BaseModel):
-    """Boot-time configuration for the icon-template detector."""
+    """
+    Boot-time configuration for the icon-template detector.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -76,7 +82,9 @@ class IconConfiguration(BaseModel):
 
 
 class OverlayConfiguration(BaseModel):
-    """Boot-time configuration for the pixel-overlay detector."""
+    """
+    Boot-time configuration for the pixel-overlay detector.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -90,7 +98,9 @@ class OverlayConfiguration(BaseModel):
 
 
 class KeyboardConfiguration(BaseModel):
-    """Boot-time configuration for keyboard detection."""
+    """
+    Boot-time configuration for keyboard detection.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -104,7 +114,9 @@ class KeyboardConfiguration(BaseModel):
 
 
 class JournalConfiguration(BaseModel):
-    """Boot-time configuration for the runtime-journal adapter."""
+    """
+    Boot-time configuration for the runtime-journal adapter.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -153,7 +165,9 @@ class PerceptionConfiguration(BaseModel):
 
 
 class LocalizationEnsembleConfiguration(BaseModel):
-    """Boot-time configuration for the ensemble vision-localizer layer."""
+    """
+    Boot-time configuration for the ensemble vision-localizer layer.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

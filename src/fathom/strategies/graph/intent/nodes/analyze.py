@@ -67,7 +67,9 @@ class AnalyzeNode:
             return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
-        """Plan the next step; LLM/network failures are contained so the graph continues."""
+        """
+        Plan the next step; LLM/network failures are contained so the graph continues.
+        """
 
         logger.info(
             "Starting analysis node",

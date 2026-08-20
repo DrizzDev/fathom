@@ -93,7 +93,7 @@ class LoginScreenFixture:
         return ScreenCapture(
             width=402,
             height=874,
-            activity="com.banking.app",
+            activity="com.example.bank",
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
         )

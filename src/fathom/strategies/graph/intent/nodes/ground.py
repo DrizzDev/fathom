@@ -40,7 +40,9 @@ class GroundNode:
             return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
-        """Capture the screen and update state; exceptions convert to terminal states so the graph always completes."""
+        """
+        Capture the screen and update state; exceptions convert to terminal states so the graph always completes.
+        """
 
         logger.info(
             "Starting grounding node",

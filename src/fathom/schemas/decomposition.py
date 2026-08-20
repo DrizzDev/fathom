@@ -1,5 +1,3 @@
-"""Schemas for LLM-backed intent decomposition."""
-
 from __future__ import annotations
 
 from typing import List

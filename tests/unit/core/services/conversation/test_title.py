@@ -73,7 +73,7 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
                     "Open Healthcare and login with email test.user@example.com "
                     "and password Testin@23"
                 ),
-                package="com.healthcare.userhtexpress",
+                package="com.example.health",
             )
         )
 
@@ -93,9 +93,9 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
                     "and password Testin@23"
                 )
             )
-        ).compose(context=TitleContext(intent=self.__long_intent(), package="com.healthcare"))
+        ).compose(context=TitleContext(intent=self.__long_intent(), package="com.example.health"))
 
-        self.assertEqual(title, "Authoring com.healthcare")
+        self.assertEqual(title, "Authoring com.example.health")
 
     async def test_compose_without_llm_uses_package_fallback(self) -> None:
         """
@@ -108,11 +108,11 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
                     "Open Healthcare and login with email test.user@example.com "
                     "and password Testin@23"
                 ),
-                package="com.healthcare.userhtexpress",
+                package="com.example.health",
             )
         )
 
-        self.assertEqual(title, "Authoring com.healthcare.userhtexpress")
+        self.assertEqual(title, "Authoring com.example.health")
         self.assertNotIn("Healthcare", title)
         self.assertNotIn("test.user", title)
 

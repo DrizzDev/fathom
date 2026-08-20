@@ -1,5 +1,3 @@
-"""Intent decomposition service for sequential sub-goal execution."""
-
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple

@@ -412,7 +412,9 @@ class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):
     def test_complete_action_with_false_sub_goal_flag_autofills_after_normalization(
         self,
     ) -> None:
-        """When ``action_type=COMPLETE`` arrives with ``sub_goal_completed=False``, the normalizer must force the flag to True FIRST, then the autofill must see the True flag and populate ``subgoal_completion_reason`` from the rationale — pinning the COMPLETE-flag → autofill ordering."""
+        """
+        When ``action_type=COMPLETE`` arrives with ``sub_goal_completed=False``, the normalizer must force the flag to True FIRST, then the autofill must see the True flag and populate ``subgoal_completion_reason`` from the rationale — pinning the COMPLETE-flag → autofill ordering.
+        """
 
         parser = ToolResponseParser()
         response = self.__response(

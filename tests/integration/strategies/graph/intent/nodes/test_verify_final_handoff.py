@@ -304,7 +304,7 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__screen(),
-            IntentStateKey.POST_ACTIVITY: "in.delivery.android",
+            IntentStateKey.POST_ACTIVITY: "com.example.delivery",
             CommonStateKey.STEP_RESULT: self.__hsr_corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,

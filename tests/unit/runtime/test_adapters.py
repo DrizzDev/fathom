@@ -189,7 +189,9 @@ class AdapterAssemblyTest(unittest.TestCase):
         self.assertEqual(assembly.ensemble().members, ())
 
     def test_ensemble_builds_configured_members(self) -> None:
-        """Enabled ensemble with a member list yields the matching localizer instances."""
+        """
+        Enabled ensemble with a member list yields the matching localizer instances.
+        """
 
         assembly = self.__assemble(
             ensemble_localizer_enabled=True,

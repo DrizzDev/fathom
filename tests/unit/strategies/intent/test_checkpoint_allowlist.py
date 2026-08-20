@@ -85,7 +85,9 @@ class CheckpointAllowlistTest(unittest.TestCase):
         )
 
     def test_msgpack_allowlist_matches_json_allowlist(self) -> None:
-        """The msgpack and json allow-lists must stay in sync."""
+        """
+        The msgpack and json allow-lists must stay in sync.
+        """
 
         self.assertEqual(
             CHECKPOINT_ALLOWED_MSGPACK_MODULES,

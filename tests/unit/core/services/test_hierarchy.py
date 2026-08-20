@@ -194,7 +194,9 @@ class HierarchyServiceBytesContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(result.annotated_capture.annotated_image or b""), 0)
 
     async def test_process_xml_and_screen_survives_pipeline_local_cleanup(self) -> None:
-        """Race regression: even when the pipeline's sink completes upload and the staging file becomes eligible for cleanup before any downstream stage runs, the hierarchy result must still carry the labeled manifest."""
+        """
+        Race regression: even when the pipeline's sink completes upload and the staging file becomes eligible for cleanup before any downstream stage runs, the hierarchy result must still carry the labeled manifest.
+        """
 
         sink = _UnlinkingSink()
         pipeline = self.__build_pipeline(sink=sink)

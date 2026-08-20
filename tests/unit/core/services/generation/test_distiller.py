@@ -27,7 +27,7 @@ class DistillerTest(unittest.TestCase):
         Return the committed Shopping loop run fixture path.
         """
 
-        return Path("assets/history/2026-06-09/loop-run/history__com.shopping.supply.json")
+        return Path("assets/history/2026-06-09/loop-run/history__com.example.shop.json")
 
     def __recovery_steps(self) -> Tuple[int, ...]:
         """

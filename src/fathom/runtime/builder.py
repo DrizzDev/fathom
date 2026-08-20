@@ -52,7 +52,9 @@ class FathomBuilder:
     """
 
     def __init__(self, path_manager: Optional[SharedPathManager] = None) -> None:
-        """Initialize the builder with no ports configured."""
+        """
+        Initialize the builder with no ports configured.
+        """
 
         self.__device: Optional[DevicePort] = None
         self.__perception: Optional[PerceptionPort] = None
@@ -110,43 +112,57 @@ class FathomBuilder:
         return self
 
     def with_device(self, port: DevicePort) -> FathomBuilder:
-        """Register the device port used to drive the target."""
+        """
+        Register the device port used to drive the target.
+        """
 
         self.__device = port
         return self
 
     def with_llm(self, port: LLMPort) -> FathomBuilder:
-        """Register the planner LLM port that drives step decisions."""
+        """
+        Register the planner LLM port that drives step decisions.
+        """
 
         self.__llm = port
         return self
 
     def with_perception(self, port: PerceptionPort) -> FathomBuilder:
-        """Register the perception port that reads on-screen state."""
+        """
+        Register the perception port that reads on-screen state.
+        """
 
         self.__perception = port
         return self
 
     def with_memory(self, port: MemoryPort) -> FathomBuilder:
-        """Register the memory port backing durable run knowledge."""
+        """
+        Register the memory port backing durable run knowledge.
+        """
 
         self.__memory = port
         return self
 
     def with_interaction(self, port: InteractionPort) -> FathomBuilder:
-        """Register the interaction-storage port for conversation records."""
+        """
+        Register the interaction-storage port for conversation records.
+        """
 
         self.__interaction = port
         return self
 
     def with_knowledge(self, port: KnowledgePort) -> FathomBuilder:
-        """Register the knowledge port holding learned screen data."""
+        """
+        Register the knowledge port holding learned screen data.
+        """
 
         self.__knowledge = port
         return self
 
     def with_signal(self, port: SignalPort) -> FathomBuilder:
-        """Register the signal port carrying pause, resume, and cancel."""
+        """
+        Register the signal port carrying pause, resume, and cancel.
+        """
 
         self.__signal = port
         return self
@@ -166,37 +182,49 @@ class FathomBuilder:
         return self
 
     def with_telemetry(self, port: TelemetryPort) -> FathomBuilder:
-        """Register the telemetry port for client-facing run events."""
+        """
+        Register the telemetry port for client-facing run events.
+        """
 
         self.__telemetry = port
         return self
 
     def with_summarizer(self, port: SummarizationPort) -> FathomBuilder:
-        """Register the summarization port for run digests."""
+        """
+        Register the summarization port for run digests.
+        """
 
         self.__summarizer = port
         return self
 
     def with_config(self, configuration: FathomConfiguration) -> FathomBuilder:
-        """Replace the full Fathom configuration."""
+        """
+        Replace the full Fathom configuration.
+        """
 
         self.__config = configuration
         return self
 
     def with_execution_config(self, configuration: ExecutionConfiguration) -> FathomBuilder:
-        """Set the execution engine configuration."""
+        """
+        Set the execution engine configuration.
+        """
 
         self.__config.engine = configuration
         return self
 
     def with_intent_config(self, configuration: IntentConfiguration) -> FathomBuilder:
-        """Set the intent strategy configuration."""
+        """
+        Set the intent strategy configuration.
+        """
 
         self.__config.intent = configuration
         return self
 
     def with_exploration_config(self, configuration: ExplorationConfiguration) -> FathomBuilder:
-        """Set the exploration strategy configuration."""
+        """
+        Set the exploration strategy configuration.
+        """
 
         self.__config.exploration = configuration
         return self
@@ -211,7 +239,9 @@ class FathomBuilder:
         return self
 
     def with_qualifier(self, port: IntentQualifierPort) -> FathomBuilder:
-        """Register a pre-built intent qualifier port, bypassing composition."""
+        """
+        Register a pre-built intent qualifier port, bypassing composition.
+        """
 
         self.__qualifier = port
         return self
@@ -235,7 +265,9 @@ class FathomBuilder:
         return self
 
     def with_realignment(self, policy: RealignmentPolicy) -> FathomBuilder:
-        """Register the realignment policy governing context re-evaluation."""
+        """
+        Register the realignment policy governing context re-evaluation.
+        """
 
         self.__realignment = policy
         return self
@@ -369,6 +401,8 @@ class Fathom:
 
     @staticmethod
     def builder(path_manager: Optional[SharedPathManager] = None) -> FathomBuilder:
-        """Create a new builder instance."""
+        """
+        Create a new builder instance.
+        """
 
         return FathomBuilder(path_manager=path_manager)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import time
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence
 from unittest.mock import AsyncMock, MagicMock
@@ -125,7 +124,7 @@ class FinanceModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.delivery.android/.HomeActivity",
+            activity="com.example.delivery/.HomeActivity",
         )
 
     @staticmethod
@@ -154,60 +153,7 @@ class FinanceModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.delivery.android/.HomeActivity",
-        )
-
-
-class FinalVerifyAssetFixture:
-    """
-    Loads the downloaded Delivery screenshots for live verifier replay.
-    """
-
-    ASSET_ROOT = Path(
-        "/Users/aman/Desktop/Drizz/fathom/debug/"
-        "final-verify-run/assets/screenshot/"
-        "final-verify-run"
-    )
-    MODAL_SCREENSHOT = ASSET_ROOT / "step-005__screenshot__2026-06-11T06-28-10Z-692.png"
-    COMPLETED_SCREENSHOT = ASSET_ROOT / "step-006__screenshot__2026-06-11T06-28-25Z-609.png"
-
-    @classmethod
-    def is_available(cls) -> bool:
-        """
-        Return whether the downloaded prod replay screenshots are present locally.
-        """
-
-        return cls.MODAL_SCREENSHOT.exists() and cls.COMPLETED_SCREENSHOT.exists()
-
-    @classmethod
-    def captures(cls) -> List[ScreenCapture]:
-        """
-        Return modal and completed captures from the downloaded prod artifacts.
-        """
-
-        return [
-            cls.__capture(path=cls.MODAL_SCREENSHOT, timestamp=1781159290692),
-            cls.__capture(path=cls.COMPLETED_SCREENSHOT, timestamp=1781159305609),
-        ]
-
-    @staticmethod
-    def __capture(*, path: Path, timestamp: int) -> ScreenCapture:
-        """
-        Build a ScreenCapture from a downloaded screenshot path.
-        """
-
-        image = Image.open(path)
-        try:
-            width, height = image.size
-        finally:
-            image.close()
-
-        return ScreenCapture(
-            width=width,
-            height=height,
-            image=path.read_bytes(),
-            timestamp=timestamp,
-            activity="in.delivery.android",
+            activity="com.example.delivery/.HomeActivity",
         )
 
 
@@ -375,7 +321,7 @@ class TestFinanceFinalVerifyLive:
                 timestamp=1,
                 visual_hash="1" * 16,
                 activity_hash="a" * 16,
-                activity="in.delivery.android/.HomeActivity",
+                activity="com.example.delivery/.HomeActivity",
             )
         )
         agent_state.set_sub_goals(
@@ -385,42 +331,6 @@ class TestFinanceFinalVerifyLive:
             ]
         )
         agent_state.advance_current_sub_goal()
-        return agent_state
-
-    @staticmethod
-    def __hsr_agent_state() -> AgentState:
-        """
-        Build AgentState at the final-confirmation handoff.
-        """
-
-        agent_state = AgentState(
-            intent="Change the address to HSR Layout",
-            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
-        )
-        agent_state.update_screen(
-            screen=ScreenState(
-                timestamp=1,
-                visual_hash="1" * 16,
-                activity_hash="a" * 16,
-                activity="in.delivery.android",
-            )
-        )
-        agent_state.set_sub_goals(
-            [
-                SubGoalFixtures.make(
-                    index=0, description="Tap on the current address or change address option"
-                ),
-                SubGoalFixtures.make(
-                    index=1, description="Type HSR Layout into the address search field"
-                ),
-                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
-                SubGoalFixtures.make(
-                    index=3, description="Tap the button to confirm or save the address change"
-                ),
-            ]
-        )
-        for _ in range(3):
-            agent_state.advance_current_sub_goal()
         return agent_state
 
     @staticmethod
@@ -454,28 +364,7 @@ class TestFinanceFinalVerifyLive:
             timestamp=2,
             visual_hash="2" * 16,
             activity_hash="a" * 16,
-            activity="in.delivery.android/.HomeActivity",
-        )
-
-    @staticmethod
-    def __hsr_corrective_step_result() -> StepResult:
-        """
-        Build the corrective HSR modal action from the prod run.
-        """
-
-        action = Action(
-            confidence=1.0,
-            action_type=ActionType.TAP,
-            target="Yes, continue with this location",
-            rationale="Tap the confirmation modal action before validating HSR Layout",
-        )
-        return StepResult(
-            success=True,
-            duration=6749,
-            pre_hash="f75dfff77f7ff7df",
-            post_hash="ae41df2b4e7fb7df",
-            screen_changed=True,
-            step=Step(action=action, step_number=6, screen_hash="f75dfff77f7ff7df"),
+            activity="com.example.delivery/.HomeActivity",
         )
 
     def __record_state(self) -> Dict[object, object]:
@@ -486,34 +375,12 @@ class TestFinanceFinalVerifyLive:
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__completed_screen_state(),
-            IntentStateKey.POST_ACTIVITY: "in.delivery.android/.HomeActivity",
+            IntentStateKey.POST_ACTIVITY: "com.example.delivery/.HomeActivity",
             CommonStateKey.STEP_RESULT: self.__corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
                 is_complete=True,
                 reason="Finance office address is selected",
-            ),
-        }
-
-    def __hsr_record_state(self) -> Dict[object, object]:
-        """
-        Build the graph patch that RECORD sees after tapping the HSR confirmation action.
-        """
-
-        return {
-            CommonStateKey.IS_NEW_SCREEN: True,
-            CommonStateKey.SCREEN_STATE: ScreenState(
-                timestamp=2,
-                visual_hash="ae41df2b4e7fb7df",
-                activity_hash="a" * 16,
-                activity="in.delivery.android",
-            ),
-            IntentStateKey.POST_ACTIVITY: "in.delivery.android",
-            CommonStateKey.STEP_RESULT: self.__hsr_corrective_step_result(),
-            IntentStateKey.PLAN: PlanResult(
-                step=None,
-                is_complete=True,
-                reason="HSR Layout is selected in the delivery address header",
             ),
         }
 
@@ -569,53 +436,6 @@ class TestFinanceFinalVerifyLive:
         assert pending_again[IntentStateKey.VERIFY_MODE] == VerifyMode.PENDING_FINAL_COMMIT.value
         assert agent_state.is_complete is False
         assert agent_state.verification_loop is None
-
-        accepted = await verify.run(state=pending_again)  # type: ignore[arg-type]
-
-        assert accepted[CommonStateKey.IS_COMPLETE] is True
-        assert accepted[IntentStateKey.SHOULD_RETRY] is False
-        assert accepted[IntentStateKey.VERIFY_MODE] is None
-        assert agent_state.is_complete is True
-        assert agent_state.all_sub_goals_complete() is True
-        assert provider.context_manager.cleared is True
-        _print_llm_responses(responses=recording_llm.responses)
-
-    async def test_artifact_replay_rejects_then_completes(self, llm: LLMPort) -> None:
-        """
-        Live Gemini replay using the downloaded modal and post-correction screenshots.
-        """
-
-        if not FinalVerifyAssetFixture.is_available():
-            pytest.skip("downloaded screenshots are not available in debug assets")
-
-        agent_state = self.__hsr_agent_state()
-        recording_llm = _RecordingLlm(llm=llm)
-        provider = _Provider(
-            llm=recording_llm,
-            agent_state=agent_state,
-            captures=FinalVerifyAssetFixture.captures(),
-            intent="Change the address to HSR Layout",
-            workflow_id="live-final-verify",
-        )
-        verify = VerifyNode(provider=provider)  # type: ignore[arg-type]
-        record = RecordNode(provider=provider)  # type: ignore[arg-type]
-
-        rejected = await verify.run(
-            state={IntentStateKey.VERIFY_MODE: VerifyMode.PENDING_FINAL_COMMIT.value}
-        )  # type: ignore[arg-type]
-
-        assert rejected[CommonStateKey.IS_COMPLETE] is False
-        assert rejected[IntentStateKey.SHOULD_RETRY] is True
-        assert agent_state.current_sub_goal_index == 3
-        assert provider.context_manager.feedback
-
-        pending_again = await record.run(state=self.__hsr_record_state())  # type: ignore[arg-type]
-
-        assert pending_again[CommonStateKey.IS_COMPLETE] is True
-        assert pending_again[IntentStateKey.SHOULD_RETRY] is False
-        assert pending_again[IntentStateKey.VERIFY_MODE] == VerifyMode.PENDING_FINAL_COMMIT.value
-        assert agent_state.current_sub_goal_index == 3
-        assert agent_state.is_complete is False
 
         accepted = await verify.run(state=pending_again)  # type: ignore[arg-type]
 

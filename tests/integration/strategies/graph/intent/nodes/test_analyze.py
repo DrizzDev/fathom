@@ -181,7 +181,7 @@ class AnalyzeNodePlannerRetryBudgetIntegrationTest(unittest.IsolatedAsyncioTestC
         Build a constant capture so every iteration runs against an unchanged screen.
         """
 
-        return ScreenFixtures.capture(activity="bundl.delivery", width=1080, height=2340)
+        return ScreenFixtures.capture(activity="com.example.delivery", width=1080, height=2340)
 
     async def test_silent_rejection_loop_terminates_at_budget(self) -> None:
         """
@@ -412,7 +412,7 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
 
         with self.assertLogs("fathom.strategies.graph.intent.nodes.analyze", level="INFO") as logs:
             result = await node.run(
-                state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.retail.mp3")}
+                state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.example.media")}
             )
 
         # Exactly one model turn (the vision boundary the planner calls once).

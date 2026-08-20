@@ -36,7 +36,9 @@ from fathom.schemas.observation import ElementSource, PerceivedElement
 
 
 class VisionLocalizationPayload(BaseModel):
-    """Vision localizer response — bounding rectangle on the normalized integer grid."""
+    """
+    Vision localizer response — bounding rectangle on the normalized integer grid.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -69,7 +71,9 @@ class VisionLocalizationPayload(BaseModel):
 
     @property
     def refused(self) -> bool:
-        """Whether this payload signals the localizer's refusal protocol."""
+        """
+        Whether this payload signals the localizer's refusal protocol.
+        """
 
         return (
             self.confidence == 0.0
@@ -81,7 +85,9 @@ class VisionLocalizationPayload(BaseModel):
 
     @model_validator(mode="after")
     def __check_axes(self) -> "VisionLocalizationPayload":
-        """Reject non-refusal payloads with inverted axes or zero area."""
+        """
+        Reject non-refusal payloads with inverted axes or zero area.
+        """
 
         if self.refused:
             return self
@@ -93,7 +99,9 @@ class VisionLocalizationPayload(BaseModel):
 
 
 class PhraseMatch(BaseModel):
-    """Merged phrase formed by clustering adjacent OCR tokens for a single match."""
+    """
+    Merged phrase formed by clustering adjacent OCR tokens for a single match.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -148,7 +156,9 @@ class FusedScoreWeights(BaseModel):
 
     @model_validator(mode="after")
     def __check_convex(self) -> "FusedScoreWeights":
-        """Reject weight sets that do not sum to one within floating tolerance."""
+        """
+        Reject weight sets that do not sum to one within floating tolerance.
+        """
 
         total = self.recall + self.density + self.containment + self.iou
 
@@ -205,7 +215,9 @@ class RegionalEvidenceConfiguration(BaseModel):
 
 
 class VisionRetryPolicy(BaseModel):
-    """Retry policy for the vision localization adapter."""
+    """
+    Retry policy for the vision localization adapter.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -222,7 +234,9 @@ class VisionRetryPolicy(BaseModel):
 
 
 class VisionLocalizationConfiguration(BaseModel):
-    """Boot-time configuration for the vision localization adapter."""
+    """
+    Boot-time configuration for the vision localization adapter.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -238,7 +252,9 @@ class VisionLocalizationConfiguration(BaseModel):
 
 
 class RegionalEvidenceMetrics(BaseModel):
-    """Per-evaluation observability metrics for the regional matcher."""
+    """
+    Per-evaluation observability metrics for the regional matcher.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -263,13 +279,17 @@ class RegionalEvidenceMetrics(BaseModel):
 
     @classmethod
     def zero(cls) -> "RegionalEvidenceMetrics":
-        """Return zero-valued metrics for decisions where no math was computed."""
+        """
+        Return zero-valued metrics for decisions where no math was computed.
+        """
 
         return cls(recall=0.0, density=0.0, containment=0.0, iou=0.0, fused=0.0)
 
 
 class RegionalEvidenceProposal(BaseModel):
-    """Outcome of scoring perceived OCR evidence against planner-emitted bounds."""
+    """
+    Outcome of scoring perceived OCR evidence against planner-emitted bounds.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -334,13 +354,17 @@ class RegionalEvidenceVerdict(BaseModel):
 
     @property
     def resolved(self) -> bool:
-        """Convenience flag for callers that only need the boolean outcome."""
+        """
+        Convenience flag for callers that only need the boolean outcome.
+        """
 
         return self.decision is RegionalEvidenceDecision.RESOLVED
 
 
 class LayoutMatchConfiguration(BaseModel):
-    """Tunables governing phrase clustering and target matching in the layout localizer."""
+    """
+    Tunables governing phrase clustering and target matching in the layout localizer.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -385,7 +409,9 @@ class LayoutMatchConfiguration(BaseModel):
 
 
 class Point(BaseModel):
-    """Absolute screen point used for action execution."""
+    """
+    Absolute screen point used for action execution.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -394,7 +420,9 @@ class Point(BaseModel):
 
 
 class LocalizationStatus(StrEnum):
-    """Target localization result states."""
+    """
+    Target localization result states.
+    """
 
     RESOLVED = "resolved"
     AMBIGUOUS = "ambiguous"
@@ -402,14 +430,18 @@ class LocalizationStatus(StrEnum):
 
 
 class EnsembleMemberName(StrEnum):
-    """Stable names for ensemble vision-localizer members."""
+    """
+    Stable names for ensemble vision-localizer members.
+    """
 
     GEMINI_VISION = "gemini_vision"
     DOCUMENT_AI_LAYOUT = "document_ai_layout"
 
 
 class LocalizationCandidate(BaseModel):
-    """Candidate target returned by localization."""
+    """
+    Candidate target returned by localization.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -420,7 +452,9 @@ class LocalizationCandidate(BaseModel):
 
 
 class LocalizationProposal(BaseModel):
-    """One ensemble-member proposal for a semantic target's bounding box."""
+    """
+    One ensemble-member proposal for a semantic target's bounding box.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -435,7 +469,9 @@ class LocalizationProposal(BaseModel):
 
 
 class LocalizationResult(BaseModel):
-    """Final localization result for a semantic action target."""
+    """
+    Final localization result for a semantic action target.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -454,7 +490,9 @@ class LocalizationResult(BaseModel):
 
 
 class MemberOutcome(BaseModel):
-    """Result of invoking one localization member."""
+    """
+    Result of invoking one localization member.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -465,7 +503,9 @@ class MemberOutcome(BaseModel):
 
 
 class ProposalCollection(BaseModel):
-    """Aggregated localizer proposals and member health."""
+    """
+    Aggregated localizer proposals and member health.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

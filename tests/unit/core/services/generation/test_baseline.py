@@ -46,7 +46,7 @@ class BaselineScriptServiceTest(unittest.TestCase):
             partial=partial,
             intent="order a burger",
             goal="burger added to cart",
-            package="in.delivery.android",
+            package="com.example.delivery",
         )
 
     @staticmethod
@@ -61,7 +61,7 @@ class BaselineScriptServiceTest(unittest.TestCase):
             action="launch",
             launch=StepLaunch(
                 source_steps=(0,),
-                package="in.delivery.android",
+                package="com.example.delivery",
                 provenance=LaunchProvenance.LAUNCHER_TRANSITION,
             ),
         )

@@ -88,7 +88,7 @@ class TestSatisfiedWithActionIsRecordedNotEnforced:
 
 
 class TestPackageAuthorityContradiction:
-    __SHOPPING = "com.retail.mShop.android.shopping"
+    __SHOPPING = "com.example.shop2"
 
     def test_retail_music_does_not_satisfy_retail_shopping(self) -> None:
         out = ShadowAssessor().assess(
@@ -96,7 +96,7 @@ class TestPackageAuthorityContradiction:
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
             authority=TargetAuthority.requested(package=self.__SHOPPING),
-            foreground_package="com.retail.mp3",
+            foreground_package="com.example.media",
         )
         assert _kinds(out) == {ShadowDivergenceKind.PACKAGE_CONTRADICTION}
 
@@ -128,7 +128,7 @@ class TestPackageAuthorityContradiction:
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
             authority=TargetAuthority.unbound(),
-            foreground_package="com.retail.mp3",
+            foreground_package="com.example.media",
         )
         assert out == ()
 

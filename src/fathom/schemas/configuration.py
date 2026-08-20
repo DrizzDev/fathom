@@ -184,7 +184,8 @@ class StorageConfiguration(BaseModel):
         ),
     )
     storage_bucket: Optional[str] = Field(
-        default=None, description="Cloud storage bucket name (required when the CLOUD backend is enabled)"
+        default=None,
+        description="Cloud storage bucket name (required when the CLOUD backend is enabled)",
     )
     project_id: Optional[str] = Field(
         default=None, description="Project identifier for cloud storage"

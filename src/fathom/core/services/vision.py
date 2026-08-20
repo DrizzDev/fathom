@@ -65,7 +65,9 @@ class VisionService:
         session_id: str = "",
         auditor: Optional[AuditService] = None,
     ) -> None:
-        """Initialize vision service with the live runtime capabilities."""
+        """
+        Initialize vision service with the live runtime capabilities.
+        """
 
         self.__llm = llm
         self.__memory = memory

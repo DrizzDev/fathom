@@ -15,7 +15,9 @@ from fathom.schemas.screens import ScreenState
 
 
 class SQLiteMemoryProvider(IMemoryProvider):
-    """SQLite-backed persistent memory layer for the knowledge graph."""
+    """
+    SQLite-backed persistent memory layer for the knowledge graph.
+    """
 
     def __init__(self, database_path: Path) -> None:
         """

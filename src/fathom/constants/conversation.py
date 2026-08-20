@@ -74,7 +74,9 @@ CLEANUP_DEFAULT_SOFT_DELETED_RETENTION: Final[timedelta] = timedelta(days=30)
 
 
 class EntryKind(StrEnum):
-    """Renderable conversation timeline entry categories."""
+    """
+    Renderable conversation timeline entry categories.
+    """
 
     EVENT = "event"
     MESSAGE = "message"
@@ -83,7 +85,9 @@ class EntryKind(StrEnum):
 
 
 class TimelineSource(StrEnum):
-    """Ledger sources consumed by the composite timeline cursor."""
+    """
+    Ledger sources consumed by the composite timeline cursor.
+    """
 
     EVENTS = "events"
     CONTEXTS = "contexts"
@@ -92,14 +96,18 @@ class TimelineSource(StrEnum):
 
 
 class SequenceScope(StrEnum):
-    """Durable sequence namespaces inside one conversation."""
+    """
+    Durable sequence namespaces inside one conversation.
+    """
 
     EVENT = "event"
     MESSAGE = "message"
 
 
 class Visibility(StrEnum):
-    """Timeline visibility modes for client, debug, and audit rendering."""
+    """
+    Timeline visibility modes for client, debug, and audit rendering.
+    """
 
     USER = "user"
     DEBUG = "debug"
@@ -108,7 +116,9 @@ class Visibility(StrEnum):
 
 
 class VisibilityRank(IntEnum):
-    """Numeric visibility ordering used for deterministic timeline filtering."""
+    """
+    Numeric visibility ordering used for deterministic timeline filtering.
+    """
 
     USER = 10
     DEBUG = 20
@@ -117,7 +127,9 @@ class VisibilityRank(IntEnum):
 
 
 class ConversationFailureReason(StrEnum):
-    """Stable client-facing reasons for conversation API failures."""
+    """
+    Stable client-facing reasons for conversation API failures.
+    """
 
     RUN_NOT_FOUND = "RUN.NOT_FOUND"
     TENANT_REQUIRED = "TENANT_REQUIRED"
@@ -128,7 +140,9 @@ class ConversationFailureReason(StrEnum):
 
 
 class RecorderEvent(StrEnum):
-    """Stable recorder operation event names."""
+    """
+    Stable recorder operation event names.
+    """
 
     RUN_STARTED = "conversation.run.started"
     RUN_FINISHED = "conversation.run.finished"
@@ -148,7 +162,9 @@ class RecorderEvent(StrEnum):
 
 
 class RunScriptOutcomeStatus(StrEnum):
-    """Stable script lookup dispositions returned alongside the script payload."""
+    """
+    Stable script lookup dispositions returned alongside the script payload.
+    """
 
     AVAILABLE = "AVAILABLE"
     IN_FLIGHT = "IN_FLIGHT"
@@ -156,7 +172,9 @@ class RunScriptOutcomeStatus(StrEnum):
 
 
 class RunState(StrEnum):
-    """Client-facing lifecycle state of one run inside a conversation."""
+    """
+    Client-facing lifecycle state of one run inside a conversation.
+    """
 
     FAILED = "failed"
     UNKNOWN = "unknown"
@@ -166,7 +184,9 @@ class RunState(StrEnum):
 
 
 class ProgressStatus(StrEnum):
-    """Client-facing lifecycle state of one progress milestone."""
+    """
+    Client-facing lifecycle state of one progress milestone.
+    """
 
     FAILED = "failed"
     COMPLETED = "completed"

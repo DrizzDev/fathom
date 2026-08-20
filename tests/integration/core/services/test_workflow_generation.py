@@ -101,7 +101,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return RunObjective(
-            intent="open shopping and verify", goal="cart visible", package="com.shopping.supply"
+            intent="open shopping and verify", goal="cart visible", package="com.example.shop"
         )
 
     async def __evidence(self) -> Evidence:
@@ -147,7 +147,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(evidence.partial)
         self.assertEqual(len(launches), 1)
-        self.assertEqual(launches[0].package, "com.shopping.supply")
+        self.assertEqual(launches[0].package, "com.example.shop")
         self.assertEqual(launches[0].provenance, LaunchProvenance.LAUNCHER_TRANSITION)
 
     async def test_system_steps_stay_in_flow_in_order(self) -> None:
@@ -179,7 +179,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         script = self.__dialect.renderer.render(flow=flow)
 
         self.assertEqual(raised & launch_codes, set())
-        self.assertEqual(script.splitlines()[0], "OPEN_APP: com.shopping.supply")
+        self.assertEqual(script.splitlines()[0], "OPEN_APP: com.example.shop")
         self.assertNotIn("nexuslauncher", script)
 
     def __warm_start_record(

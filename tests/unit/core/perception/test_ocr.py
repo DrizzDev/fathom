@@ -179,7 +179,9 @@ class OcrEnsembleServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.tokens), 2)
 
     async def test_failing_member_is_isolated_from_ensemble(self) -> None:
-        """A member that raises :class:`OcrError` must be silently dropped; the remaining members still produce their tokens."""
+        """
+        A member that raises :class:`OcrError` must be silently dropped; the remaining members still produce their tokens.
+        """
 
         token = self.__token(text="Hello", score=0.9, bounds=self.__bounds(x=10))
         service = OcrEnsembleService(

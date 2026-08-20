@@ -218,7 +218,9 @@ class ContextManagerShutdownTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_commit_does_not_grow_persist_queue(self) -> None:
-        """Regression for the unbounded-queue leak in __enqueue_persist."""
+        """
+        Regression for the unbounded-queue leak in __enqueue_persist.
+        """
 
         manager = ContextManager(memory=MagicMock())
 

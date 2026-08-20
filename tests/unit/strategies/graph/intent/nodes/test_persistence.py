@@ -49,7 +49,7 @@ class GraphStatePersistenceShouldSkipLauncherTest(unittest.TestCase):
         self.assertFalse(
             GraphStatePersistence.should_skip_launcher(
                 execution_activity="com.android.launcher3/Activity",
-                observed_activity="bundl.delivery.production/Home",
+                observed_activity="com.example.delivery/Home",
             ),
         )
 
@@ -60,7 +60,7 @@ class GraphStatePersistenceShouldSkipLauncherTest(unittest.TestCase):
 
         self.assertFalse(
             GraphStatePersistence.should_skip_launcher(
-                execution_activity="bundl.delivery.production/Home",
-                observed_activity="bundl.delivery.production/Search",
+                execution_activity="com.example.delivery/Home",
+                observed_activity="com.example.delivery/Search",
             ),
         )

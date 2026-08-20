@@ -226,7 +226,7 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
                 CommonStateKey.STEP_RESULT: self.__step_result(),
                 CommonStateKey.SCREEN_STATE: self.__screen(),
                 CommonStateKey.IS_NEW_SCREEN: True,
-                IntentStateKey.POST_ACTIVITY: "in.delivery.android",
+                IntentStateKey.POST_ACTIVITY: "com.example.delivery",
                 IntentStateKey.PLAN: PlanResult(
                     is_complete=True,
                     reason="HSR Layout is selected after tapping Yes, continue with this location",

@@ -143,7 +143,9 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         self.assertGreaterEqual(len(sequence.accepted), 1)
 
     def test_short_travel_original_is_dispatched(self) -> None:
-        """A gesture whose travel would have triggered the legacy MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched."""
+        """
+        A gesture whose travel would have triggered the legacy MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched.
+        """
 
         policy = SwipeRetryPolicy(enabled=False, minimum_travel=300)
         sequence = SwipeRetryPlanner().candidates(

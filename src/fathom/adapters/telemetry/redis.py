@@ -155,25 +155,33 @@ class RedisTelemetryAdapter(TelemetryPort):
         }
 
     async def debug(self, message: str, **context: Any) -> None:
-        """Log at debug level and publish to the telemetry channel."""
+        """
+        Log at debug level and publish to the telemetry channel.
+        """
 
         self.__logger.debug(message, extra=context)
         await self.__publish(message=message, level="debug", color="gray", context=context)
 
     async def info(self, message: str, **context: Any) -> None:
-        """Log at info level and publish to the telemetry channel."""
+        """
+        Log at info level and publish to the telemetry channel.
+        """
 
         self.__logger.info(message, extra=context)
         await self.__publish(message=message, level="info", color="blue", context=context)
 
     async def warning(self, message: str, **context: Any) -> None:
-        """Log at warning level and publish to the telemetry channel."""
+        """
+        Log at warning level and publish to the telemetry channel.
+        """
 
         self.__logger.warning(message, extra=context)
         await self.__publish(message=message, level="warning", color="yellow", context=context)
 
     async def error(self, message: str, **context: Any) -> None:
-        """Log at error level and publish to the telemetry channel."""
+        """
+        Log at error level and publish to the telemetry channel.
+        """
 
         self.__logger.error(message, extra=context)
         await self.__publish(message=message, level="error", color="red", context=context)

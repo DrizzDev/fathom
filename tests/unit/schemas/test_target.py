@@ -17,10 +17,10 @@ class TargetAuthorityTest(unittest.TestCase):
         An explicitly requested package produces bound authority.
         """
 
-        authority = TargetAuthority.requested(package="com.shopping.supply")
+        authority = TargetAuthority.requested(package="com.example.shop")
 
         self.assertTrue(authority.bound)
-        self.assertEqual(authority.package, "com.shopping.supply")
+        self.assertEqual(authority.package, "com.example.shop")
 
     def test_unbound_has_no_package(self) -> None:
         """
@@ -40,7 +40,7 @@ class TargetAuthorityTest(unittest.TestCase):
         authority = TargetAuthority.unbound()
 
         with self.assertRaises(ValidationError):
-            authority.package = "com.shopping.supply"
+            authority.package = "com.example.shop"
 
     def test_rejects_unknown_field(self) -> None:
         """

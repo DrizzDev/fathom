@@ -283,7 +283,9 @@ class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
         activities = FathomActivities(settings=FathomSettings())
 
         class _Inert:
-            """Adapter with no teardown methods at all."""
+            """
+            Adapter with no teardown methods at all.
+            """
 
         # Should not raise even with no teardown methods present.
         await activities._FathomActivities__drain_partial_resources(  # type: ignore[attr-defined]

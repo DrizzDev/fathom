@@ -38,11 +38,15 @@ class _RecordingMapper:
 
 
 class _StubDocument:
-    """Opaque stand-in for a Document AI ``Document``."""
+    """
+    Opaque stand-in for a Document AI ``Document``.
+    """
 
 
 class _StubResponse:
-    """Carries ``.document``, which is all the adapter reads off the RPC."""
+    """
+    Carries ``.document``, which is all the adapter reads off the RPC.
+    """
 
     document = _StubDocument()
 

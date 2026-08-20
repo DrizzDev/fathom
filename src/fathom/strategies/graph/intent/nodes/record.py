@@ -73,7 +73,9 @@ class RecordNode:
         return await self.run(state=state)
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
-        """Record the execution result; storage/telemetry failures are contained so the graph continues."""
+        """
+        Record the execution result; storage/telemetry failures are contained so the graph continues.
+        """
 
         logger.info(
             "Starting record node",

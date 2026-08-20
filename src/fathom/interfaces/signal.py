@@ -11,7 +11,10 @@ class SignalPort(ABC):
 
     @property
     def is_interactive(self) -> bool:
-        """Whether this signal adapter supports interactive (human-in-the-loop) control."""
+        """
+        Whether this signal adapter supports interactive (human-in-the-loop) control.
+        """
+
         return True
 
     @abstractmethod

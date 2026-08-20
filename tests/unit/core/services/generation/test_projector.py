@@ -52,7 +52,7 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         return DeterministicFlowGenerator()
 
     @staticmethod
-    def __launch(*, index: int = 0, package: str = "in.delivery.android") -> EvidenceStep:
+    def __launch(*, index: int = 0, package: str = "com.example.delivery") -> EvidenceStep:
         """
         Build a launcher-transition launch evidence step.
         """
@@ -105,7 +105,7 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         return Evidence(
             intent="order a burger on delivery",
             goal="McDonald's burger added to cart",
-            package="in.delivery.android",
+            package="com.example.delivery",
             steps=steps,
             partial=partial,
         )

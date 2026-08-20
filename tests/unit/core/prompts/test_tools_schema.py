@@ -99,7 +99,9 @@ class ToolRegistryTest(unittest.TestCase):
         )
 
     def test_action_type_enum_omits_legacy_enter(self) -> None:
-        """The execute_ui action_type enum must not advertise the deprecated 'enter' action."""
+        """
+        The execute_ui action_type enum must not advertise the deprecated 'enter' action.
+        """
 
         definitions = ToolRegistry.get_all_definitions()["function_declarations"]
         execute_ui = next(

@@ -297,6 +297,8 @@ class InteractiveSignal(SignalPort):
             console.print(f"[green]✓ Recorded:[/green] {injected}\n")
 
     def __del__(self) -> None:
-        """No-op finalizer; listener teardown is handled elsewhere."""
+        """
+        No-op finalizer; listener teardown is handled elsewhere.
+        """
 
         return None

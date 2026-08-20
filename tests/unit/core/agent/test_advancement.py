@@ -599,8 +599,8 @@ class TestVisualEvidenceAdvancement:
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
-                foreground="com.retail.mShop.android.shopping",
+                authority=TargetAuthority.requested(package="com.example.shop2"),
+                foreground="com.example.shop2",
             ),
         )
         assert _decide(ObservedSuccess(observation=obs), evidence) is AdvanceKind.ADVANCE
@@ -616,7 +616,7 @@ class TestVisualEvidenceAdvancement:
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
+                authority=TargetAuthority.requested(package="com.example.shop2"),
                 foreground="com.android.launcher",
             ),
         )
@@ -633,7 +633,7 @@ class TestVisualEvidenceAdvancement:
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
+                authority=TargetAuthority.requested(package="com.example.shop2"),
                 foreground=None,
             ),
         )

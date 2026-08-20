@@ -47,7 +47,7 @@ class TestRunRequest(unittest.TestCase):
                 max_steps=25,
                 use_xml=True,
                 intent="Open Airbnb",
-                package_name="com.airbnb.android",
+                package_name="com.example.airbnb",
             ),
             runtime=RuntimeConfiguration(
                 interactive=True,

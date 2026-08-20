@@ -321,7 +321,9 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
 
     async def test_unknown_probably_executable_string_fails_open(self) -> None:
-        """QualificationLabel is binary."""
+        """
+        QualificationLabel is binary.
+        """
 
         llm = ScriptedLLM(
             contents=[

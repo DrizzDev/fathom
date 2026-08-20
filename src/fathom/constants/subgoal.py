@@ -14,7 +14,9 @@ VALIDATE_SUB_GOAL_MAX_STEPS: Final[int] = 3
 
 
 class TaskProof(StrEnum):
-    """Proof requirement the decomposer declares for one task's completion."""
+    """
+    Proof requirement the decomposer declares for one task's completion.
+    """
 
     DURABLE = "DURABLE"
     TRANSIENT = "TRANSIENT"

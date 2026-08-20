@@ -325,11 +325,11 @@ class EvidenceAssemblerTest(unittest.TestCase):
         evidence = self.__assembler.assemble(
             intent="i",
             goal="g",
-            package="com.shopping.supply",
+            package="com.example.shop",
             trace=self.__trace(
                 NormalizedEntry(
                     launch=LaunchMarker(
-                        package="com.shopping.supply",
+                        package="com.example.shop",
                         provenance=LaunchProvenance.LAUNCHER_TRANSITION,
                         source_steps=(0,),
                     )
@@ -342,7 +342,7 @@ class EvidenceAssemblerTest(unittest.TestCase):
         self.assertEqual(launch.event, "launch")
         self.assertIsNotNone(launch.launch)
         assert launch.launch is not None
-        self.assertEqual(launch.launch.package, "com.shopping.supply")
+        self.assertEqual(launch.launch.package, "com.example.shop")
         self.assertEqual(launch.launch.provenance, LaunchProvenance.LAUNCHER_TRANSITION)
         self.assertEqual(launch.launch.source_steps, (0,))
 
@@ -383,7 +383,7 @@ class EvidenceAssemblerTest(unittest.TestCase):
             trace=self.__trace(
                 NormalizedEntry(
                     launch=LaunchMarker(
-                        package="com.shopping.supply",
+                        package="com.example.shop",
                         provenance=LaunchProvenance.LAUNCHER_TRANSITION,
                         source_steps=(0,),
                     )
@@ -392,7 +392,7 @@ class EvidenceAssemblerTest(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(evidence.package, "com.shopping.supply")
+        self.assertEqual(evidence.package, "com.example.shop")
 
     def test_store_record_maps_to_capture_evidence(self) -> None:
         """

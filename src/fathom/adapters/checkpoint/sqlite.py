@@ -1,5 +1,3 @@
-"""Per-workflow SQLite-backed LangGraph checkpoint store adapter."""
-
 from __future__ import annotations
 
 import re

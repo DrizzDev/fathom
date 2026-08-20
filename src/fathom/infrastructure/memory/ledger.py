@@ -13,7 +13,9 @@ logger = getLogger(__name__)
 
 
 class Ledger(ILedger):
-    """Persistent key-value storage backed by SQLite."""
+    """
+    Persistent key-value storage backed by SQLite.
+    """
 
     def __init__(self, database_path: Path) -> None:
         """
@@ -25,7 +27,9 @@ class Ledger(ILedger):
         self.__path.parent.mkdir(parents=True, exist_ok=True)
 
     async def __initialize(self) -> None:
-        """Create the ledger table if it does not exist."""
+        """
+        Create the ledger table if it does not exist.
+        """
 
         if self.__initialized:
             return
@@ -39,7 +43,9 @@ class Ledger(ILedger):
         self.__initialized = True
 
     async def set(self, key: str, value: str) -> None:
-        """Store a user-actionable ledger entry; system-state key prefixes are rejected."""
+        """
+        Store a user-actionable ledger entry; system-state key prefixes are rejected.
+        """
 
         if not key or not isinstance(key, str):
             logger.error(f"[LEDGER] Invalid key: {key}")
@@ -78,7 +84,9 @@ class Ledger(ILedger):
             raise
 
     async def get(self, key: str) -> Optional[str]:
-        """Retrieve a value by key."""
+        """
+        Retrieve a value by key.
+        """
 
         await self.__initialize()
 
@@ -93,7 +101,9 @@ class Ledger(ILedger):
         return result
 
     async def get_all(self) -> Dict[str, str]:
-        """Retrieve all ledger entries."""
+        """
+        Retrieve all ledger entries.
+        """
 
         await self.__initialize()
         result = {}
@@ -109,7 +119,9 @@ class Ledger(ILedger):
         return result
 
     async def health_check(self) -> Dict[str, Any]:
-        """Run a health check and return diagnostic information."""
+        """
+        Run a health check and return diagnostic information.
+        """
 
         await self.__initialize()
 

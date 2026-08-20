@@ -356,11 +356,15 @@ class StepPlannerToolScopeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestCase):
-    """Pins the autonomous-runtime substitution: ASK_USER -> recovery ladder."""
+    """
+    Pins the autonomous-runtime substitution: ASK_USER -> recovery ladder.
+    """
 
     @staticmethod
     def __ask_user_analysis() -> AnalysisResult:
-        """Return an analysis whose primary action is ASK_USER."""
+        """
+        Return an analysis whose primary action is ASK_USER.
+        """
 
         action = ActionFixtures.make(
             target="User",
@@ -376,7 +380,9 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         )
 
     async def test_substitutes_ask_user_with_recovery_action(self) -> None:
-        """ASK_USER on autonomous runtime substitutes with the next ladder rung."""
+        """
+        ASK_USER on autonomous runtime substitutes with the next ladder rung.
+        """
 
         analysis = self.__ask_user_analysis()
         vision = Mock()
@@ -411,7 +417,9 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         self.assertFalse(result.is_complete)
 
     async def test_terminates_when_ladder_exhausted(self) -> None:
-        """When the recovery ladder is spent, ASK_USER becomes terminal INTERVENTION_REQUIRED."""
+        """
+        When the recovery ladder is spent, ASK_USER becomes terminal INTERVENTION_REQUIRED.
+        """
 
         analysis = self.__ask_user_analysis()
         vision = Mock()

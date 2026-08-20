@@ -383,7 +383,9 @@ class LLMIntentQualifierLiveTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_every_intent_classifies_correctly(self) -> None:
-        """Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes."""
+        """
+        Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes.
+        """
 
         cases = IntentCorpus.cases()
         configuration = QualifierConfiguration()

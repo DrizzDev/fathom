@@ -30,7 +30,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class FathomSettings(BaseSettings):
-    """Global settings loaded from environment variables and the .env file."""
+    """
+    Global settings loaded from environment variables and the .env file.
+    """
 
     # Gemini settings
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
