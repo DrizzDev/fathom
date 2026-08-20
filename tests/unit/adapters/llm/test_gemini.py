@@ -234,7 +234,9 @@ class GeminiLLMTest(unittest.TestCase):
         self.assertTrue(result)
 
     def test_generation_config_maps_unavailable_thinking_levels(self) -> None:
-        """Falls back to LOW when the SDK does not expose the requested thinking level."""
+        """
+        Falls back to LOW when the SDK does not expose the requested thinking level.
+        """
 
         gemini = object.__new__(GeminiLLM)
         gemini._GeminiLLM__configuration = LLMConfiguration(
@@ -250,7 +252,9 @@ class GeminiLLMTest(unittest.TestCase):
         self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)
 
     def test_async_timeout_does_not_match_cancelled_classifier(self) -> None:
-        """Regression: asyncio.wait_for raises asyncio.TimeoutError when the per-attempt budget expires."""
+        """
+        Regression: asyncio.wait_for raises asyncio.TimeoutError when the per-attempt budget expires.
+        """
 
         timeout_message = str(asyncio.TimeoutError()).casefold()
         result = GeminiLLM._GeminiLLM__is_cancelled_error(status_code=None, text=timeout_message)

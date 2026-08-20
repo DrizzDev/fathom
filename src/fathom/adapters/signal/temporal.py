@@ -21,7 +21,7 @@ class TemporalSignalAdapter(SignalPort):
     Signal adapter backed by in-process shared state.
 
     Workflow signal handlers mirror state into a shared WorkflowSignalState
-    via SignalStateRegistry. This adapter reads from that mirror, eliminating billable Temporal queries entirely.
+    via SignalStateRegistry. This adapter reads from that mirror instead of issuing workflow queries.
     """
 
     def __init__(self, *, workflow_id: str, deadline: float = SignalDeadline.ASK) -> None:
@@ -54,10 +54,7 @@ class TemporalSignalAdapter(SignalPort):
 
     async def check_signal(self) -> Optional[str]:
         """
-        Check for active control signal.
-
-        Returns:
-            SignalType value if present, else None.
+        Return the active control signal (cancelled takes precedence over paused), or None when running.
         """
 
         self.__state.metrics.signal_checks += 1

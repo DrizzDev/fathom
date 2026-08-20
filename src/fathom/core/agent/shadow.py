@@ -13,7 +13,7 @@ class ShadowAssessor:
     """
     Records how a shadow visual assessment diverges from live behavior and the goal's evidence source.
 
-    Slice 2 is observe-and-record only: the live action still executes and no goal advances from this.
+    This is observe-and-record only: the live action still executes and no goal advances from this.
     The host — not the model schema — enforces which goals may carry a visual assessment and that a bound
     target's foreground package is present and exactly equal before a satisfied verdict may count.
     """

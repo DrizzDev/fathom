@@ -68,9 +68,7 @@ class AnalyzeNode:
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """
-        Plan the next step using the Agent Planner.
-
-        ERROR BOUNDARY: Wraps planning in try/except to handle LLM/network failures gracefully.
+        Plan the next step; LLM/network failures are contained so the graph continues.
         """
 
         logger.info(
@@ -146,7 +144,6 @@ class AnalyzeNode:
 
         capture: ScreenCapture = screen_capture
 
-        # ERROR BOUNDARY: Wrap planning logic
         try:
             # Check injected context
             current_step = self.__provider.context.agent_state.step_count
@@ -167,7 +164,7 @@ class AnalyzeNode:
                 elements = raw_elements
 
             # Use orientation-corrected capture dims so the planner's prompt
-            # advertises the actual canvas the screenshot was rendered on, ot the device-cached portrait template.
+            # advertises the actual canvas the screenshot was rendered on, not the device-cached portrait template.
             width = capture.width
             height = capture.height
 

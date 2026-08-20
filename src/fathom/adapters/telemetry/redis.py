@@ -77,7 +77,7 @@ class RedisTelemetryAdapter(TelemetryPort):
         context: Dict[str, Any],
     ) -> None:
         """
-        Publish log event to Redis matching the farm-wrap gateway schema.
+        Publish log event to Redis matching the gateway schema.
         """
 
         try:
@@ -156,7 +156,7 @@ class RedisTelemetryAdapter(TelemetryPort):
 
     async def debug(self, message: str, **context: Any) -> None:
         """
-        Publishes DEBUG Logs
+        Log at debug level and publish to the telemetry channel.
         """
 
         self.__logger.debug(message, extra=context)
@@ -164,7 +164,7 @@ class RedisTelemetryAdapter(TelemetryPort):
 
     async def info(self, message: str, **context: Any) -> None:
         """
-        Publishes INFO Logs
+        Log at info level and publish to the telemetry channel.
         """
 
         self.__logger.info(message, extra=context)
@@ -172,7 +172,7 @@ class RedisTelemetryAdapter(TelemetryPort):
 
     async def warning(self, message: str, **context: Any) -> None:
         """
-        Publishes WARNING Logs
+        Log at warning level and publish to the telemetry channel.
         """
 
         self.__logger.warning(message, extra=context)
@@ -180,7 +180,7 @@ class RedisTelemetryAdapter(TelemetryPort):
 
     async def error(self, message: str, **context: Any) -> None:
         """
-        Publishes ERROR Logs
+        Log at error level and publish to the telemetry channel.
         """
 
         self.__logger.error(message, extra=context)

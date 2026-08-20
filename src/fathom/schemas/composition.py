@@ -13,11 +13,9 @@ class QualifierComposition(BaseModel):
     """
     Value object returned by the qualifier composer.
 
-    Bundles the qualifier port with any infrastructure resources the composer created on the caller's behalf.
-    The composition root owns the resources and must close them when the run finishes — the qualifier itself never owns its LLM.
-
-    `resources` is a tuple so the ownership view is genuinely immutable;
-    frozen=True alone blocks field reassignment but would still let callers mutate a list via append/extend.
+    Bundles the qualifier port with the infrastructure resources the composer created; the composition
+    root owns those and must close them when the run finishes — the qualifier itself never owns its LLM.
+    ``resources`` is a tuple so the ownership view is genuinely immutable, not just reassignment-frozen.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -38,15 +36,11 @@ class RunnerComposition(BaseModel):
     """
     Value object returned by the activity / executor builder.
 
-    Pairs the runner with the resources that need explicit teardown alongside
-    the runner itself. Keeps lifecycle bookkeeping out of the runner contract
-    and inside a typed object the composition root can drain.
-
-    The `runner` field is typed against RunnerLifecycle — a small structural
-    protocol exposing just cleanup() and cancel(). That's all the composition
-    root needs from this object; richer call sites (activity / CLI executor)
-    keep their own typed reference to the concrete FathomRunner.
-    `resources` is a tuple so the ownership view is genuinely immutable.
+    Pairs the runner with the resources needing explicit teardown, keeping lifecycle bookkeeping in a
+    typed object the composition root can drain. ``runner`` is typed against RunnerLifecycle — a
+    structural protocol of just cleanup() and cancel(), all the composition root needs; richer call
+    sites keep their own reference to the concrete FathomRunner. ``resources`` is a tuple so the
+    ownership view is genuinely immutable.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)

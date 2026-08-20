@@ -6,7 +6,7 @@ from typing import Optional
 
 class Normalizer:
     """
-    Service for normalizing and cleaning natural language text.
+    Normalizes freeform text and builds canonical action/validation descriptions with stable grammar.
     """
 
     __MULTISPACE_RE = re.compile(pattern=r"\s+")
@@ -14,7 +14,9 @@ class Normalizer:
 
     @staticmethod
     def clean(text: Optional[str]) -> str:
-        """Normalize whitespace and trim text."""
+        """
+        Normalize whitespace and trim text.
+        """
 
         if not text:
             return ""
@@ -39,7 +41,9 @@ class Normalizer:
 
     @staticmethod
     def sentence(text: Optional[str]) -> str:
-        """Apply lightweight sentence-case normalization."""
+        """
+        Apply lightweight sentence-case normalization.
+        """
 
         cleaned = Normalizer.clean(text=text)
         if not cleaned:
@@ -51,7 +55,9 @@ class Normalizer:
 
     @staticmethod
     def reasoning(text: Optional[str]) -> str:
-        """Normalize freeform reasoning/evidence text without changing semantics."""
+        """
+        Normalize freeform reasoning/evidence text without changing semantics.
+        """
 
         return Normalizer.sentence(text=text)
 
@@ -63,7 +69,9 @@ class Normalizer:
         wait_duration: Optional[int | float] = None,
         validation_subject: Optional[str] = None,
     ) -> str:
-        """Build canonical action descriptions with stable grammar."""
+        """
+        Build canonical action descriptions with stable grammar.
+        """
 
         kind = Normalizer.clean(text=action_type).lower()
         cleaned_target = Normalizer.clean(text=target)
@@ -122,7 +130,9 @@ class Normalizer:
 
     @staticmethod
     def validation(target: str, *, explicit: bool = False, complete: bool = False) -> str:
-        """Build explicit validation descriptions."""
+        """
+        Build explicit validation descriptions.
+        """
 
         cleaned_target = Normalizer.clean(text=target) or "Goal State"
 

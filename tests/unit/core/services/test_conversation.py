@@ -253,7 +253,7 @@ class TestConversationService(ConversationStoreTestCase):
         Thread creation accepts bounded long input and stores a ledger-safe title.
         """
 
-        title = "Open swiggy app. " * 60
+        title = "Open delivery app. " * 44
 
         view = await self.__service.create(
             request=ThreadCreate(

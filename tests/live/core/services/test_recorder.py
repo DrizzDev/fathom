@@ -311,8 +311,8 @@ class TestRecorderMultiTenantResilience:
     """
 
     __TENANTS: Tuple[Tuple[str, str], ...] = (
-        ("1", "alice@drizz.dev"),
-        ("343", "aman@drizz.com"),
+        ("1", "alice@example.com"),
+        ("343", "sam@example.com"),
         ("500", "bob@othercorp.com"),
         ("900", "carol@newco.com"),
         ("1201", "dan@scaleup.io"),
@@ -401,7 +401,7 @@ class TestRecorderRetryReplay:
                     thread=thread,
                     created=started,
                     workflow=workflow,
-                    operator="aman@drizz.com",
+                    operator="sam@example.com",
                 )
 
             # Two independent runs with identical content, as a deterministic retry
@@ -432,7 +432,7 @@ class TestRecorderBestEffort:
             recorder = harness.recorder()
 
             handle = await recorder.record_run_started(
-                run=RunFactory.build(tenant="343", operator="aman@drizz.com")
+                run=RunFactory.build(tenant="343", operator="sam@example.com")
             )
 
             assert handle is None
@@ -476,7 +476,7 @@ class Checkpoint:
             responder=cls.__ACTOR,
             workflow=cls.__WORKFLOW,
             execution=cls.__EXECUTION,
-            requester="aman@drizz.com",
+            requester="sam@example.com",
         )
 
     @classmethod
@@ -541,7 +541,7 @@ class Checkpoint:
             tenant=cls.__TENANT,
             thread=cls.__THREAD,
             workflow=cls.__WORKFLOW,
-            operator="aman@drizz.com",
+            operator="sam@example.com",
         )
 
     @classmethod
@@ -585,7 +585,7 @@ class Checkpoint:
             **cls.__scope(),
             created=cls.__NOW,
             id="message-answer-343",
-            actor="aman@drizz.com",
+            actor="sam@example.com",
             execution=cls.__EXECUTION,
             body={"text": "the primary one"},
             question="message-question-343",

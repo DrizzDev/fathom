@@ -47,7 +47,7 @@ class StubPathManager:
 
 class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
     """
-    Regression for run 78a8dcbf, which once generated a launcher-only partial script.
+    Regression for a launcher-mediated run, which once generated a launcher-only partial script.
     """
 
     def setUp(self) -> None:
@@ -83,10 +83,10 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def __workflow_trace() -> Path:
         """
-        Return the committed 78a8dcbf workflow-trace fixture.
+        Return the committed launcher-run workflow-trace fixture.
         """
 
-        return Path("assets/history/2026-06-23/78a8dcbf/history__workflow.json")
+        return Path("assets/history/2026-06-23/launcher-run/history__workflow.json")
 
     def __execution_trace(self) -> Path:
         """
@@ -101,7 +101,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         """
 
         return RunObjective(
-            intent="open meesho and verify", goal="cart visible", package="com.meesho.supply"
+            intent="open shopping and verify", goal="cart visible", package="com.example.shop"
         )
 
     async def __evidence(self) -> Evidence:
@@ -109,7 +109,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         Read the run's workflow trace into evidence.
         """
 
-        return await self.__source.read(execution_id="78a8dcbf", objective=self.__objective())
+        return await self.__source.read(execution_id="launcher-run", objective=self.__objective())
 
     def __flow(self, *, evidence: Evidence) -> Flow:
         """
@@ -139,7 +139,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_launches_the_real_app_not_the_launcher(self) -> None:
         """
-        The launcher-mediated run yields a single grounded Meesho launch and stays non-partial.
+        The launcher-mediated run yields a single grounded Shopping launch and stays non-partial.
         """
 
         evidence = await self.__evidence()
@@ -147,7 +147,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(evidence.partial)
         self.assertEqual(len(launches), 1)
-        self.assertEqual(launches[0].package, "com.meesho.supply")
+        self.assertEqual(launches[0].package, "com.example.shop")
         self.assertEqual(launches[0].provenance, LaunchProvenance.LAUNCHER_TRANSITION)
 
     async def test_system_steps_stay_in_flow_in_order(self) -> None:
@@ -160,9 +160,9 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(indices, [1, 2, 3, 4, 5, 6, 7, 8, 11])
 
-    async def test_rendered_script_opens_meesho_and_passes_policy(self) -> None:
+    async def test_rendered_script_opens_shopping_and_passes_policy(self) -> None:
         """
-        The flow renders to a Meesho-first script with no launcher launch and no fidelity issues.
+        The flow renders to a Shopping-first script with no launcher launch and no fidelity issues.
         """
 
         evidence = await self.__evidence()
@@ -179,7 +179,7 @@ class WorkflowGenerationRegressionTest(unittest.IsolatedAsyncioTestCase):
         script = self.__dialect.renderer.render(flow=flow)
 
         self.assertEqual(raised & launch_codes, set())
-        self.assertEqual(script.splitlines()[0], "OPEN_APP: com.meesho.supply")
+        self.assertEqual(script.splitlines()[0], "OPEN_APP: com.example.shop")
         self.assertNotIn("nexuslauncher", script)
 
     def __warm_start_record(

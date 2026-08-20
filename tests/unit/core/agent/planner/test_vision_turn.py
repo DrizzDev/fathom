@@ -40,9 +40,9 @@ class VisionTurnAssertionThreadingTest(unittest.TestCase):
             [
                 SubGoalFixtures.make(
                     index=0,
-                    description="Open Amazon and search",
+                    description="Open Retail and search",
                     success=SuccessFixtures.observed(
-                        assertion="The Amazon search results for 'ghar soap' are displayed."
+                        assertion="The Retail search results for 'ghar soap' are displayed."
                     ),
                 ),
                 SubGoalFixtures.make(index=1, description="Confirm"),
@@ -53,7 +53,7 @@ class VisionTurnAssertionThreadingTest(unittest.TestCase):
 
         assert context is not None
         self.assertEqual(
-            context["assertion"], "The Amazon search results for 'ghar soap' are displayed."
+            context["assertion"], "The Retail search results for 'ghar soap' are displayed."
         )
         self.assertFalse(context["durable"])
 

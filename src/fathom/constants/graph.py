@@ -2,7 +2,9 @@ from enum import StrEnum
 
 
 class NodeName(StrEnum):
-    """Standardized names for graph nodes."""
+    """
+    Standardized names for graph nodes.
+    """
 
     END = "__end__"
     SCAN = "scan"
@@ -18,7 +20,9 @@ class NodeName(StrEnum):
 
 
 class RouteCause(StrEnum):
-    """Reasons emitted by graph routing decisions for structured observability."""
+    """
+    Reasons emitted by graph routing decisions for structured observability.
+    """
 
     DEFAULT = "default"
     CANCELLED = "cancelled"

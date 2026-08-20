@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 
 class IntentNodeProvider:
     """
-    Provides LangGraph nodes for intent execution.
-    Encapsulates dependencies and shared private logic.
+    Builds the intent-graph nodes and owns the shared dependencies they read.
     """
 
     def __init__(

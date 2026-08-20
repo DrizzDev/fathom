@@ -52,7 +52,9 @@ class ConversationService:
     ) -> None:
         """
         Initialize the service with explicit durable ledger ports and a signer.
-        Hosts that deploy without object storage construct NoopSigner at the composition root and pass it here; the service no longer carries an adapter default.
+
+        Hosts that deploy without object storage construct a NoopSigner at the composition root
+        and pass it here; the signer is a required port with no adapter default.
         """
 
         self.__ports = ports
@@ -249,13 +251,10 @@ class ConversationService:
         labels: Tuple[Label, ...],
     ) -> InteractionSchemas.Content:
         """
-        Build message content with classifier labels + sanitizer stamping.
+        Build message content with classifier labels and sanitizer stamping.
 
-        Every persisted message is run through the sanitizer pipeline so the
-        `sanitized_at` / `sanitizer` columns are always populated. The default
-        sanitizer profile is a no-op (`noop@1`) that returns the body verbatim
-        but records that the pipeline ran; swapping in a PII-redacting profile
-        flows through every write path without touching call sites.
+        Every message runs through the sanitizer so ``sanitized_at`` / ``sanitizer`` are always
+        populated; the default ``noop@1`` profile returns the body verbatim while recording the run.
         """
 
         classified = self.__classifier.classify(body=body, existing=labels)
@@ -1019,8 +1018,8 @@ class ConversationService:
         entry: ConversationSchemas.EntryView,
     ) -> ConversationSchemas.EntryView:
         """
-        Sign URIs embedded inside artifact-kind timeline entry payloads
-        and annotate the payload with typed status fields. Non-artifact entries pass through untouched.
+        Sign URIs embedded inside artifact-kind timeline entry payloads and annotate the payload
+        with typed status fields; non-artifact entries pass through untouched.
         """
 
         if entry.kind != EntryKind.ARTIFACT or not isinstance(entry.payload, dict):

@@ -1,0 +1,15 @@
+{
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "reportGeneralTypeIssues": "none",
+      "reportArgumentType": "none",
+      "reportIndexIssue": "none",
+      "reportOptionalMemberAccess": "none",
+      "reportAttributeAccessIssue": "none"
+    },
+    { "root": "src" }
+  ]
+}

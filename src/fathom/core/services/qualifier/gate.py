@@ -17,9 +17,8 @@ class QualificationGatePolicy:
         """
         Accept the qualifier configuration for symmetry with caller wiring.
 
-        The configuration is intentionally unused at decision time — the gate
-        has no threshold. Kept as a constructor parameter so callers don't
-        have to special-case construction when they already hold a config.
+        Unused at decision time — the gate has no threshold; kept as a parameter so callers holding a
+        config need not special-case construction.
         """
 
         _ = configuration

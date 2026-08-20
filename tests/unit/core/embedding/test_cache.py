@@ -76,8 +76,8 @@ class EmbeddingCacheTest(unittest.IsolatedAsyncioTestCase):
         embedder = _StubEmbedder(responses=[(vector,)])
         cache = EmbeddingCache(embedder=embedder)
 
-        cache.warm(texts=("Open the Posh app",))
-        result = await cache.get(text="Open the Posh app")
+        cache.warm(texts=("Open the Events app",))
+        result = await cache.get(text="Open the Events app")
 
         self.assertEqual(result, vector)
         self.assertEqual(len(embedder.calls), 1)

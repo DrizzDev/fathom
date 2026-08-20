@@ -60,13 +60,8 @@ class ExecutionContext(BaseModel):
     """
     Context for tracking workflow execution.
 
-    Provides:
-    - Run-level metadata (workflow_id, run_id, timestamps)
-    - Step tracking with timing
-    - Serializable state for checkpointing
-    - Correlation IDs for distributed tracing
-
-    Thread-safe for async operations.
+    Carries run-level metadata, timed step tracking, correlation IDs for tracing,
+    and serializable state for checkpointing.
     """
 
     workflow_id: str = Field(..., description="ID of the workflow being executed")
@@ -239,7 +234,7 @@ class ExecutionContext(BaseModel):
 
 class ExecutionRoadmap(BaseModel):
     """
-    Roadmap for intent-based execution.
+    An intent paired with the ordered high-level steps planned to achieve it.
     """
 
     intent: str = Field(..., description="Goal intent")
@@ -248,7 +243,7 @@ class ExecutionRoadmap(BaseModel):
 
 class RunnerConfig(BaseModel):
     """
-    Configuration for workflow runner.
+    Workflow runner settings: whether to checkpoint state and the callback that persists it.
     """
 
     model_config = ConfigDict(frozen=True)

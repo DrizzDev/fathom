@@ -412,7 +412,9 @@ class ToolResponseParserCompletionReasonAutofillTest(unittest.TestCase):
     def test_complete_action_with_false_sub_goal_flag_autofills_after_normalization(
         self,
     ) -> None:
-        """When ``action_type=COMPLETE`` arrives with ``sub_goal_completed=False``, the normalizer must force the flag to True FIRST, then the autofill must see the True flag and populate ``subgoal_completion_reason`` from the rationale — pinning the COMPLETE-flag → autofill ordering."""
+        """
+        When ``action_type=COMPLETE`` arrives with ``sub_goal_completed=False``, the normalizer must force the flag to True FIRST, then the autofill must see the True flag and populate ``subgoal_completion_reason`` from the rationale — pinning the COMPLETE-flag → autofill ordering.
+        """
 
         parser = ToolResponseParser()
         response = self.__response(
@@ -572,6 +574,34 @@ class ToolResponseParserValidationSubjectTest(unittest.TestCase):
         self.assertEqual(result.action.event_type, StepEvent.VALIDATION)
         self.assertEqual(result.action.action_type, ActionType.COMPLETE)
         self.assertEqual(result.action.validation_subject, "The final step is complete.")
+
+    def test_verify_goal_prefers_explicit_assertion_for_validation_subject(self) -> None:
+        """
+        A crisp assertion beats completion reasons and the screen description.
+        """
+
+        parser = ToolResponseParser()
+        result = parser.parse(
+            response=self.__response(
+                call=_Call(
+                    name="verify_goal",
+                    args={
+                        "assistant_message": "The cart shows the item.",
+                        "goal_completed": False,
+                        "sub_goal_completed": True,
+                        "subgoal_completion_reason": "Item added.",
+                        "current_screen": "Cart screen",
+                        "assertion": "Cart contains Diet Coke x1",
+                        "evidence": "Cart badge shows 1.",
+                    },
+                )
+            )
+        )
+
+        assert result.validation is not None
+        assert result.action is not None
+        self.assertEqual(result.validation.subject, "Cart contains Diet Coke x1")
+        self.assertEqual(result.action.validation_subject, "Cart contains Diet Coke x1")
 
 
 class ToolResponseParserBoundaryTest(unittest.TestCase):
@@ -907,37 +937,6 @@ class ToolResponseParserBoundaryTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-    def test_verify_goal_prefers_explicit_assertion_for_validation_subject(self) -> None:
-        """
-        A crisp assertion beats completion reasons and the screen description.
-        """
-
-        parser = ToolResponseParser()
-        result = parser.parse(
-            response=self.__response(
-                call=_Call(
-                    name="verify_goal",
-                    args={
-                        "assistant_message": "The cart shows the item.",
-                        "goal_completed": False,
-                        "sub_goal_completed": True,
-                        "subgoal_completion_reason": "Item added.",
-                        "current_screen": "Cart screen",
-                        "assertion": "Cart contains Diet Coke x1",
-                        "evidence": "Cart badge shows 1.",
-                    },
-                )
-            )
-        )
-
-        assert result.validation is not None
-        self.assertEqual(result.validation.subject, "Cart contains Diet Coke x1")
-        self.assertEqual(result.action.validation_subject, "Cart contains Diet Coke x1")
-
-
 class ToolResponseParserVisualAssessmentTest(unittest.TestCase):
     """
     Covers the shadow visual assessment riding the same primary response as the live action.
@@ -1019,3 +1018,7 @@ class ToolResponseParserVisualAssessmentTest(unittest.TestCase):
 
         self.assertIsNone(result.visual_assessment)
         self.assertFalse(result.assessment_malformed)
+
+
+if __name__ == "__main__":
+    unittest.main()

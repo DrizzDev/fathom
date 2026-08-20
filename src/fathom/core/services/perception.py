@@ -87,7 +87,7 @@ class PerceptionService:
         step_number: int,
     ) -> Optional[Path]:
         """
-        Stage the screen capture through the artifact pipeline and return the EFS-staged path.
+        Stage the screen capture through the artifact pipeline and return the locally staged path.
         Caller stamps the path onto ``capture.screenshot_uri`` so downstream consumers read bytes from local disk.
         """
 
@@ -129,12 +129,9 @@ class PerceptionService:
         """
         Persist via :class:`StoragePort` when no artifact pipeline is wired.
 
-        Production runs always have the pipeline configured; this branch
-        exists so unit tests and minimal embeddings that omit the
-        pipeline still produce a usable storage identifier. The remote
-        identifier returned by :class:`StoragePort` is a stable handle
-        and is stamped onto ``screenshot_uri`` (a typed field) so
-        downstream consumers do not need to peek into ``metadata``.
+        Serves tests and minimal embeddings that omit the pipeline; the stable identifier from
+        :class:`StoragePort` is stamped onto the typed ``screenshot_uri`` field so downstream
+        consumers need not peek into ``metadata``.
         """
 
         storage_id = await self.__storage.save(

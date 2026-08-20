@@ -26,7 +26,7 @@ class DocumentAiLayoutLocalizer(TargetLocalizerPort):
         matcher: Optional[OcrPhraseMatcher] = None,
     ) -> None:
         """
-        Initialize the layout localizer with optional run context and matcher.
+        Bind optional run context and an OCR phrase matcher, defaulting to a fresh matcher.
         """
 
         self.__workflow_id = workflow_id

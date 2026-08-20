@@ -36,16 +36,10 @@ class GeminiDeltaTelemetry(BaseModel):
     """
     Semantic delta signal schema used by Gemini tools at the raw tool boundary.
 
-    This model:
-    - Preserves raw provider values (including the case where the model omits
-      delta fields entirely).
-    - Performs only light type coercion (e.g., parsing floats, normalizing
-      anchor lists).
-    - Defers all semantic normalization (e.g., defaulting, score clamping) to
-      the core parser layer so that downstream code can distinguish:
-        * "Model says delta"          (delta_observed is True/False)
-        * "Model is unsure/low conf"  (delta_confidence in [0, 1] but small)
-        * "Model said nothing"        (both fields are None)
+    Preserves raw provider values (including omitted delta fields) with only light coercion, deferring all
+    semantic normalization to the core parser so downstream code can distinguish three cases:
+    "model says delta" (``delta_observed`` True/False), "model is unsure" (``delta_confidence`` small but
+    in [0, 1]), and "model said nothing" (both fields None).
     """
 
     previous_screen_summary: Optional[str] = None

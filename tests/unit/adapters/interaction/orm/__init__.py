@@ -1,1 +1,3 @@
-"""Tests for ORM-backed interaction adapters."""
+"""
+Tests for ORM-backed interaction adapters.
+"""

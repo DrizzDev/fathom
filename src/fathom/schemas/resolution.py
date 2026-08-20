@@ -81,9 +81,7 @@ class ResolveResult(BaseModel):
     """
     Structured outcome of :class:`ReferenceResolutionService.resolve`.
 
-    Replaces the previous contract that returned only a (possibly
-    silently fuzz-matched) :class:`Action`. The status channel lets the
-    EXECUTE node branch deterministically:
+    The status channel lets the EXECUTE node branch deterministically:
 
     - ``RESOLVED`` → execute ``action``.
     - ``UNRESOLVED`` → emit a structured failed step that routes back
@@ -92,8 +90,7 @@ class ResolveResult(BaseModel):
       ``candidates`` back to the agent for disambiguation on the next
       ANALYZE turn.
 
-    The ``action`` field always carries the resolved (or unresolved)
-    action so downstream consumers don't need to special-case None.
+    ``action`` always carries the resolved (or unresolved) action so consumers never special-case None.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -103,19 +103,10 @@ class Principal(BaseModel):
     """
     Required identity context for a run, supplied by the host.
 
-    Every Fathom runtime entrypoint requires a fully resolved Principal. There
-    are no silent fallbacks: missing or empty fields fail at schema validation
-    time with a clear error that hosts can translate to client-friendly 4xx
-    responses.
-
-    Fields:
-      tenant       — tenant id, host-resolved from auth context.
-      operator     — caller/user actor id, host-resolved from auth context.
-      agent        — agent actor id, host-supplied (canonical: "agent:fathom").
-      workspace    — optional workspace boundary inside a tenant.
-      conversation — conversation thread id; the host MUST create the thread
-                     beforehand (or generate the id locally) and pass it here.
-                     The runner never invents one.
+    Every runtime entrypoint requires a fully resolved Principal with no silent fallbacks: missing or
+    empty fields fail at schema-validation time so hosts can return a client-friendly 4xx. The host MUST
+    create the ``conversation`` thread beforehand (or generate the id locally) and pass it here — the
+    runner never invents one.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

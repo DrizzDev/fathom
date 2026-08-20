@@ -23,8 +23,9 @@ class LoopActionLadder:
 
     The full rung sequence is BACK -> SCROLL -> HOME. Rungs whose action type is not supported
     by the active device (per :class:`DeviceCapability`) are filtered out at construction so the
-    ladder only ever emits actions the device can execute. SCROLL is additionally suppressed at runtime
-    when the detector evidence already came from a scroll-like action, to avoid a no-op recovery on an already-scrolling stuck signal.
+    ladder only ever emits actions the device can execute. SCROLL is additionally suppressed at
+    runtime when the detector evidence already came from a scroll-like action, to avoid a no-op
+    recovery on an already-scrolling stuck signal.
     """
 
     def __init__(self, *, device: Optional[DeviceCapability] = None) -> None:

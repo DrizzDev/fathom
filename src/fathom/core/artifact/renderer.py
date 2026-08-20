@@ -35,13 +35,10 @@ logger = getLogger(name=__name__)
 
 class PassthroughRenderer(ArtifactRendererPort):
     """
-    Renderer for kinds whose payloads are already in their final byte form.
+    Renderer for kinds whose payloads are already in final byte form.
 
-    Handles :class:`ScreenshotPayload`, :class:`HierarchyXmlPayload`,
-    :class:`ScriptPayload`, and :class:`AnnotatedPayload` (the screen
-    capture's ``annotated_image`` is already PNG bytes upstream). The
-    bound :class:`ArtifactKind` is fixed at construction so the renderers
-    map stays statically typed.
+    Handles :class:`ScreenshotPayload`, :class:`HierarchyXmlPayload`, :class:`ScriptPayload`, and
+    :class:`AnnotatedPayload` (the capture's ``annotated_image`` is already PNG bytes upstream).
     """
 
     def __init__(self, *, kind: ArtifactKind) -> None:
@@ -89,11 +86,8 @@ class PerceptionRenderer(ArtifactRendererPort):
     """
     Renders the merged-perception debug image.
 
-    Draws every :class:`PerceivedElement` in the observation through the
-    shared :class:`BoxDrawer`, plus overlay rectangles and
-    call-to-action boxes. Source colour, font, outline, and label
-    formatting are owned by :class:`BoxDrawer` so this renderer cannot
-    drift from the per-source renderers.
+    Draws every :class:`PerceivedElement`, plus overlay rectangles and call-to-action boxes,
+    through the shared :class:`BoxDrawer`, which owns colour, font, outline, and label formatting.
     """
 
     def __init__(self, *, drawer: Optional[BoxDrawer] = None) -> None:
@@ -205,14 +199,9 @@ class SourceFilteredPerceptionRenderer(ArtifactRendererPort):
     """
     Renders a single-source slice of the observation.
 
-    Parameterised by :class:`ArtifactKind` (the discriminator the
-    pipeline routes on) and :class:`ElementSource` (the projection
-    filter), so OCR / CV / icon / vision images share the same
-    rendering primitive and styling.
-
-    Overlay-only artifacts are handled by :class:`OverlayPerceptionRenderer`
-    since overlays are not perceived elements; they live on
-    ``observation.overlays`` and have a different shape.
+    Parameterised by :class:`ArtifactKind` (routing discriminator) and :class:`ElementSource`
+    (projection filter) so OCR / CV / icon / vision images share one primitive. Overlay-only
+    artifacts go through :class:`OverlayPerceptionRenderer` since overlays are not perceived elements.
     """
 
     def __init__(

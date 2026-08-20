@@ -28,7 +28,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
         return Action(
             action_type=ActionType.TAP,
-            target="Swiggy app icon",
+            target="Delivery app icon",
             rationale="Open app.",
             confidence=1.0,
         )
@@ -55,7 +55,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
             provider = SQLiteMemoryProvider(database_path=Path(directory) / "memory.db")
             screen = self.__screen(activity="com.google.android.apps.nexuslauncher")
 
-            await provider.store_observation(screen=screen, description="Opening Swiggy.")
+            await provider.store_observation(screen=screen, description="Opening Delivery.")
             await provider.store_experience(
                 visual_hash=screen.visual_hash,
                 action=self.__action(),
@@ -74,9 +74,9 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             provider = SQLiteMemoryProvider(database_path=Path(directory) / "memory.db")
-            screen = self.__screen(activity="in.swiggy.android")
+            screen = self.__screen(activity="com.example.delivery")
 
-            await provider.store_observation(screen=screen, description="Swiggy home.")
+            await provider.store_observation(screen=screen, description="Delivery home.")
             await provider.store_experience(
                 visual_hash=screen.visual_hash,
                 action=self.__action(),
@@ -85,7 +85,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
             knowledge = await provider.retrieve_knowledge(visual_hash=screen.visual_hash)
 
-        self.assertEqual(knowledge["description"], "Swiggy home.")
+        self.assertEqual(knowledge["description"], "Delivery home.")
         self.assertEqual(len(knowledge["previous_actions"]), 1)
 
     async def test_typed_outcome_round_trips_through_the_store(self) -> None:
@@ -99,7 +99,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
 
             await provider.store_outcome(
                 experience=Experience(
-                    workflow="6cfc5fd2",
+                    workflow="wf-sample",
                     session="exec-1",
                     screen="b" * 16,
                     action=ActionType.TAP,
@@ -118,7 +118,7 @@ class SQLiteMemoryProviderTest(unittest.IsolatedAsyncioTestCase):
                 rows = await cursor.fetchall()
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][0], "6cfc5fd2")
+        self.assertEqual(rows[0][0], "wf-sample")
         self.assertEqual(rows[0][1], "tap")
         self.assertEqual(rows[0][2], 1)
         self.assertEqual(rows[0][3], "progress")

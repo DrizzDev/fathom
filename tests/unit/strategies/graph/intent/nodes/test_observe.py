@@ -123,8 +123,8 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
 
     def test_control_command_success_ignores_screen_change(self) -> None:
         """
-        Run-83752b18 fix: a successful ASK_USER (delivered + answered) succeeds even though the
-        control operation leaves the screen unchanged — screen change is not its postcondition.
+        A successful ASK_USER (delivered + answered) succeeds even though the control operation
+        leaves the screen unchanged — screen change is not its postcondition.
         """
 
         effect = ActionEffect(

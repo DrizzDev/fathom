@@ -98,7 +98,7 @@ class HITLService:
         """
 
         context = await self.__signal.get_injected_context()
-        logger.info(f"Injected context for step number: {step} is {context}")
+        logger.info(f"Injected context for step number: {step}")
 
         if context:
             await self.__telemetry.info(
@@ -141,7 +141,7 @@ class HITLService:
             )
 
         response = await self.__signal.ask(prompt=prompt)
-        logger.info(f"Received HITL response: {response} from user")
+        logger.info("Received HITL response from user")
 
         await self.__telemetry.info(
             message="Got it — continuing.",

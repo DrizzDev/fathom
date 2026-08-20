@@ -34,7 +34,7 @@ logger = getLogger(__name__)
 
 class HierarchyService:
     """
-    Service responsible for UI hierarchy analysis. Optimized for high-speed grounding.
+    Parses UI-hierarchy XML into labeled interactive elements and annotated captures for grounding.
     """
 
     def __init__(
@@ -186,7 +186,7 @@ class HierarchyService:
 
     def __save_file(self, *, path: Path, data: bytes, mode: str = "wb") -> None:
         """
-        Helper to save file.
+        Write bytes to the given path using the requested file mode.
         """
 
         with path.open(mode) as handle:

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 class ActorRepository:
     """
-    persistent-store backed repository for actor identities.
+    Persistent-store backed repository for actor identities.
     """
 
     def __init__(self, *, transaction: "TransactionScope") -> None:

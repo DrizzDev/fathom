@@ -23,7 +23,7 @@ class GCSImageStorage(IImageStorage):
 
     def __init__(self, configuration: StorageConfiguration) -> None:
         """
-        Initialize GCS storage with configuration and credentials.
+        Retain the storage configuration; GCS clients are built per upload.
         """
 
         self.__configuration = configuration
@@ -54,7 +54,6 @@ class GCSImageStorage(IImageStorage):
                     client = storage.Client.from_service_account_info(credentials, **client_kwargs)
 
                 else:
-                    # Use positional argument for project if available
                     client = storage.Client(project=project) if project else storage.Client()
 
                 meta = extract_metadata(metadata or {})

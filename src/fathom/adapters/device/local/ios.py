@@ -44,7 +44,7 @@ class IOSDevice(DevicePort):
         configuration: Optional[IOSConfiguration] = None,
     ) -> None:
         """
-        Initialize native iOS adapter configuration.
+        Store configuration, build the automation gateway, and precompute the runtime configuration.
         """
 
         self.__configuration = configuration or IOSConfiguration()
@@ -654,7 +654,7 @@ class IOSDevice(DevicePort):
 
     async def close(self) -> None:
         """
-        Close adapter resources.
+        No-op; the adapter holds no persistent resources to close.
         """
 
         return None

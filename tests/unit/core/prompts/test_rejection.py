@@ -16,12 +16,12 @@ class RepeatedFailureRejectionPromptBuilderInteractiveTest(unittest.TestCase):
         """
 
         text = RepeatedFailureRejectionPromptBuilder.build(
-            action_descriptor="Swipe left on More on Swiggy",
+            action_descriptor="Swipe left on More on Delivery",
             interactive=True,
         )
 
         self.assertIn("REJECTED", text)
-        self.assertIn("Swipe left on More on Swiggy", text)
+        self.assertIn("Swipe left on More on Delivery", text)
         self.assertIn("ask_user", text)
 
     def test_interactive_prompt_does_not_request_validate_completion(self) -> None:
@@ -48,12 +48,12 @@ class RepeatedFailureRejectionPromptBuilderNonInteractiveTest(unittest.TestCase)
         """
 
         text = RepeatedFailureRejectionPromptBuilder.build(
-            action_descriptor="Swipe left on More on Swiggy",
+            action_descriptor="Swipe left on More on Delivery",
             interactive=False,
         )
 
         self.assertIn("REJECTED", text)
-        self.assertIn("Swipe left on More on Swiggy", text)
+        self.assertIn("Swipe left on More on Delivery", text)
         self.assertNotIn("ask_user", text)
 
     def test_non_interactive_prompt_offers_navigate_back_escape(self) -> None:

@@ -363,7 +363,7 @@ class RegionalEvidenceVerdict(BaseModel):
 
 class LayoutMatchConfiguration(BaseModel):
     """
-    Tunable's governing phrase clustering and target matching in the layout localizer.
+    Tunables governing phrase clustering and target matching in the layout localizer.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

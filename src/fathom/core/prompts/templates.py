@@ -192,7 +192,9 @@ _MEMORY_STRATEGY = (
 
 
 def build_tool_guidance(*, tools: AllowedTools) -> str:
-    """Render the TOOL SELECTION + PROGRESS SAFETY + MEMORY STRATEGY block for the allowed tools."""
+    """
+    Render the TOOL SELECTION + PROGRESS SAFETY + MEMORY STRATEGY block for the allowed tools.
+    """
 
     tool_lines = [
         TOOL_DESCRIPTIONS[name] for name in _TOOL_DESCRIPTIONS_RAW if tools.contains(name=name)

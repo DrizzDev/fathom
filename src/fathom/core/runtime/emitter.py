@@ -43,10 +43,8 @@ class RuntimeEventEmitter:
         """
         Build a :class:`RuntimeEvent` and dispatch it to the journal.
 
-        ``correlation_id`` is the idempotency key for retried emissions:
-        when the caller passes a stable value, repeated calls produce the
-        same event identifier so the journal can deduplicate. When the
-        caller leaves it ``None`` a fresh uuid4 is generated.
+        ``correlation_id`` is the idempotency key for retried emissions: a stable value yields the
+        same event identifier so the journal can deduplicate; ``None`` generates a fresh uuid4.
         """
 
         identifier = correlation_id if correlation_id is not None else str(uuid.uuid4())

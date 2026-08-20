@@ -14,8 +14,7 @@ from fathom.schemas.screens import ScreenState
 
 class BFSQueueEntry(BaseModel):
     """
-    Entry in the BFS exploration queue.
-    Represents a screen to explore with its parent and path information.
+    A screen enqueued for breadth-first exploration, with the action and path that reached it.
     """
 
     screen_hash: str
@@ -28,8 +27,7 @@ class BFSQueueEntry(BaseModel):
 
 class ScreenNode:
     """
-    Node in the screen graph representing a unique screen state.
-    Tracks visits, actions, and transitions for a discovered screen.
+    A discovered screen in the exploration graph, tracking its visits, tried actions, and transitions.
     """
 
     def __init__(self, fingerprint: str, activity: str) -> None:
@@ -48,7 +46,7 @@ class ScreenNode:
     @property
     def fingerprint(self) -> str:
         """
-        Returns Unique identifier for this screen state.
+        Stable fingerprint identifying this screen state.
         """
 
         return self.__fingerprint
@@ -56,7 +54,7 @@ class ScreenNode:
     @property
     def activity(self) -> str:
         """
-        Returns Activity name for this screen.
+        Android activity name for this screen.
         """
 
         return self.__activity
@@ -64,7 +62,7 @@ class ScreenNode:
     @property
     def visits(self) -> int:
         """
-        Returns Number of times this screen has been visited.
+        Number of times this screen has been visited.
         """
 
         return self.__visits
@@ -72,7 +70,7 @@ class ScreenNode:
     @property
     def actions(self) -> Set[str]:
         """
-        Returns Actions that can be performed from this screen.
+        Action descriptions already recorded from this screen.
         """
 
         return self.__actions
@@ -80,7 +78,7 @@ class ScreenNode:
     @property
     def transitions(self) -> Dict[str, str]:
         """
-        Returns Dictionary mapping action descriptions to destination hashes
+        Maps each recorded action description to its destination screen hash.
         """
 
         return self.__transitions
@@ -111,14 +109,12 @@ class ScreenNode:
 
 class ExplorationGraph:
     """
-    Graph of discovered screens and transitions.
-    Maintains the complete exploration state including all discovered screens and the transitions between them.
+    Graph of discovered screens and the transitions between them.
     """
 
     def __init__(self) -> None:
         """
-        Initialize empty exploration graph.
-        Creates empty nodes and edges collections.
+        Initialize an empty exploration graph.
         """
 
         self.__nodes: Dict[str, ScreenNode] = {}
@@ -127,7 +123,7 @@ class ExplorationGraph:
     @property
     def nodes(self) -> Dict[str, ScreenNode]:
         """
-        Returns All discovered screen nodes.
+        All discovered screen nodes, keyed by visual hash.
         """
 
         return self.__nodes
@@ -135,7 +131,7 @@ class ExplorationGraph:
     @property
     def edges(self) -> List[Tuple[str, str, str]]:
         """
-        Returns All transitions between screens.
+        All recorded transitions as (origin, action, destination) triples.
         """
 
         return self.__edges
@@ -185,8 +181,7 @@ class ExplorationGraph:
 
 class ActionGenerator:
     """
-    Generates exploratory actions for unknown UI states.
-    Uses heuristics to select appropriate exploratory actions based on screen visit history and exploration state.
+    Generates exploratory actions, escalating tap to scroll to back as a screen's visit count grows.
     """
 
     def __init__(

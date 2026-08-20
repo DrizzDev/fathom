@@ -39,7 +39,7 @@ class AndroidPerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_landscape_screenshot_swaps_portrait_report(self) -> None:
         """
-        Cooking-Craze-style mismatch: device cache says portrait, screenshot is landscape.
+        game-app-style mismatch: device cache says portrait, screenshot is landscape.
         """
 
         screenshot = self.__screenshot(width=2340, height=1080)

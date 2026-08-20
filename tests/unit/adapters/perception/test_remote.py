@@ -35,7 +35,7 @@ class RemotePerceptionAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         device.configuration = DeviceRuntimeConfiguration()
         device.get_dimensions = AsyncMock(return_value=(1080, 2400))
-        device.get_current_package = AsyncMock(return_value="in.swiggy.android")
+        device.get_current_package = AsyncMock(return_value="com.example.delivery")
 
         return device
 

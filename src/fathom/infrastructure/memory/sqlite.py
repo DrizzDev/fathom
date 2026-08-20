@@ -16,13 +16,12 @@ from fathom.schemas.screens import ScreenState
 
 class SQLiteMemoryProvider(IMemoryProvider):
     """
-    SQLite implementation of the persistent memory layer.
-    Handles raw database operations for the Knowledge Graph.
+    SQLite-backed persistent memory layer for the knowledge graph.
     """
 
     def __init__(self, database_path: Path) -> None:
         """
-        Initialize provider with explicit database path.
+        Store the database path and create its parent directory if missing.
         """
 
         self.__initialized = False
@@ -121,7 +120,6 @@ class SQLiteMemoryProvider(IMemoryProvider):
         }
 
         async with aiosqlite.connect(self.__path) as db:
-            # 1. Get screen description
             async with db.execute(
                 "SELECT activity, description FROM screens WHERE visual_hash = ?", (visual_hash,)
             ) as cursor:
@@ -132,7 +130,6 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         return knowledge
                     knowledge["description"] = row[1]
 
-            # 2. Get recent experiences (last 5)
             async with db.execute(
                 "SELECT action_json, success FROM experience WHERE visual_hash = ? ORDER BY timestamp DESC LIMIT 5",
                 (visual_hash,),
@@ -161,7 +158,6 @@ class SQLiteMemoryProvider(IMemoryProvider):
         summary: Dict[str, Any] = {"screens": [], "experience_count": 0}
 
         async with aiosqlite.connect(self.__path) as db:
-            # Get screens
             async with db.execute(
                 "SELECT visual_hash, activity, description FROM screens ORDER BY last_seen DESC"
             ) as cursor:
@@ -170,7 +166,6 @@ class SQLiteMemoryProvider(IMemoryProvider):
                         {"hash": row[0], "activity": row[1], "description": row[2]}
                     )
 
-            # Get total experience count
             async with db.execute("SELECT COUNT(*) FROM experience") as cursor:
                 count = await cursor.fetchone()
                 summary["experience_count"] = count[0] if count else 0

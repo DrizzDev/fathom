@@ -14,7 +14,7 @@ class StructlogAdapter(TelemetryPort):
 
     def __init__(self, *, logger_name: str = "fathom") -> None:
         """
-        Initialize structlog adapter.
+        Bind a standard-library logger under the given name.
         """
 
         self.__logger = getLogger(name=logger_name)

@@ -484,7 +484,8 @@ class ActionExecutor:
     ) -> PrimitiveExecution:
         """
         Execute back action.
-        Adapters that cannot dispatch a system back (e.g. iOS, which has no OS-level back gesture) raise :class:`NotImplementedError`
+        Adapters that cannot dispatch a system back (e.g. iOS, which has no OS-level back gesture)
+        raise :class:`NotImplementedError`.
         """
 
         try:
@@ -552,7 +553,7 @@ class ActionExecutor:
         converter: CoordinateConverter,
     ) -> PrimitiveExecution:
         """
-        Helper Method To Execute `TAP` Command
+        Execute a `TAP` command at the action bounds or screen center.
         """
 
         if action.bounds:
@@ -1064,7 +1065,7 @@ class ActionExecutor:
         converter: CoordinateConverter,
     ) -> PrimitiveExecution:
         """
-        Helper Method To Execute `LONG_PRESS` Command
+        Execute a `LONG_PRESS` command at the action bounds or screen center.
         """
 
         if action.bounds:

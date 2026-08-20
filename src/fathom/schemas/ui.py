@@ -80,7 +80,7 @@ class UIBounds(BaseModel):
 
 class LabeledElement(BaseModel):
     """
-    Represents a processed, drawable UI element with a label.
+    A UI element resolved for overlay drawing: its label, bounds, color, and attributes.
     """
 
     label: str

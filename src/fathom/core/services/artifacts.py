@@ -17,8 +17,9 @@ class ArtifactCatalog:
     """
     Stateless artifact discovery and classification over the shared path manager.
 
-    Both the workflow runner and the graph nodes use this to find generated files for one workflow, and to classify each one for recording into the interaction layer.
-    Discovery is sorted by capture time (file mtime) so the timeline reflects the order in which the host adapter wrote the files.
+    Both the workflow runner and the graph nodes use this to find generated files for one workflow,
+    and to classify each one for recording into the interaction layer. Discovery is sorted by capture
+    time (file mtime) so the timeline reflects the order in which the host adapter wrote the files.
     """
 
     __STEP_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:^|_)step_([0-9]+)(?:_|\.)")

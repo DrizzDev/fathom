@@ -270,13 +270,13 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         action = Action(
             label_id="1",
             rationale="open app",
-            target="Swiggy app icon",
+            target="Delivery app icon",
             action_type=ActionType.TAP,
             confidence=1.0,
         )
         elements = {
             "1": {
-                "text": "Swiggy",
+                "text": "Delivery",
                 "source": "ocr",
                 "bounds": "[284,383][392,414]",
             },
@@ -496,7 +496,7 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         service = self.__build_service()
         action = Action(
             action_type=ActionType.SWIPE_LEFT,
-            target="More on Swiggy carousel",
+            target="More on Delivery carousel",
             rationale="find hidden card",
             label_id="2",
             confidence=1.0,
@@ -522,7 +522,7 @@ class ReferenceResolutionInputContextTest(unittest.IsolatedAsyncioTestCase):
         service = self.__build_service()
         action = Action(
             action_type=ActionType.SWIPE_LEFT,
-            target="More on Swiggy carousel",
+            target="More on Delivery carousel",
             rationale="find hidden card",
             label_id="7",
             confidence=1.0,

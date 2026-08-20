@@ -59,7 +59,7 @@ class TestSubGoalDefinition:
 
     @staticmethod
     def __goal() -> SubGoal:
-        return SubGoal(index=0, objective="Open Swiggy app", success=SuccessFixtures.observed())
+        return SubGoal(index=0, objective="Open Delivery app", success=SuccessFixtures.observed())
 
     def test_goal_is_immutable(self) -> None:
         """
@@ -76,7 +76,7 @@ class TestSubGoalDefinition:
 
         state = GoalState(goal=self.__goal())
         assert state.index == 0
-        assert state.objective == "Open Swiggy app"
+        assert state.objective == "Open Delivery app"
         assert state.progress.status == SubGoalStatus.PENDING
 
     def test_lifecycle_transitions_apply_to_progress(self) -> None:

@@ -17,7 +17,7 @@ class WorkflowSignalState:
 
     Workflow signal handlers and the activity-side TemporalSignalAdapter share
     the same worker process. This class lets the adapter read signal state
-    without issuing billable Temporal queries.
+    without issuing Temporal queries.
 
     Workflow signal handlers write via mark_* / enqueue_context.
     The adapter reads via properties and waits on threading.Condition.

@@ -10,15 +10,10 @@ class StuckSourceResolver:
     """
     Resolve the canonical "stuck" source that warrants escalation.
 
-    Pure read-only over :class:`AgentState`. Returns ``None`` when no source is
-    active so callers can short-circuit without invoking the gate. Priority
-    order is deterministic: budget exhaustion beats loop detection because
-    budget is an unambiguous hard signal whereas the loop detector is a
-    probabilistic classifier over a sliding window.
-
-    Global ``max_steps`` is not modelled here — the analyze node already
-    terminates the workflow when it is hit, so a source for it would be
-    unreachable and would also overlap a code path with different semantics.
+    Pure read-only over :class:`AgentState`; returns ``None`` when no source is active so callers
+    skip the gate. Priority is deterministic — budget exhaustion (a hard signal) beats the loop
+    detector (a probabilistic sliding-window classifier). Global ``max_steps`` is not modelled
+    here: the analyze node already terminates the workflow when it is hit.
     """
 
     def resolve(self, *, agent_state: AgentState) -> Optional[StuckSource]:

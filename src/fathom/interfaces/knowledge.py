@@ -8,7 +8,7 @@ from fathom.schemas.actions import Action
 
 class KnowledgePort(ABC):
     """
-    Abstract interface for application knowledge graph.
+    Port for the app knowledge graph of screens and the actions that connect them.
     """
 
     @abstractmethod

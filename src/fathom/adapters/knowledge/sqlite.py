@@ -27,7 +27,8 @@ class SQLiteKnowledge(KnowledgePort):
         database_path: str = "assets/memory/knowledge.db",
     ) -> None:
         """
-        Initialize SQLite knowledge adapter.
+        Resolve the database path (a shared path manager overrides the default), create its parent
+        directory, and start with an empty in-memory graph.
         """
 
         if path_manager:
@@ -60,7 +61,6 @@ class SQLiteKnowledge(KnowledgePort):
             )
             await db.commit()
 
-        # Load graph from database
         await self.__load_graph()
         self.__initialized = True
 
@@ -104,7 +104,6 @@ class SQLiteKnowledge(KnowledgePort):
 
         await self.__initialize()
 
-        # Add to database
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO screens (screen_id, metadata) VALUES (?, ?)",
@@ -112,7 +111,6 @@ class SQLiteKnowledge(KnowledgePort):
             )
             await db.commit()
 
-        # Add to in-memory graph
         if screen_id not in self.__screen_to_node:
             if self.__graph is None:
                 raise RuntimeError("Knowledge graph not initialized")
@@ -127,14 +125,12 @@ class SQLiteKnowledge(KnowledgePort):
 
         await self.__initialize()
 
-        # Ensure both screens exist
         if from_screen not in self.__screen_to_node:
             await self.add_screen(screen_id=from_screen, metadata={})
 
         if to_screen not in self.__screen_to_node:
             await self.add_screen(screen_id=to_screen, metadata={})
 
-        # Add to database
         async with aiosqlite.connect(self.__path) as db:
             await db.execute(
                 "INSERT INTO transitions (from_screen, to_screen, action_json) VALUES (?, ?, ?)",
@@ -142,7 +138,6 @@ class SQLiteKnowledge(KnowledgePort):
             )
             await db.commit()
 
-        # Add to in-memory graph
         to_index = self.__screen_to_node[to_screen]
         from_index = self.__screen_to_node[from_screen]
 
@@ -165,7 +160,6 @@ class SQLiteKnowledge(KnowledgePort):
         from_index = self.__screen_to_node[from_screen]
 
         try:
-            # Use Dijkstra's algorithm to find shortest path
             if self.__graph is None:
                 raise RuntimeError("Knowledge graph not initialized")
 
@@ -176,7 +170,6 @@ class SQLiteKnowledge(KnowledgePort):
             if to_index not in path_indices:
                 return None
 
-            # Extract actions from path
             actions = []
             path = path_indices[to_index]
 

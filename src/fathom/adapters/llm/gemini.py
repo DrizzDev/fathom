@@ -55,7 +55,7 @@ logger = getLogger(__name__)
 
 class GeminiLLM(LLMPort):
     """
-    Gemini adapter for LLM interactions.
+    Gemini implementation of :class:`LLMPort`.
     """
 
     def __init__(
@@ -66,7 +66,7 @@ class GeminiLLM(LLMPort):
         configuration: Optional[LLMConfiguration] = None,
     ) -> None:
         """
-        Initialize Gemini LLM adapter.
+        Resolve configuration, set up the priority policy and parser, then build the SDK client and cache.
         """
 
         if configuration:
@@ -113,7 +113,7 @@ class GeminiLLM(LLMPort):
 
     def __initialize(self) -> None:
         """
-        Initialize client.
+        Resolve service-account credentials when configured, then build the SDK client and context cache.
         """
 
         project = self.__configuration.project_id
@@ -196,7 +196,7 @@ class GeminiLLM(LLMPort):
         structured_output: Optional[StructuredOutput] = None,
     ) -> types.GenerateContentConfig:
         """
-        Constructs the GenerateContentConfig using current configuration.
+        Assemble the SDK ``GenerateContentConfig`` from the current inference settings.
         """
 
         media_resolution_map = {
@@ -338,7 +338,8 @@ class GeminiLLM(LLMPort):
         conversation_history: Optional[Sequence[ConversationTurn]] = None,
     ) -> GenerateResult:
         """
-        Main handler for LLM interaction.
+        Run one generation: reuse or skip the context cache, build SDK contents from the prompt and
+        history, then call Gemini under a per-attempt timeout with adaptive-priority retry.
         """
 
         if not self.__client:
@@ -658,7 +659,7 @@ class GeminiLLM(LLMPort):
 
     async def cleanup(self) -> None:
         """
-        Cleanup resources.
+        Delete the provider cache, then close the SDK client.
         """
 
         try:

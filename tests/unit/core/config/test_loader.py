@@ -38,7 +38,9 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
     """
 
     def test_perception_defaults_keep_cv_disabled(self) -> None:
-        """Production defaults keep CV disabled while OCR, icon, and overlay remain enabled."""
+        """
+        Production defaults keep CV disabled while OCR, icon, and overlay remain enabled.
+        """
 
         config = RuntimeConfigLoader(settings=_settings()).perception()
 
@@ -111,7 +113,9 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
         self.assertIsNone(config.ocr.document_ai)
 
     def test_perception_threads_inline_google_credentials_dict(self) -> None:
-        """Inline ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` material rides into :class:`DocumentAiCredentials` so the Document AI adapter authenticates against the same identity Gemini already uses — no reliance on ambient ADC."""
+        """
+        Inline ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` material rides into :class:`DocumentAiCredentials` so the Document AI adapter authenticates against the same identity Gemini already uses — no reliance on ambient ADC.
+        """
 
         payload = {"type": "service_account", "project_id": "vision-478905"}
         config = RuntimeConfigLoader(
@@ -259,7 +263,9 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
         self.assertIn("bogus_member", str(caught.exception))
 
     def test_localization_enabled_flag_with_empty_member_list_returns_empty_tuple(self) -> None:
-        """Enabling the flag with an explicit empty member list yields an enabled config with an empty tuple — the default member set is only chosen when the operator leaves the env value at its bring-up default."""
+        """
+        Enabling the flag with an explicit empty member list yields an enabled config with an empty tuple — the default member set is only chosen when the operator leaves the env value at its bring-up default.
+        """
 
         config = RuntimeConfigLoader(
             settings=_settings(

@@ -33,10 +33,9 @@ logger = getLogger(__name__)
 
 class LoopDetector(BaseModel):
     """
-    Detects when agent is stuck in a loop using multi-strategy pattern analysis.
+    Detects when the agent is stuck in a loop using multi-strategy pattern analysis.
 
-    Note: stateful. Designed for single-threaded asyncio access — coordinator
-    instances are scoped per agent run, so cross-task mutation does not occur under the current execution model.
+    Stateful and single-threaded: instances are scoped per agent run, so no cross-task mutation occurs.
     """
 
     max_recovery: int = Field(
@@ -163,15 +162,10 @@ class LoopDetector(BaseModel):
         """
         Tell the detector a new screen was seen.
 
-        Advances the loop-detection window only when the new screen is
-        *genuinely* distinct from the previous one — hamming greater than
-        :data:`SCREEN_PROGRESS_HAMMING_THRESHOLD`. The progress threshold
-        is deliberately much higher than the near-duplicate threshold
-        used by the stuck detectors below, so cosmetic differences
-        (status-bar tick, suggestion-count increment, anti-aliasing
-        noise) do not trip ``advance()`` and wipe accumulating evidence.
-        That distinction is what enables the scroll-loop detection to
-        actually fire on long sequences of near-identical screens.
+        Advances the window only when the screen is genuinely distinct — hamming above
+        :data:`SCREEN_PROGRESS_HAMMING_THRESHOLD`, set much higher than the stuck detectors'
+        near-duplicate threshold so cosmetic diffs don't ``advance()`` and wipe accumulating
+        evidence (which is what lets scroll-loop detection fire on near-identical screens).
         """
 
         progressed = current.has_visual_progress_from(
@@ -213,9 +207,8 @@ class LoopDetector(BaseModel):
         }
         logger.info("LoopDetector.is_stuck evaluating", extra=snapshot)
 
-        # 0. Inert-action repetition fires at the tightest threshold so
-        # the planner can pivot after one wasted action — independent
-        # of how much screen / action history has accumulated.
+        # Inert-action repetition fires at the tightest threshold so the planner can pivot after one wasted
+        # action — independent of how much screen / action history has accumulated.
         if self.__detect_inert_repetition():
             logger.info(
                 "LoopDetector.is_stuck=True via inert_repetition",
@@ -239,9 +232,7 @@ class LoopDetector(BaseModel):
             )
             return False
 
-        # Screen-based detectors require sufficient screen history.
         if has_enough_screens:
-            # 1. Direct Repetition (screen + action counts)
             if self.__detect_repetition():
                 logger.info(
                     "LoopDetector.is_stuck=True via screen_repetition",
@@ -249,7 +240,7 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 2. Near-duplicate Visual Repetition (visual pHash only).
+            # Near-duplicate visual repetition (visual pHash only).
             # Catches the case where DOM micro-changes (overlay animation frames,
             # map redraws, transient spinners) flip ``xml_hash``/``interaction_hash``
             # and force ``is_same_screen`` to return False even though the screen
@@ -266,7 +257,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 3. State Oscillation (A-B-A-B or A-B-C-A)
             if self.__detect_oscillation():
                 logger.info(
                     "LoopDetector.is_stuck=True via oscillation",
@@ -274,7 +264,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 4. Scroll Stalling (Repetitive scrolling with minimal progress)
             if self.__detect_scroll_stall():
                 logger.info(
                     "LoopDetector.is_stuck=True via scroll_stall",
@@ -282,7 +271,6 @@ class LoopDetector(BaseModel):
                 )
                 return True
 
-            # 5. Action Velocity (Rapid firing with no progress)
             if self.__detect_action_velocity_loop():
                 logger.info(
                     "LoopDetector.is_stuck=True via action_velocity",
@@ -328,11 +316,9 @@ class LoopDetector(BaseModel):
         """
         Detect identical action descriptors paired with trailing NO_PROGRESS effects.
 
-        Fires when the last ``inert_repetition_threshold`` action
-        descriptors are identical AND the matching trailing effect
-        statuses are all ``NO_PROGRESS``. Both conditions must hold
-        so cosmetic same-action retries on a screen that *did* change
-        don't false-fire (the planner explores during real scrolling and that's not stuck).
+        Fires when the last ``inert_repetition_threshold`` action descriptors are identical AND the
+        matching trailing effect statuses are all ``NO_PROGRESS`` — both required so same-action
+        retries on a screen that did change (e.g. real scrolling) don't false-fire.
         """
 
         if len(self.__recent_actions) < self.inert_repetition_threshold:
@@ -367,15 +353,8 @@ class LoopDetector(BaseModel):
         """
         Detect simple screen repetition.
 
-        The previous implementation carved out scroll/swipe/flick action
-        sequences entirely on the assumption that scrolling legitimately
-        produces same-looking screens. That assumption breaks the moment
-        scrolling no longer advances content (a non-scrollable list, an
-        already-revealed CTA, an exhausted feed), so the carve-out is
-        replaced with a screen-convergence check: if action diversity is
-        high we still treat that as legitimate exploration, but identical
-        screens with similar actions and converging visual hashes are
-        flagged as stuck regardless of action kind.
+        High action diversity is treated as legitimate exploration; identical screens with similar actions
+        and converging visual hashes are flagged as stuck regardless of action kind.
         """
 
         for index in range(len(self.__recent_screens)):
@@ -427,14 +406,12 @@ class LoopDetector(BaseModel):
 
     def __detect_near_duplicate_visual_repetition(self) -> bool:
         """
-        Detect screens whose visual pHash is within a tight hamming threshold
-        of one another, ignoring structural and interaction hashes.
+        Detect screens whose visual pHash lies within a tight hamming threshold, ignoring
+        structural and interaction hashes.
 
-        Distinct from ``__detect_repetition`` (which uses ``is_same_screen``):
-        that path returns False as soon as ``xml_hash`` or ``interaction_hash`` disagree, which masks overlay-animation and map-redraw loops.
-
-        The visual-only check is intentionally narrow (threshold = pHash hamming)
-        and only counts repetition when the same near-duplicate appears at least ``self.threshold`` times in the window.
+        Unlike ``__detect_repetition`` (``is_same_screen``), this survives ``xml_hash`` /
+        ``interaction_hash`` flips that mask overlay-animation and map-redraw loops; counts a
+        near-duplicate only when it recurs at least ``self.threshold`` times in the window.
         """
 
         hashes = [hash for hash in self.__recent_hashes if hash]
@@ -465,19 +442,10 @@ class LoopDetector(BaseModel):
         """
         Detect repeated identical actions regardless of screen state.
 
-        Survives screen resets (advance) so it can catch loops where each
-        action produces a visually-different screen (e.g. tapping a
-        counter button that increments a number).
-
-        Scroll-like actions (swipe / scroll / flick) used to be carved
-        out entirely. That's wrong when the scroll target has nothing
-        left to reveal — scrolling produces near-duplicate screens and
-        the agent loops indefinitely. Replace the carve-out with a
-        screen-convergence check: scroll-like actions only suppress
-        repetition detection when the screens they produced are still
-        diverging (productive scroll). When the screens converge into a
-        near-duplicate cluster (stuck scroll) they trip stuck like any
-        other repeated action.
+        Survives screen resets (advance) so it catches loops where each action produces a visually-different
+        screen (e.g. tapping a counter button that increments a number). Scroll-like actions suppress detection
+        only while the screens they produce keep diverging (productive scroll); once those screens converge into
+        a near-duplicate cluster (stuck scroll) they trip stuck like any other repeated action.
         """
 
         action_counts: Dict[str, int] = {}
@@ -512,12 +480,10 @@ class LoopDetector(BaseModel):
 
     def __recent_hashes_are_converging(self) -> bool:
         """
-        Return True when the most recent ``self.threshold`` visual
-        hashes all lie within :data:`LOOP_HASH_CLUSTER_HAMMING_THRESHOLD`
-        of one another.
+        Return True when the most recent ``self.threshold`` visual hashes all lie within
+        :data:`LOOP_HASH_CLUSTER_HAMMING_THRESHOLD` of one another.
 
-        Used by the scroll-repetition guard to distinguish productive
-        scrolling (screens diverging through fresh content) from stuck
+        Distinguishes productive scrolling (screens diverging through fresh content) from stuck
         scrolling (screens converging into a near-duplicate cluster).
         """
 
@@ -542,16 +508,9 @@ class LoopDetector(BaseModel):
         repeat_threshold: int = 3,
     ) -> bool:
         """
-        Check if the same tap/type action has been executed N+ times on the same screen.
-        Excludes swipe/scroll actions which legitimately repeat on the same screen.
+        Whether the same tap/type action has run at or above ``repeat_threshold`` times on this screen.
 
-        Args:
-            action_description: The action being proposed.
-            screen_hash: Visual hash of the current screen.
-            repeat_threshold: Number of repeats before triggering (default 3).
-
-        Returns:
-            True if the action has been repeated on this screen at or above threshold.
+        Swipe/scroll actions are excluded — they legitimately repeat on the same screen.
         """
 
         action_lower = action_description.lower()
@@ -653,12 +612,9 @@ class LoopDetector(BaseModel):
         streak_hashes = [hash_ for hash_ in list(self.__recent_hashes)[streak_start:] if hash_]
         distance = ScreenState.hamming_distance(left_hash=first_hash, right_hash=last_hash)
 
-        # Stall must show both low net movement AND all streak hashes
-        # clustered tightly around the anchor. The previous
-        # ``unique_hash_count <= 2`` check was too strict: pHash jitter
-        # routinely produces 3+ unique short hashes even when the screen
-        # is visually identical, so it never fired in practice. The
-        # cluster-hamming check is jitter-tolerant.
+        # Stall must show both low net movement AND all streak hashes clustered tightly around the anchor.
+        # The cluster-hamming check is jitter-tolerant: pHash jitter routinely produces 3+ unique short hashes
+        # even when the screen is visually identical.
         all_clustered = True
         if streak_hashes:
             anchor = streak_hashes[0]
@@ -786,11 +742,9 @@ class LoopDetector(BaseModel):
         """
         Typed read-only snapshot consumed by the escalation gate.
 
-        ``reason`` identifies which detection strategy classified the window as
-        stuck (or ``NOT_STUCK``). ``since_progress`` is the trailing slice of
-        turns starting after the most recent PROGRESS effect — that is the
-        only span the gate is allowed to consider, because older turns belong
-        to a prior recovery cycle and must not unlock escalation on their own.
+        ``reason`` identifies which detection strategy classified the window as stuck (or
+        ``NOT_STUCK``). ``since_progress`` is the trailing slice after the most recent PROGRESS
+        effect — the only span the gate may consider, since older turns belong to a prior cycle.
         """
 
         reason = self.__classify_reason()

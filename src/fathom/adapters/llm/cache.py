@@ -15,7 +15,8 @@ logger = getLogger(__name__)
 
 class CacheService:
     """
-    Service for managing LLM context caching with key hashing and stats.
+    Creates and reuses provider-side context caches keyed by a content hash, skipping content below
+    the provider's minimum token count and bounding how many caches are retained.
     """
 
     # Gemini context caching has a provider-side minimum of ~1024 input
@@ -34,13 +35,7 @@ class CacheService:
         max_entries: int = 2,
     ) -> None:
         """
-        Initialize CacheService.
-
-        Args:
-            client: The GenAI client instance.
-            model_name: The model name to cache for.
-            ttl_minutes: Time-to-live for cached content in minutes.
-            max_entries: Maximum number of distinct cache entries retained.
+        Bind the provider client and model, and set the cache TTL and the retained-entry cap (floored at one).
         """
 
         self.__client = client
@@ -59,15 +54,8 @@ class CacheService:
         self, system_instruction: str, tools: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[str]:
         """
-        Creates or retrieves a cached content object.
-        Invalidates the cache if the content hash changes.
-
-        Args:
-            system_instruction: The system prompt/instruction to cache.
-            tools: Optional list of tool declarations to include in cache.
-
-        Returns:
-            The name of the cached content object, or None if caching failed/skipped.
+        Return the name of a cached-content object for this system instruction and tool set, creating one
+        when absent; returns None when the content is too small to cache or the create call fails.
         """
 
         current_hash = self.__compute_hash(instruction=system_instruction, tools=tools)
@@ -76,10 +64,8 @@ class CacheService:
         if current_hash in self.__undersized_hashes:
             return None
 
-        # Pre-flight size gate: under-threshold prompts cannot be cached
-        # by the provider, so don't pay an RPC to find that out. The
-        # exporter system instruction is the canonical small payload that
-        # used to spend one create() call per export to be rejected.
+        # Pre-flight size gate: under-threshold prompts cannot be cached by the provider, so
+        # don't spend an RPC to discover that.
         approximate_size = len(system_instruction)
         if tools:
             approximate_size += len(json.dumps(tools, sort_keys=True))
@@ -154,7 +140,7 @@ class CacheService:
 
     async def delete_cache(self) -> None:
         """
-        Deletes the current cache if it exists.
+        Evict all tracked cache entries.
         """
 
         await self.__evict_all()
@@ -197,14 +183,8 @@ class CacheService:
     @staticmethod
     def __compute_hash(instruction: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
-        Computes a deterministic hash of the cache key content.
-
-        Args:
-            instruction: System instruction text.
-            tools: Tool declarations list.
-
-        Returns:
-            Hex digest of the hash.
+        Return a deterministic SHA-256 digest over the instruction and sorted tool declarations,
+        truncated to the visual-hash length.
         """
 
         payload = instruction

@@ -14,6 +14,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.agent.state import AgentState
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.exceptions import HITLNotAvailableError
+from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.execution import ExecutionContext
@@ -48,6 +49,7 @@ class TestIntentExecutionFlowIntegration:
             agent_state=agent_state,
             is_cancelled=False,
             max_steps=8,
+            clock=RunClock(),
             workflow_id="integration-graph-missing-context",
         )
         provider = MagicMock(name="IntentNodeProvider")
@@ -103,17 +105,23 @@ class TestIntentExecutionFlowIntegration:
 
 
 class TestHitlUnavailableReplan:
-    """End-to-end pin for stale-ASK_USER recovery via the compiled graph."""
+    """
+    End-to-end pin for stale-ASK_USER recovery via the compiled graph.
+    """
 
     @staticmethod
     def __capture() -> ScreenCapture:
-        """Build a minimal screen capture."""
+        """
+        Build a minimal screen capture.
+        """
 
         return ScreenCapture(width=100, height=200, activity="app", image=b"", timestamp=1)
 
     @staticmethod
     def __ask_user_context() -> ExecutionContext:
-        """Execution context whose planned step is ASK_USER (stale replay)."""
+        """
+        Execution context whose planned step is ASK_USER (stale replay).
+        """
 
         action = Action(
             action_type=ActionType.ASK_USER,
@@ -138,7 +146,9 @@ class TestHitlUnavailableReplan:
 
     @pytest.mark.asyncio
     async def test_stale_ask_user_routes_execute_back_to_ground(self) -> None:
-        """A replayed ASK_USER step under autonomous capabilities must reach GROUND, not OBSERVE."""
+        """
+        A replayed ASK_USER step under autonomous capabilities must reach GROUND, not OBSERVE.
+        """
 
         agent_state = AgentState(
             intent="login",
@@ -150,6 +160,7 @@ class TestHitlUnavailableReplan:
             is_cancelled=False,
             max_steps=5,
             catalog=CommandCatalogProvider().build(),
+            clock=RunClock(),
             workflow_id="integration-hitl-unavailable",
         )
         provider = MagicMock(name="IntentNodeProvider")

@@ -26,15 +26,12 @@ from fathom.constants.storage import (
     PostgresSslMode,
 )
 
-# Calculate project root from this file's location
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class FathomSettings(BaseSettings):
     """
-    Global settings loaded from environment variables and .env file.
-
-    This acts as the central point for accessing all environment configuration.
+    Global settings loaded from environment variables and the .env file.
     """
 
     # Gemini settings
@@ -137,7 +134,7 @@ class FathomSettings(BaseSettings):
     # Assets path
     assets_path: Path = Field(default=PROJECT_ROOT / "assets", alias="FATHOM_ASSETS_PATH")
 
-    # Interaction storage tunable's
+    # Interaction storage tunables
     interaction_backend: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -242,9 +239,8 @@ class FathomSettings(BaseSettings):
         default=PROJECT_ROOT / "assets" / "logs",
     )
 
-    # Perception subsystem toggles. CV stays off by default because its
-    # anonymous visual-control boxes are still too noisy for production
-    # grounding and can pollute both prompts and debug artifacts.
+    # Perception subsystem toggles. CV stays off by default because its anonymous visual-control boxes are still
+    # too noisy for production grounding and can pollute both prompts and debug artifacts.
     oracle_enabled: bool = Field(default=True, alias="FATHOM_ORACLE_ENABLED")
 
     observation_ocr_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OCR")
@@ -253,10 +249,9 @@ class FathomSettings(BaseSettings):
     observation_overlay_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OVERLAY")
     observation_keyboard_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_KEYBOARD")
 
-    # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout)
-    # toggles. Enabled with both members so the supervise cascade can
-    # fall back to name-based localization when the XML manifest snap
-    # fails or returns a generic container.
+    # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout) toggles. Enabled with both members so the
+    # supervise cascade can fall back to name-based localization when the XML manifest snap fails or returns a
+    # generic container.
     ensemble_localizer_enabled: bool = Field(default=True, alias="FATHOM_ENSEMBLE_LOCALIZER")
     ensemble_localizer_members: Optional[str] = Field(
         default="gemini_vision,document_ai_layout",
@@ -266,8 +261,8 @@ class FathomSettings(BaseSettings):
     # Runtime journal adapter (local JSONL) toggle.
     journal_local_enabled: bool = Field(default=False, alias="FATHOM_JOURNAL_LOCAL")
 
-    # Document AI OCR provider credentials. Required only when
-    # observation_ocr_enabled is True and Document AI is the active provider.
+    # Document AI OCR provider credentials. Required only when observation_ocr_enabled is True and Document AI is
+    # the active provider.
     document_ai_project: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_PROJECT")
     document_ai_location: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_LOCATION")
     document_ai_processor: Optional[str] = Field(default=None, alias="FATHOM_DOCUMENT_AI_PROCESSOR")

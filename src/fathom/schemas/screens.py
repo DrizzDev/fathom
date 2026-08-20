@@ -57,13 +57,13 @@ class ScreenState(BaseModel):
         """
         Check if two screen states represent the same screen.
 
-        Uses Multi-Layer State Identity Algorithm (MLSIA):
+        Compares layered signals in order:
         1. Activity check (must match)
         2. Structural check (XML tree structure + content)
-        3. Interaction check (Clickable elements)
+        3. Interaction check (clickable elements)
         4. Visual check (pHash distance)
 
-        Returns True ONLY if ALL available signals match.
+        Returns True only if all available signals match.
         """
 
         if self.activity_hash != other.activity_hash:

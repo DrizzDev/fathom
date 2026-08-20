@@ -11,9 +11,9 @@ class TestAdaptivePolicyBackwardCompatibility(unittest.TestCase):
     Pins that the deprecated AdaptivePolicy shim remains importable and inert.
     """
 
-    def test_enricher_legacy_construction_succeeds(self) -> None:
+    def test_legacy_host_construction_succeeds(self) -> None:
         """
-        Exact legacy invocation from the enricher healing bridge must not raise.
+        Exact legacy invocation from an older host caller must not raise.
         """
 
         policy = ScrollInteractionPolicy(

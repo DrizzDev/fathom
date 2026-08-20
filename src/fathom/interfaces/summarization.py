@@ -6,19 +6,13 @@ from typing import Any, Dict, List
 
 class SummarizationPort(ABC):
     """
-    Abstract interface for semantic compression of execution traces.
+    Semantic compression of execution traces into a one-sentence progress summary.
     """
 
     @abstractmethod
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
         """
-        Compresses a list of trace entries into a concise semantic summary.
-
-        Args:
-            trace: List of OTA (Observation-Thought-Action) dictionaries.
-
-        Returns:
-            A single sentence summarizing the progress and state change.
+        Compress a trace of OTA (Observation-Thought-Action) entries into one summarizing sentence.
         """
 
         raise NotImplementedError

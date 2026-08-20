@@ -14,13 +14,12 @@ logger = getLogger(__name__)
 
 class Ledger(ILedger):
     """
-    Persistent Key-Value storage using SQLite.
-    Separated from the core Knowledge Graph logic.
+    Persistent key-value storage backed by SQLite.
     """
 
     def __init__(self, database_path: Path) -> None:
         """
-        Initialize ledger with explicit database path.
+        Store the database path and create its parent directory if missing.
         """
 
         self.__initialized = False
@@ -29,7 +28,7 @@ class Ledger(ILedger):
 
     async def __initialize(self) -> None:
         """
-        Initializes the ledger table.
+        Create the ledger table if it does not exist.
         """
 
         if self.__initialized:
@@ -45,12 +44,7 @@ class Ledger(ILedger):
 
     async def set(self, key: str, value: str) -> None:
         """
-        Stores a ledger entry.
-
-        NOTE: System state keys are REJECTED to prevent memory pollution.
-
-        Ledger is reserved for user-actionable memory only.
-        System state (GCC context, internal state) should use separate storage.
+        Store a user-actionable ledger entry; system-state key prefixes are rejected.
         """
 
         if not key or not isinstance(key, str):
@@ -61,7 +55,6 @@ class Ledger(ILedger):
             logger.error(f"[LEDGER] Invalid value type for key={key}: {type(value)}")
             raise ValueError(f"Value must be a string, got: {type(value)}")
 
-        # DEFENSIVE: Reject system state keys to prevent pollution
         SYSTEM_KEY_PREFIXES = ("context:", "ctx_v3:", "ctx_")
         if key.startswith(SYSTEM_KEY_PREFIXES):
             logger.warning(
@@ -92,7 +85,7 @@ class Ledger(ILedger):
 
     async def get(self, key: str) -> Optional[str]:
         """
-        Retrieves a value by key.
+        Retrieve a value by key.
         """
 
         await self.__initialize()
@@ -109,7 +102,7 @@ class Ledger(ILedger):
 
     async def get_all(self) -> Dict[str, str]:
         """
-        Retrieves all ledger entries.
+        Retrieve all ledger entries.
         """
 
         await self.__initialize()
@@ -127,25 +120,22 @@ class Ledger(ILedger):
 
     async def health_check(self) -> Dict[str, Any]:
         """
-        Performs a health check on the ledger. Returns diagnostic information.
+        Run a health check and return diagnostic information.
         """
 
         await self.__initialize()
 
         try:
             async with aiosqlite.connect(self.__path) as db:
-                # Check table exists
                 async with db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='entries'"
                 ) as cursor:
                     table_exists = await cursor.fetchone() is not None
 
-                # Count entries
                 async with db.execute("SELECT COUNT(*) FROM entries") as cursor:
                     row = await cursor.fetchone()
                     entry_count = row[0] if row else 0
 
-                # Get oldest and newest timestamps
                 async with db.execute(
                     "SELECT MIN(updated_at), MAX(updated_at) FROM entries"
                 ) as cursor:

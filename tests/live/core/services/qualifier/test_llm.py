@@ -51,46 +51,46 @@ class IntentCorpus:
     """
 
     OBSERVED_EXECUTABLE: List[str] = [
-        "Open Meesho and then scroll down until you find Jars & containers on the screen",
+        "Open Shopping and then scroll down until you find Jars & containers on the screen",
         (
-            "Open Swiggy app. Tap on Location dropdown. Select 'HSR Layout'. "
+            "Open Delivery app. Tap on Location dropdown. Select 'HSR Layout'. "
             "Tap on search bar. Enter 'Biryani' in search bar. Scroll up 40% auto suggest "
             "page. Tap on Show results. Validate srp page is loaded. "
             "Tap on heart icon in restaurant list. Validate login half card is displayed"
         ),
         "Scroll down until you find Jars & containers on the screen",
         "Scroll vertically until you find Asha Tiffin on the screen",
-        "Search for McPuff",
+        "Search for Veg Roll",
         "Search for a product, add it to cart, and complete checkout.",
         "open the contact app add new contact to it",
     ]
     REAL_USER_INTENTS: List[str] = [
         (
-            "Hi. I would like you to open the Fairway Solitaire app. go through the Big Fish "
+            "Hi. I would like you to open the game app. go through the game "
             "Splash Screen, and await until you are on the main menu. If it asks to send "
             "notifications, allow. If it asks for Terms of Use, accept. If it asks to get a "
             "more personalized Experience, select Next. If it asks to track your activities "
             "across partner companies, allow.\nYou should be on the main screen, select Play "
             "to begin FTUE."
         ),
-        "Ok lets simplify this, open the Fairway app, that is all",
+        "Ok lets simplify this, open the game app, that is all",
         "Hello there, can you open the fair way app and get the the main menu?",
-        "ok hello, can you open the Cooking Craze app, and then proceed to claim the daily reward.",
-        "Open the Cooking Craze app and claim the daily reward",
+        "ok hello, can you open the game app, and then proceed to claim the daily reward.",
+        "Open the game app and claim the daily reward",
         (
-            "ok we are gonna take it up a notch\nOpen the Cooking Craze app. navigate to the "
+            "ok we are gonna take it up a notch\nOpen the game app. navigate to the "
             "main menu and open the settings. The settings will have a gear icon. When in "
             "settings select the support tab and open the terms of use. Take a screenshot of "
             "the terms of use. return back to the main menu and stop testing."
         ),
         (
-            "Open the Cooking Craze app.\nSelect the play button.\nSelect the Settings button, "
+            "Open the game app.\nSelect the play button.\nSelect the Settings button, "
             "it looks like a gear icon.\nOpen the support tab.\nOpen the terms of use page.\n"
             "Take a screenshot of the terms of use.\nReturn back to game.\nClose the settings "
             "menu.\nEnd Testing."
         ),
         (
-            "Open the Cooking Craze App\nPress the Play button\nSelect the spoons Icon in the "
+            "Open the game App\nPress the Play button\nSelect the spoons Icon in the "
             "bottom right tiles\nOpen the offers to get spoons\nVerify that the player is "
             "re-directed to the offerwall.\nReturn to game\nClose the Survey/Offer wall menu.\n"
             "End test"
@@ -98,19 +98,19 @@ class IntentCorpus:
         (
             "If any of the attempts below are made more than 5 times and it still does not "
             "yield the desired results, mark the test as a fail and stop testing.\n\nOpen the "
-            "Cooking Craze App\nPress the Play button\nSelect the spoons Icon in the bottom "
+            "game App\nPress the Play button\nSelect the spoons Icon in the bottom "
             "right tiles\nOpen the offers to get spoons\nVerify that the player is re-directed "
             "to the offerwall.\nReturn to game\nClose the Survey/Offer wall menu.\nEnd test"
         ),
         (
-            "Open Cooking Craze, select play and open the settings menu. From there open the "
+            "Open game, select play and open the settings menu. From there open the "
             "Support tab and open the terms of use. Validate that they are displayed. Return "
             "to game and close the settings menu."
         ),
         (
             "If any step takes more than 5 attempts immediately stop testing and fail the test.\n"
             "Main Test: Can the player select the offerwall and be directed to the offer wall\n"
-            "- Open the Cooking Craze app.\n- Select the play button.\n- Select the Spoons icon "
+            "- Open the game app.\n- Select the play button.\n- Select the Spoons icon "
             "in the bottom right tiles.\n- Select Offer.\n- Observe the player is directed to "
             "the offerwall.\n- Close Offerwall and return to game.\n- Close the Spoons menu.\n"
             "- End Test."
@@ -118,7 +118,7 @@ class IntentCorpus:
         (
             "If any step takes more than 5 attempts immediately stop testing. No system "
             "override allowed, STOP TESTING.\n\nMain Test: Can the player select the offerwall "
-            "and be directed to the offer wall\n- Open the Cooking Craze app.\n- Select the "
+            "and be directed to the offer wall\n- Open the game app.\n- Select the "
             "play button.\n- Select the Spoons icon in the bottom right tiles.\n- Select Offer.\n"
             "- Observe the player is directed to the offerwall.\n- Close Offerwall and return "
             "to game.\n- Close the Spoons menu.\n- End Test."
@@ -155,7 +155,7 @@ class IntentCorpus:
         "Skip device setup during onboarding",
     ]
     QUESTION_FORM_EXECUTABLE: List[str] = [
-        "Can you open Swiggy and search for Biryani?",
+        "Can you open Delivery and search for Biryani?",
         "Can you tap the checkout button?",
         "Could you scroll down and find the price?",
         "Can you go back to the previous screen?",
@@ -383,7 +383,9 @@ class LLMIntentQualifierLiveTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_every_intent_classifies_correctly(self) -> None:
-        """Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes."""
+        """
+        Run the corpus through the real qualifier wiring and report per-intent and aggregate outcomes.
+        """
 
         cases = IntentCorpus.cases()
         configuration = QualifierConfiguration()

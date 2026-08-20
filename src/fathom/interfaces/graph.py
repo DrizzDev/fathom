@@ -9,8 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 class GraphBuilder(ABC):
     """
-    Abstract base class for building LangGraph workflows.
-    Enforces dependency injection and consistent assembly patterns.
+    Port for assembling a runnable LangGraph workflow from injected ports.
     """
 
     @abstractmethod
@@ -20,14 +19,10 @@ class GraphBuilder(ABC):
         checkpointer: Optional[BaseCheckpointSaver] = None,
     ) -> CompiledStateGraph:
         """
-        Builds and compiles the graph.
+        Wire the injected nodes into a compiled, runnable graph.
 
-        Args:
-            checkpointer: Optional persistence layer for state.
-            interrupt_before: List of node names to interrupt before.
-
-        Returns:
-            CompiledStateGraph: The ready-to-execute graph.
+        ``interrupt_before`` lists nodes where the run pauses for human-in-the-loop control,
+        and ``checkpointer`` persists graph state so an interrupted run resumes across restarts.
         """
 
         raise NotImplementedError

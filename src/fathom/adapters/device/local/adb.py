@@ -47,7 +47,8 @@ class ADBDevice(DevicePort):
         configuration: Optional[ADBConfiguration] = None,
     ) -> None:
         """
-        Initialize ADB device adapter.
+        Bind an explicit :class:`ADBConfiguration` when given, or derive one from ``serial`` or defaults,
+        then precompute the device runtime configuration.
         """
 
         if configuration:
@@ -97,7 +98,7 @@ class ADBDevice(DevicePort):
     @property
     def configuration(self) -> DeviceRuntimeConfiguration:
         """
-        Returns the tool configuration.
+        The resolved device runtime configuration.
         """
 
         return self.__runtime_configuration
@@ -212,7 +213,8 @@ class ADBDevice(DevicePort):
         speed: Optional[SwipeSpeed] = None,
     ) -> ActionResult:
         """
-        Execute swipe gesture.
+        Execute a swipe gesture. ADB exposes no speed control, so ``speed`` is ignored;
+        ``duration`` alone drives the gesture.
         """
 
         if speed is not None:
@@ -289,18 +291,10 @@ class ADBDevice(DevicePort):
         """
         Bounded post-kill reap of a still-running subprocess.
 
-        ``__run_safe_subprocess`` enforces a wall-clock per-command timeout
-        via :func:`asyncio.wait_for`. Its ``finally`` block sends SIGKILL,
-        then awaits the process to reap. When the host has wedged IO
-        (emulator qcow2 backing exhausted, NFS hang, etc.) the kernel
-        cannot deliver SIGKILL because the process sits in an
-        uninterruptible-IO state; the await would block indefinitely and
-        the entire workflow would stall.
-
-        This helper caps that reap with ``subprocess_cleanup_timeout`` and
-        abandons the process (logging at WARNING) rather than waiting
-        forever. The leaked subprocess will be reaped by the OS once the
-        underlying IO unwedges.
+        When the host has wedged IO the kernel cannot deliver SIGKILL — the process sits in
+        uninterruptible-IO state and the reap await would block forever, stalling the workflow. This
+        helper caps the reap with ``subprocess_cleanup_timeout`` and abandons the process (logging at
+        WARNING); the OS reaps the leak once the underlying IO unw-edges.
         """
 
         try:
@@ -750,7 +744,6 @@ class ADBDevice(DevicePort):
 
         return image, xml
 
-    # Helper methods copied from original tool
     async def __shell(self, command: str, *, capture_output: bool = False) -> ActionResult:
         """
         Execute ADB shell command with terminal logging.
@@ -795,7 +788,7 @@ class ADBDevice(DevicePort):
 
     def __build_arguments(self, parts: List[str]) -> List[str]:
         """
-        Builds full command list.
+        Assemble the adb argv: the executable, an optional ``-s <serial>``, then the command parts.
         """
 
         cmd = [self.__configuration.executable_path]
@@ -807,7 +800,7 @@ class ADBDevice(DevicePort):
 
     def __escape(self, text: str) -> str:
         """
-        Escapes text for ADB.
+        Escape backslashes and double quotes, and encode spaces as ``%s`` for ``input text``.
         """
 
         return text.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "%s")

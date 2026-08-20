@@ -229,7 +229,9 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dispatch_height, 43)
 
     async def test_all_zero_payload_is_refusal_not_zero_bound_proposal(self) -> None:
-        """The all-zero coordinate/confidence payload is the refusal protocol marker."""
+        """
+        The all-zero coordinate/confidence payload is the refusal protocol marker.
+        """
 
         llm = _StaticLlm(
             payload={
@@ -300,7 +302,9 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.calls, 0)
 
     async def test_zero_pixel_box_rejected_as_invalid(self) -> None:
-        """Payloads whose projected width or height rounds to zero pixels are rejected even when the grid coordinates are non-zero."""
+        """
+        Payloads whose projected width or height rounds to zero pixels are rejected even when the grid coordinates are non-zero.
+        """
 
         llm = _StaticLlm(
             payload={
@@ -324,7 +328,9 @@ class GeminiVisionLocalizerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_confidence_out_of_range_returns_none(self) -> None:
-        """Provider-reported confidence outside the closed unit interval is rejected at the schema boundary."""
+        """
+        Provider-reported confidence outside the closed unit interval is rejected at the schema boundary.
+        """
 
         llm = _StaticLlm(
             payload={

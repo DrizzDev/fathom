@@ -38,11 +38,15 @@ class _RecordingMapper:
 
 
 class _StubDocument:
-    """Opaque stand-in for a Document AI ``Document``."""
+    """
+    Opaque stand-in for a Document AI ``Document``.
+    """
 
 
 class _StubResponse:
-    """Carries ``.document``, which is all the adapter reads off the RPC."""
+    """
+    Carries ``.document``, which is all the adapter reads off the RPC.
+    """
 
     document = _StubDocument()
 
@@ -72,9 +76,9 @@ class DocumentAiPixelDimensionsTest(unittest.IsolatedAsyncioTestCase):
     which ``to_logical_dispatch`` then divided by the scale a second time — every
     OCR-resolved tap landed at 1/scale of its correct distance from the origin.
 
-    Live incident 2026-08-06 (iPad Air 4, logical 1180x820 / pixel 2360x1640):
-    OCR located "Add Visit" at (936, 631), the tap went to (485, 318) — ~590px
-    away. Identical in runs HXPBk, HawUV and QgzIM.
+    Concrete case (iPad Air 4, logical 1180x820 / pixel 2360x1640): OCR located "Add Visit" at
+    (936, 631); passing the logical size sent the tap to (485, 318) — ~590px away, identically
+    across repeated runs.
     """
 
     @staticmethod
@@ -140,8 +144,7 @@ class DocumentAiPixelDimensionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(800, 600)], mapper.calls)
 
     async def test_falls_back_to_logical_when_image_is_undecodable(self) -> None:
-        # Garbage bytes must not take the OCR pass down — degrade to the logical
-        # pair, which is what the adapter used before this fix.
+        # Garbage bytes must not take the OCR pass down — degrade to the logical pair.
         mapper = _RecordingMapper()
         capture = ScreenCapture(
             width=1180,

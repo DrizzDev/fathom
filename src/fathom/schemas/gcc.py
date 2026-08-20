@@ -11,8 +11,7 @@ from fathom.schemas.trace import ExecutionRecord
 
 class CommitNode(BaseModel):
     """
-    Tier 2: A versioned unit of memory.
-    Encapsulates a summarized segment of the execution log.
+    A versioned commit that summarizes one segment of the execution log and links to its parent.
     """
 
     parent_id: Optional[str] = None
@@ -25,7 +24,7 @@ class CommitNode(BaseModel):
 
 class BranchState(BaseModel):
     """
-    Represents the state of a specific reasoning branch.
+    One reasoning branch: its head commit plus the uncommitted records logged since that head.
     """
 
     name: str

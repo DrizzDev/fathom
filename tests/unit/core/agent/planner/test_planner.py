@@ -172,9 +172,9 @@ class StepPlannerStuckFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_validate_command_admitted_as_preparatory_under_capture_goal(self) -> None:
         """
-        Regression: a VALIDATE emitted under a capture (STORE) goal is admitted as a preparatory
-        action, not gate-rejected by directive. It carries no admitted requirement, so it cannot
-        complete the capture goal — the old directive-based "not authorized" rejection must not recur.
+        A VALIDATE emitted under a capture (STORE) goal is admitted as a preparatory action, not
+        gate-rejected by directive. It carries no admitted requirement, so it cannot complete the
+        capture goal.
         """
 
         analysis = AnalysisResult(
@@ -356,11 +356,15 @@ class StepPlannerToolScopeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestCase):
-    """Pins the autonomous-runtime substitution: ASK_USER -> recovery ladder."""
+    """
+    Pins the autonomous-runtime substitution: ASK_USER -> recovery ladder.
+    """
 
     @staticmethod
     def __ask_user_analysis() -> AnalysisResult:
-        """Return an analysis whose primary action is ASK_USER."""
+        """
+        Return an analysis whose primary action is ASK_USER.
+        """
 
         action = ActionFixtures.make(
             target="User",
@@ -376,7 +380,9 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         )
 
     async def test_substitutes_ask_user_with_recovery_action(self) -> None:
-        """ASK_USER on autonomous runtime substitutes with the next ladder rung."""
+        """
+        ASK_USER on autonomous runtime substitutes with the next ladder rung.
+        """
 
         analysis = self.__ask_user_analysis()
         vision = Mock()
@@ -411,7 +417,9 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
         self.assertFalse(result.is_complete)
 
     async def test_terminates_when_ladder_exhausted(self) -> None:
-        """When the recovery ladder is spent, ASK_USER becomes terminal INTERVENTION_REQUIRED."""
+        """
+        When the recovery ladder is spent, ASK_USER becomes terminal INTERVENTION_REQUIRED.
+        """
 
         analysis = self.__ask_user_analysis()
         vision = Mock()
@@ -446,7 +454,8 @@ class StepPlannerAutonomousAskUserSubstitutionTest(unittest.IsolatedAsyncioTestC
 
 class StepPlannerControlAdmissionTest(unittest.IsolatedAsyncioTestCase):
     """
-    P0-2: an LLM-emitted ASK_USER *command* must pass CommandGate under proof-bearing goals and reach the escalation/HITL policy, never be blocked at admission.
+    An LLM-emitted ASK_USER *command* must pass CommandGate under proof-bearing goals and reach the
+    escalation/HITL policy, never be blocked at admission.
     """
 
     @staticmethod
@@ -613,7 +622,7 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
 
         rejection_payload = ["seeded-turn"]
         result, _, _ = await self.__plan(
-            descriptor_target="More on Swiggy widget",
+            descriptor_target="More on Delivery widget",
             rejection_history_return=rejection_payload,
         )
 
@@ -628,7 +637,7 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
 
         rejection_payload = ["seeded-turn"]
         _, state, vision = await self.__plan(
-            descriptor_target="More on Swiggy widget",
+            descriptor_target="More on Delivery widget",
             rejection_history_return=rejection_payload,
         )
 
@@ -645,14 +654,14 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
         """
 
         result, _, _ = await self.__plan(
-            descriptor_target="More on Swiggy widget",
+            descriptor_target="More on Delivery widget",
             rejection_history_return=["x"],
         )
 
         assert result.context.retry is not None
         self.assertIs(result.context.retry.kind, RetryKind.SILENT_REJECTION)
         self.assertIs(result.context.retry.branch, RetryBranch.SHOULD_AVOID_ACTION)
-        self.assertIn("More on Swiggy widget", result.context.retry.action or "")
+        self.assertIn("More on Delivery widget", result.context.retry.action or "")
 
     async def test_should_avoid_action_does_not_advance_step_count(self) -> None:
         """
@@ -661,7 +670,7 @@ class StepPlannerSilentRejectionBranchTest(unittest.IsolatedAsyncioTestCase):
 
         before = AgentFixtures.state(intent="x").step_count
         _, state, _ = await self.__plan(
-            descriptor_target="More on Swiggy widget",
+            descriptor_target="More on Delivery widget",
             rejection_history_return=["x"],
         )
         self.assertEqual(state.step_count, before)

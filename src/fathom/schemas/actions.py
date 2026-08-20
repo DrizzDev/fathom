@@ -321,7 +321,7 @@ class GesturePath(BaseModel):
 
 class Action(BaseModel):
     """
-    Represents an atomic action to be performed on the mobile device.
+    A single planned device interaction: its type, grounding target, and execution parameters.
     """
 
     action_type: ActionType = Field(description="The type of interaction to perform")

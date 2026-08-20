@@ -25,7 +25,7 @@ class OcrPhraseMatcher:
     @property
     def configuration(self) -> LayoutMatchConfiguration:
         """
-        Expose the immutable configuration so callers can log tunable's alongside matches.
+        Expose the immutable configuration so callers can log tunables alongside matches.
         """
 
         return self.__configuration
@@ -52,8 +52,9 @@ class OcrPhraseMatcher:
         """
         Return the highest-scoring phrase cluster restricted to OCR elements whose centroid lies inside ``bounds``.
 
-        The region pre-filter is the matcher's spatial gate when the planner already provided a target region:
-        the F1 threshold is intentionally bypassed here so the caller (``RegionalEvidenceMatcher``) can apply a recall-weighted decision on the returned cluster.
+        The region pre-filter is the matcher's spatial gate when the planner already provided a target
+        region: the F1 threshold is intentionally bypassed here so the caller (``RegionalEvidenceMatcher``)
+        can apply a recall-weighted decision on the returned cluster.
         """
 
         if not (target_words := self.__words(value=target)):

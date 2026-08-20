@@ -7,7 +7,7 @@ from fathom.schemas.criterion import Verdict
 
 class OraclePort(ABC):
     """
-    Abstract interface for reading a criterion against a settled screen capture.
+    Reads one pass/fail criterion against a settled screen capture.
     """
 
     @abstractmethod

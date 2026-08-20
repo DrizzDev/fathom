@@ -12,9 +12,8 @@ class IntentSafetyVerdict(BaseModel):
     """
     Outcome of an intent-level safety review performed before workflow start.
 
-    ``safe`` is the executable signal; ``matched_keyword`` is populated only
-    when ``safe`` is ``False`` so callers can compose an actionable
-    operator-facing message without re-running the scan.
+    ``safe`` is the executable signal; ``matched_keyword`` is populated only when ``safe`` is
+    ``False`` so callers can compose an operator-facing message without re-running the scan.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -28,12 +27,10 @@ class IntentSafetyVerdict(BaseModel):
 
 class IntentSafetyClassifier:
     """
-    Classifies the user's high-level intent against destructive keywords
-    before the LangGraph workflow starts.
+    Classifies the user's high-level intent against destructive keywords before the workflow starts.
 
-    Sits at the outer boundary so destructive intents never enter the
-    runtime path; per-step safety scanning is intentionally not consulted
-    during execution.
+    Sits at the outer boundary so destructive intents never enter the runtime path; per-step safety
+    scanning is not consulted during execution.
     """
 
     def classify(self, *, intent: str) -> IntentSafetyVerdict:

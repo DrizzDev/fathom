@@ -14,14 +14,14 @@ from fathom.schemas.success import CaptureSuccess, CommandSuccess, ObservedSucce
 
 pytestmark = pytest.mark.release
 
-VARO_ONBOARDING_INTENT = (
-    "I want to launch the Varo app and login with "
-    "dev+test+Ilu+z2O5@varomoney.com and password Password1! "
+BANKING_ONBOARDING_INTENT = (
+    "I want to launch the banking app and login with "
+    "dev+test+Ilu+z2O5@example.com and password Password1! "
     'I then want you to step through the onboarding wizard and get to the main "Home" screen.'
 )
 
 CONDITIONAL_STORE_INTENT = (
-    "Open Meesho and then, Search for Ghar soaps, check whether customer rating is >= 4.2 "
+    "Open Shopping and then, Search for Ghar soaps, check whether customer rating is >= 4.2 "
     "or not if it is, store the price of selected item as item_price and then proceed to buy "
     "until login screen"
 )
@@ -75,22 +75,22 @@ class TestIntentDecomposer:
     Live LLM checks for IntentDecomposer.
     """
 
-    async def test_varo_onboarding_intent_preserves_required_steps(self, llm: LLMPort) -> None:
+    async def test_banking_onboarding_intent_preserves_required_steps(self, llm: LLMPort) -> None:
         """
-        Varo onboarding must decompose into ordered, executable sub-goals.
+        Banking onboarding must decompose into ordered, executable sub-goals.
         """
 
         decomposer = IntentDecomposer(
             llm=llm, translator=ProposalTranslator(catalog=CommandCatalogProvider().build())
         )
 
-        sub_goals = await decomposer.decompose(intent=VARO_ONBOARDING_INTENT)
+        sub_goals = await decomposer.decompose(intent=BANKING_ONBOARDING_INTENT)
         descriptions = DecompositionAssertions.joined_descriptions(sub_goals=sub_goals)
 
         assert len(sub_goals) >= 3
-        assert "dev+test+ilu+z2o5@varomoney.com" in descriptions
+        assert "dev+test+ilu+z2o5@example.com" in descriptions
         assert "password1!" in descriptions
-        assert "varo" in descriptions
+        assert "banking" in descriptions
         assert "home" in descriptions
         assert "onboarding" in descriptions or "wizard" in descriptions
         DecompositionAssertions.assert_contains_in_order(

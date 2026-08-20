@@ -74,8 +74,8 @@ class MemoryProjectorHandler(JobHandlerPort):
         """
         Walk every page of task messages so long tasks are projected fully.
 
-        The previous implementation read only the first page and silently
-        truncated long task histories. We loop until the underlying cursor is exhausted.
+        Loops until the underlying cursor is exhausted; reading only the first page would silently
+        truncate long task histories.
         """
 
         cursor: str | None = None

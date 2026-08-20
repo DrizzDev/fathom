@@ -4,7 +4,6 @@ import unittest
 from unittest.mock import patch
 
 from pydantic import ValidationError
-from tests.fixtures.intents import VERIFY_TOOLS
 
 from fathom.constants.tools import BASE_TOOLS, ToolName, TurnMode
 from fathom.core.agent.tools.policy import ToolPolicy
@@ -13,6 +12,8 @@ from fathom.core.agent.tools.scope import ToolScope
 from fathom.core.exceptions import InvariantViolation
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.tools import ToolPolicyContext
+
+VERIFY_TOOLS = frozenset({ToolName.VERIFY_GOAL, ToolName.VALIDATE_STATE})
 
 
 class _AlwaysAllowsToolPolicy(ToolPolicy):

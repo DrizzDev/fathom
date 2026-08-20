@@ -6,7 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 def sanitize_path_component(value: str) -> str:
-    """Remove characters that are unsafe for filenames/path segments."""
+    """
+    Remove characters that are unsafe for filenames/path segments.
+    """
+
     sanitized = "".join(char for char in value if char.isalnum() or char in "._-")
     # Reject empty or directory traversal segments like "." and ".."
     if sanitized in {"", ".", ".."}:
@@ -15,7 +18,9 @@ def sanitize_path_component(value: str) -> str:
 
 
 class StorageMetadata(BaseModel):
-    """Validated and sanitized storage metadata extracted from a raw dict."""
+    """
+    Validated and sanitized storage metadata extracted from a raw dict.
+    """
 
     model_config = ConfigDict(frozen=True)
 

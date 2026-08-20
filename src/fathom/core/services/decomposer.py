@@ -1,5 +1,3 @@
-"""Intent decomposition service for sequential sub-goal execution."""
-
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
@@ -19,8 +17,8 @@ from fathom.schemas.subgoal import SubGoal
 
 class DecompositionAugmentation:
     """
-    Optional caller-supplied hooks that enrich a decomposition prompt with
-    extra context. All hooks default to empty so subclasses override only what they need.
+    Optional caller-supplied hooks that enrich a decomposition prompt with extra context. All hooks
+    default to empty so subclasses override only what they need.
     """
 
     def system_addendum(self) -> str:

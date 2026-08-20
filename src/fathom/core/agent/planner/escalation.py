@@ -19,8 +19,8 @@ from fathom.schemas.planner import EscalationEvent, GoalRef, PlannerEvent
 from fathom.schemas.results import AnalysisResult, PlanDecision, PlannerRetry, PlanResult
 from fathom.schemas.screens import ScreenCapture
 
-# Generic recovery hint injected when the escalation gate defers HITL. The
-# model is told what the graph observed and what behaviors are still safe;
+# Generic recovery hint injected when the escalation gate defers HITL.
+# The model is told what the graph observed and what behaviors are still safe;
 # we deliberately avoid any app-specific suggestions.
 ESCALATION_DEFERRED_GUIDANCE: str = (
     "The graph detected a possible loop, but recent no-progress actions were "

@@ -51,6 +51,7 @@ class AndroidClearStrategy(IntEnum):
 ANDROID_UIAUTOMATION_ACTIVE_MARKER = "Ui Automation["
 ANDROID_UIAUTOMATION_DUMP_PATH = "/data/local/tmp/window_dump.xml"
 ANDROID_UIAUTOMATION_INSTRUMENTATION_MARKER = "com.android.commands.am.Am instrument"
+
 ANDROID_UIAUTOMATION_PROCESS_NAME = "app_process"
 ANDROID_UIAUTOMATION_TIMEOUT_MARKER = "timed out"
 ANDROID_UIAUTOMATION_UIAUTOMATOR_MARKER = "com.android.commands.uiautomator"

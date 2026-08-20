@@ -283,13 +283,11 @@ class ScreenObservationService:
         observation: ScreenObservation,
     ) -> None:
         """
-        Hand perception evidence to the artifact pipeline, but only the
-        artifacts whose source actually contributed elements.
+        Hand perception evidence to the artifact pipeline, emitting each artifact only when its
+        source actually contributed elements.
 
-        Saving a merged perception image when observation contains only
-        manifest/accessibility elements produces a second copy of the
-        annotated hierarchy with no additional signal. We emit the
-        merged artifact only when a true enrichment source contributed.
+        The merged image is emitted only when a true enrichment source (CV/OCR/icon/vision)
+        contributed; otherwise it would just duplicate the annotated hierarchy with no added signal.
         """
 
         if self.__pipeline is None:
@@ -516,7 +514,9 @@ class ScreenObservationService:
     def __element_from_token(self, *, token: OcrToken, index: int) -> PerceivedElement:
         """
         Convert one OCR token into a perceived element.
-        The Document AI layout level is woven into the identifier so production traces attribute snaps to the level the merge structure came from.
+
+        The Document AI layout level is woven into the identifier so production traces
+        attribute snaps to the level the merge structure came from.
         """
 
         return PerceivedElement(
@@ -853,9 +853,8 @@ class ScreenObservationService:
         """
         Return at most one element-level overlay observation per screen.
 
-        Stacked qualifying elements are intentionally collapsed: the supervisor
-        only needs a single BLOCKING signal, and surfacing N overlays for N
-        layered dialogs produced duplicate downstream effects.
+        Stacked qualifying elements are collapsed: the supervisor needs only a single BLOCKING
+        signal, and surfacing one overlay per layered dialog produced duplicate downstream effects.
         """
 
         screen_area = max(1, capture.width * capture.height)

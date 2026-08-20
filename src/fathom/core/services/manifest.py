@@ -78,18 +78,13 @@ class ManifestMerger:
         observation: ScreenObservation,
     ) -> ManifestMergeResult:
         """
-        Return a :class:`ManifestMergeResult` with the enriched label
-        map and the list of newly appended perception entries.
+        Return a :class:`ManifestMergeResult` with the enriched label map and the newly appended
+        perception entries.
 
-        The input ``label_map`` is not mutated. When no perception
-        elements qualify (empty observation, no text, or all overlap
-        the XML manifest), the result carries a shallow copy of the
-        input and an empty ``appended`` tuple.
-
-        Returning the appended entries explicitly lets the overlay
-        renderer draw matching boxes onto the LLM-facing annotated
-        image without diffing pre/post maps or re-parsing the
-        ``[x1,y1][x2,y2]`` bounds string.
+        The input ``label_map`` is not mutated; when no perception element qualifies (empty
+        observation, no text, or all overlap the XML manifest), the result carries a shallow copy
+        and an empty ``appended`` tuple. The appended entries are returned explicitly so the overlay
+        renderer draws boxes without diffing maps or re-parsing the ``[x1,y1][x2,y2]`` bounds string.
         """
 
         enriched: Dict[str, Any] = dict(label_map)

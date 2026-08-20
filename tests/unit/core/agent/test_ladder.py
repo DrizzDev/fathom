@@ -215,7 +215,7 @@ class LoopActionLadderValidatePassiveTest(unittest.TestCase):
 
     def test_validate_passive_on_no_back_device_does_not_emit_home(self) -> None:
         """
-        Specifically the regression P1 caught: no-BACK device must not jump to HOME after a passive VALIDATE.
+        A no-BACK device must not jump to HOME after a passive VALIDATE.
         """
 
         detector = LoopDetector(max_recovery=3)

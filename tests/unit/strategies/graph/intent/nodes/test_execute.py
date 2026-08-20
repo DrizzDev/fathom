@@ -64,13 +64,17 @@ class ExecuteNodeEarlyExitTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def __capture() -> ScreenCapture:
-        """Build a minimal screen capture for ExecutionContext."""
+        """
+        Build a minimal screen capture for ExecutionContext.
+        """
 
         return ScreenCapture(width=100, height=200, activity="app", image=b"", timestamp=1)
 
     @staticmethod
     def __ask_user_execution_context() -> ExecutionContext:
-        """Build an ExecutionContext carrying an ASK_USER step."""
+        """
+        Build an ExecutionContext carrying an ASK_USER step.
+        """
 
         action = Action(
             action_type=ActionType.ASK_USER,

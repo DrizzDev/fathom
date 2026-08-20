@@ -7,11 +7,15 @@ from fathom.schemas.tools import AllowedTools
 
 
 class PromptBuilder(ABC):
-    """Abstract base class for building model-specific system prompts."""
+    """
+    Model-specific prompt builder: a stable tool-scoped system prompt plus a dynamic user context.
+    """
 
     @abstractmethod
     def build(self, *, tools: AllowedTools) -> str:
-        """Construct the stable system instruction string scoped to the allowed tools."""
+        """
+        Construct the stable system instruction string scoped to the allowed tools.
+        """
 
         raise NotImplementedError
 
@@ -22,6 +26,8 @@ class PromptBuilder(ABC):
         memory: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> str:
-        """Construct the dynamic user context string."""
+        """
+        Construct the dynamic user context string.
+        """
 
         raise NotImplementedError

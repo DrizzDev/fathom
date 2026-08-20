@@ -37,7 +37,7 @@ class GraphExecutor:
         invalidate_on_injection: bool = True,
     ) -> None:
         """
-        Initialize executor.
+        Bind the graph, context, thread id, and interrupt/injection policy for one run.
         """
 
         self.__graph = graph
@@ -68,10 +68,9 @@ class GraphExecutor:
         Drive the graph to completion, autonomously or under the interactive pause/resume loop.
         """
 
-        # Validate state consistency before execution
         await self.__validate_state_sync("run_start")
 
-        # For autonomous mode (no interrupts), run graph to completion in one call
+        # Autonomous mode has no interrupts, so run the graph to completion in one call.
         if not self.__has_interrupts:
             logger.info("Executor: Running in autonomous mode (no interrupts)")
 
@@ -81,7 +80,6 @@ class GraphExecutor:
                         logger.warning("Executor: Workflow cancelled during execution")
                         break
 
-                    # Log node transitions
                     if isinstance(event, dict):
                         for node, _output in event.items():
                             logger.info(f"Executor: Node '{node}' completed")
@@ -123,12 +121,10 @@ class GraphExecutor:
         current_input: Optional[Dict[str, Any]] = {}
 
         while True:
-            # Check cancellation before starting any graph execution
             if await self.__stop_for_cancellation(phase="before execution"):
                 return
 
-            # Race Condition: Run Graph vs Wait for Pause
-            # We wrap the graph stream in a task to allow cancellation.
+            # Race the graph stream against a pause request; wrapping the stream in a task lets us cancel it.
             stream_task = self.__create_task(
                 operation=self.__stream_graph(input_value=current_input)
             )
@@ -154,23 +150,20 @@ class GraphExecutor:
             if await self.__stop_for_cancellation(phase="after execution"):
                 return
 
-            # Check Graph State
             if not (await self.__graph.aget_state(self.__config)).next:
                 return
 
-            # Handle Interrupt (Breakpoint reached naturally)
-            # Check for HITL signals one last time.
+            # A naturally reached breakpoint: check for HITL signals one last time.
             await self.__handle_interrupt(source="breakpoint")
 
             if await self.__stop_for_cancellation(phase="after interrupt handling"):
                 return
 
-            # Resume Execution
             current_input = None
 
     async def __stream_graph(self, *, input_value: Optional[Dict[str, Any]]) -> None:
         """
-        Wrapper to stream graph events.
+        Stream graph events, stopping early when the run is cancelled.
         """
 
         async for event in self.__graph.astream(input_value, config=self.__config):
@@ -178,7 +171,6 @@ class GraphExecutor:
                 logger.warning("Executor: Workflow cancelled during stream")
                 break
 
-            # Log node transitions for visibility
             if isinstance(event, dict):
                 for node, _output in event.items():
                     logger.info(f"Executor: Node '{node}' completed")
@@ -360,10 +352,7 @@ class GraphExecutor:
                 await self.__guarded_phase_shutdown(reason="operator_context_abort")
                 return
 
-            # Inject into system (resets loop state internally)
             await self.__inject_context(content=context)
-
-            # Explicitly consume
             await self.__context.hitl.consume_context()
 
         if processed_count > 0:

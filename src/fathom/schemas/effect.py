@@ -69,14 +69,9 @@ class ActionEffect(BaseModel):
     """
     Structured outcome of one executed action.
 
-    Carries both the deterministic ``status`` classifier and the raw
-    metrics that produced it. The status is the load-bearing signal for
-    the prompt; raw numbers are diagnostic context, not the contract.
-
-    The classifier thresholds (see ``constants/screen.py``) are
-    fixture-pinned against real run traces so the boundary between
-    progress and no-progress matches observed reality, not author
-    intuition.
+    Carries the deterministic ``status`` classifier — the load-bearing signal for the prompt — plus the
+    raw metrics that produced it, which are diagnostic context, not the contract. The classifier
+    thresholds (see ``constants/screen.py``) are fixture-pinned against real run traces.
     """
 
     model_config = ConfigDict(frozen=True)

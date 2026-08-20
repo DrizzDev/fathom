@@ -62,7 +62,6 @@ class ExecutionEngine:
         self.__max_retries = max_retries
         self.__stability_wait = stability_wait
 
-        # Initialize Domain Services
         self.__perception_service = PerceptionService(
             storage=storage,
             perception=perception,
@@ -92,10 +91,8 @@ class ExecutionEngine:
         start_time = time.time()
 
         try:
-            # Phase 1: Signal Check
             injected_context = await self.__check_signal()
 
-            # Phase 2: Perceive (capture pre-action state)
             if pre_capture is None:
                 pre_capture = await self.__perception_service.perceive(
                     session_id=session_id,
@@ -104,7 +101,6 @@ class ExecutionEngine:
 
             pre_hash = self.__perception_service.compute_visual_hash(capture=pre_capture)
 
-            # Phase 3: Reason (Implicit)
             if injected_context:
                 step = step.model_copy(
                     update={
@@ -112,7 +108,6 @@ class ExecutionEngine:
                     }
                 )
 
-            # Phase 4: Act
             result = await self.__action_executor.act(
                 step=step,
                 session_id=session_id,
@@ -128,14 +123,12 @@ class ExecutionEngine:
             )
             post_hash = self.__perception_service.compute_visual_hash(capture=post_capture)
 
-            # Phase 5: Learn
             await self.__learn(
                 action=step.action,
                 visual_hash=pre_hash,
                 success=result.success,
             )
 
-            # Phase 6: Checkpoint
             duration = int((time.time() - start_time) * 1000)
             screen_changed = (
                 ScreenState.hamming_distance(
@@ -187,7 +180,7 @@ class ExecutionEngine:
 
     async def __check_signal(self) -> Optional[str]:
         """
-        Phase 1: Check for HITL control signals.
+        Check for HITL control signals.
         """
 
         signal = await self.__signal.check_signal()
@@ -213,7 +206,7 @@ class ExecutionEngine:
 
     async def __learn(self, visual_hash: str, action: Action, success: bool) -> None:
         """
-        Phase 5: Store experience in memory.
+        Store experience in memory.
         """
 
         try:
@@ -230,7 +223,7 @@ class ExecutionEngine:
 
     async def __checkpoint(self, step_result: StepResult) -> None:
         """
-        Phase 6: Log execution state.
+        Log execution state.
         """
 
         await self.__telemetry.info(

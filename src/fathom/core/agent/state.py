@@ -48,15 +48,7 @@ logger = getLogger(__name__)
 
 class AgentState:
     """
-    Stateful agent context for planning and execution.
-
-    Manages:
-    - Screen state history with deduplication
-    - Action history with success/failure tracking
-    - Interaction tracking for behavioral constraints
-    - Loop detection with recovery strategies
-
-    Thread-safe for async operations. Serializable for checkpointing.
+    Stateful agent context for planning and execution; serializable for checkpointing.
     """
 
     def __init__(
@@ -184,7 +176,7 @@ class AgentState:
     @property
     def completion_reason(self) -> Optional[str]:
         """
-        Returns Completion Reason
+        Why the run is considered complete, if set.
         """
 
         return self.__completion_reason
@@ -217,9 +209,8 @@ class AgentState:
         """
         Typed read-only snapshot of the loop detector for the escalation gate.
 
-        Exposed on :class:`AgentState` so domain components do not reach into
-        the private runtime path. Returns the detector's :class:`LoopEvidence`
-        snapshot: stuck flag, reason, full recent window, and ``since_progress``.
+        Returns the detector's :class:`LoopEvidence`: stuck flag, reason, full recent
+        window, and ``since_progress``.
         """
 
         return self.__runtime.screen.detector.evidence()
@@ -425,13 +416,7 @@ class AgentState:
 
     def update_screen(self, screen: ScreenState) -> bool:
         """
-        Update current screen state.
-
-        Args:
-            screen: New screen state.
-
-        Returns:
-            True if this is a new screen, False if seen before.
+        Record the observed screen and return whether it is one not seen before this run.
         """
 
         previous_screen = self.__runtime.screen.current
@@ -516,10 +501,7 @@ class AgentState:
 
     def record_step(self, result: StepResult) -> None:
         """
-        Record a completed step.
-
-        Args:
-            result: Result of the executed step.
+        Record a completed step and fold its outcome into the run's counters and history.
         """
 
         self.__step_count += 1
@@ -575,11 +557,8 @@ class AgentState:
         """
         Record an attempted (but not dispatched) action against the loop detector.
 
-        Used at planner / supervise rejection sites so the agent's *intent* to
-        repeat the same action enters the LoopDetector window even when the
-        attempt is rejected before reaching the executor. Without this,
-        successive same-target attempts that are rejected upstream stay
-        invisible to ``action_repetition`` and the agent can loop silently.
+        Feeds a rejected repeat-intent into the LoopDetector window so ``action_repetition``
+        sees same-target attempts rejected upstream; without it the agent can loop silently.
         """
 
         action_type = action.action_type.value
@@ -648,10 +627,7 @@ class AgentState:
 
     def mark_complete(self, reason: str) -> None:
         """
-        Mark the intent as complete.
-
-        Args:
-            reason: Why the intent is considered complete.
+        Mark the intent complete with the given reason.
         """
 
         self.__is_complete = True
@@ -678,10 +654,8 @@ class AgentState:
         """
         Increment and return the consecutive complete-deferral counter.
 
-        The router invokes this when it routes an ``is_complete=True``
-        ANALYZE verdict back to GROUND because sub-goals are still
-        open. Returning the post-increment value lets the caller
-        decide whether to escalate.
+        The router calls this when it routes an ``is_complete=True`` verdict back to GROUND with
+        sub-goals still open; the post-increment value lets the caller decide whether to escalate.
         """
 
         self.__consecutive_complete_deferrals += 1
@@ -691,10 +665,7 @@ class AgentState:
         """
         Zero the consecutive complete-deferral counter.
 
-        Called on real progress: a non-complete plan, a successful
-        sub-goal advancement, or a verifier pass. Without the reset,
-        a single late deferral would forever bias the bounded-retry
-        threshold against the planner.
+        Called on real progress — a non-complete plan, a sub-goal advancement, or a verifier pass.
         """
 
         self.__consecutive_complete_deferrals = 0
@@ -749,10 +720,7 @@ class AgentState:
 
     def set_sub_goals(self, sub_goals: List[SubGoal]) -> None:
         """
-        Set the decomposed sub-goals for this intent.
-
-        Args:
-            sub_goals: List of sequential sub-goals to execute.
+        Set the decomposed sub-goals and activate the first one as in-progress.
         """
 
         self.__sub_goals = [GoalState(goal=goal) for goal in sub_goals]
@@ -771,10 +739,7 @@ class AgentState:
 
     def get_current_sub_goal(self) -> Optional[GoalState]:
         """
-        Get the currently active sub-goal.
-
-        Returns:
-            Current sub-goal or None if no sub-goals defined.
+        Return the active sub-goal, or None when none are defined or the cursor is past the end.
         """
 
         if not self.__sub_goals or self.__current_sub_goal_index >= len(self.__sub_goals):
@@ -791,10 +756,7 @@ class AgentState:
 
     def set_current_sub_goal_index(self, index: int) -> None:
         """
-        Set the current sub-goal index (used for checkpoint restore).
-
-        Args:
-            index: Index to set (will be clamped to valid range)
+        Set the active sub-goal index (clamped to range) and mark it in-progress; used by checkpoint restore.
         """
 
         if self.__sub_goals:
@@ -948,10 +910,7 @@ class AgentState:
 
     def all_sub_goals_complete(self) -> bool:
         """
-        Check if all sub-goals have been completed.
-
-        Returns:
-            True if all sub-goals are complete or no sub-goals defined.
+        Whether every sub-goal is complete; True when none are defined.
         """
 
         if not self.__sub_goals:
@@ -961,10 +920,7 @@ class AgentState:
 
     def get_sub_goal_progress(self) -> Tuple[int, int]:
         """
-        Get current progress through sub-goals.
-
-        Returns:
-            Tuple of (current_index, total_count).
+        Return progress through the sub-goals as ``(current_index, total_count)``.
         """
 
         if not self.__sub_goals:
@@ -974,20 +930,14 @@ class AgentState:
 
     def get_all_sub_goals(self) -> List[GoalState]:
         """
-        Get all sub-goals.
-
-        Returns:
-            List of all sub-goals.
+        Return a copy of the full sub-goal list.
         """
 
         return self.__sub_goals.copy()
 
     def has_sub_goals(self) -> bool:
         """
-        Check if sub-goals are defined.
-
-        Returns:
-            True if sub-goals exist.
+        Whether any sub-goals are defined.
         """
 
         return len(self.__sub_goals) > 0
@@ -1048,14 +998,10 @@ class AgentState:
 
     def record_action_effect(self, *, effect: ActionEffect) -> None:
         """
-        Append a structured action-effect outcome to the rolling
-        trajectory window.
+        Append a structured action-effect outcome to the rolling trajectory window.
 
-        Called from EXECUTE after each step using
-        :meth:`ActionEffect.from_screen_diff` against the post-action
-        :class:`ScreenDiff`. The window is bounded by
-        ``ACTION_EFFECT_TRAJECTORY_WINDOW`` so the prompt size stays
-        stable regardless of run length.
+        Called from EXECUTE via :meth:`ActionEffect.from_screen_diff` on the post-action
+        :class:`ScreenDiff`; the window is bounded by ``ACTION_EFFECT_TRAJECTORY_WINDOW``.
         """
 
         self.__runtime.effects.record_effect(effect=effect)
@@ -1078,24 +1024,11 @@ class AgentState:
 
     def build_loop_observation(self) -> Optional[LoopObservation]:
         """
-        Construct a :class:`LoopObservation` summarizing the current
-        stuck evidence, or ``None`` when the agent is not stuck.
+        Construct a :class:`LoopObservation` summarizing the current stuck evidence, or ``None``
+        when the agent is not stuck.
 
-        The observation is the structured input the ANALYZE prompt
-        renders into ``<SYSTEM_OBSERVATION>``. Built here (not in the
-        prompt assembler) so the rules for *when* to inject — and what
-        evidence to surface — live with the state that produced the
-        evidence.
-
-        Returns ``None`` when:
-
-        - The loop detector hasn't fired (``is_stuck`` is False) AND
-        - The action-effect trajectory hasn't crossed the no-progress
-          recovery threshold.
-
-        In either of those branches the agent receives no
-        ``SYSTEM_OBSERVATION`` block — the runtime tells the agent
-        nothing when there's nothing reliable to tell.
+        Feeds the ANALYZE prompt's ``<SYSTEM_OBSERVATION>`` block. Returns ``None`` unless the loop
+        detector fired or the action-effect trajectory crossed the no-progress recovery threshold.
         """
 
         stuck = self.is_stuck
@@ -1159,10 +1092,8 @@ class AgentState:
         """
         Number of trailing actions classified as ``NO_PROGRESS``.
 
-        Used by the RECORD node to decide whether to emit the
-        ``NO_PROGRESS`` recovery trigger. Counts only the contiguous
-        tail of the trajectory window — a single ``PROGRESS`` step
-        resets the counter.
+        Counts only the contiguous tail of the trajectory window; a single ``PROGRESS`` step resets
+        the counter. Read by RECORD to decide whether to emit the ``NO_PROGRESS`` recovery trigger.
         """
 
         return self.__runtime.effects.consecutive_no_progress()
@@ -1192,13 +1123,7 @@ class AgentState:
 
     def should_avoid_action(self, action: Action) -> bool:
         """
-        Check if an action should be avoided due to recent failures.
-
-        Args:
-            action: Proposed action.
-
-        Returns:
-            True if action has failed recently.
+        Whether the action has failed recently enough to be worth avoiding.
         """
 
         return self.__action_history.has_repeated_failure(action=action)
@@ -1329,10 +1254,8 @@ class AgentState:
         """
         Record a deterministically blocked action as failure context.
 
-        Also feeds the LoopDetector window via :meth:`record_attempt` so the agent's *intent* to repeat the same blocked action
-        becomes visible to ``action_repetition``. Without this, the planner-side block path returned ``should_retry=True``
-        while the LoopDetector never saw the rejected attempt — so ``is_stuck`` never tripped, the planner's escalation gate never fired ``ASK_USER``,
-        and the workflow looped silently until ``max_steps``.
+        Also feeds the block into the LoopDetector via :meth:`record_attempt` so ``action_repetition``
+        sees the repeat-intent; without it ``is_stuck`` never trips and the workflow loops silently.
         """
 
         activity = (
@@ -1349,13 +1272,7 @@ class AgentState:
 
     def is_action_repeating_on_screen(self, action: Action) -> bool:
         """
-        Check if a tap/type action has been executed 3+ times on the current screen.
-
-        Args:
-            action: Proposed action.
-
-        Returns:
-            True if the same action has been repeated 3+ times on the current screen.
+        Whether this tap/type action has already run 3+ times on the current screen.
         """
 
         if (current := self.__runtime.screen.current) is None:
@@ -1368,10 +1285,7 @@ class AgentState:
 
     def to_checkpoint(self) -> Dict[str, object]:
         """
-        Serialize state for checkpointing.
-
-        Returns:
-            Dictionary suitable for JSON serialization.
+        Serialize the full agent state into a JSON-ready checkpoint dictionary.
         """
 
         return {

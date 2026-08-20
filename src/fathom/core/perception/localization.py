@@ -42,9 +42,8 @@ class TargetLocalizationService:
         regional_matcher: Optional[RegionalEvidenceMatcher] = None,
     ) -> None:
         """
-        Initialize the localizer with optional ensemble layer, phrase + regional
-        matchers, and run context. Defaults instantiate the Domain matchers so
-        unit tests and minimal compositions need not wire them explicitly.
+        Initialize the localizer with optional ensemble layer, phrase + regional matchers, and run
+        context; omitted matchers default to the Domain implementations.
         """
 
         self.__catalog = catalog
@@ -281,12 +280,9 @@ class TargetLocalizationService:
         result: LocalizationResult,
     ) -> None:
         """
-        Emit one structured record for each localization decision point.
-
-        These records are intentionally verbose enough to reconstruct a
-        wrong-label RCA from logs alone: action target, planner metadata,
-        method, selected element text/role/source/bounds, candidate count,
-        and the final bounds that would reach execution.
+        Emit one structured record for each localization decision point, verbose enough to
+        reconstruct a wrong-label RCA from logs alone: action target, planner metadata, method,
+        selected element text/role/source/bounds, candidate count, and the bounds reaching execution.
         """
 
         selected = self.__selected_element(result=result)

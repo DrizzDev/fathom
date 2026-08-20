@@ -45,16 +45,10 @@ class FathomActivities:
         """
         Initialize activities with runtime settings.
 
-        The :class:`FathomSettings` reference stays scoped to this
-        activity instance — it never crosses the runner / strategy
-        seam as a raw object. Instead we bind it to a
-        :class:`RuntimeConfigLoader` (Application layer) here, and
-        only the loader flows downstream via
-        :meth:`FathomBuilder.with_runtime_configuration`. This keeps SA
-        credentials, API keys, and other secrets confined to the
-        worker process scope — they cannot be passed as Temporal
-        activity arguments, cannot land in workflow history, and
-        cannot be logged by anything beneath this seam.
+        :class:`FathomSettings` stays scoped to this activity: it is bound to a
+        :class:`RuntimeConfigLoader` here and only the loader flows downstream via
+        :meth:`FathomBuilder.with_runtime_configuration`, so SA credentials, API keys, and other
+        secrets never cross into Temporal activity arguments or workflow history.
         """
 
         self.__settings = settings or FathomSettings()
@@ -98,21 +92,13 @@ class FathomActivities:
         """
         Build the Fathom runner and bundle it with any owned infrastructure.
 
-        Whether a qualifier is attached is derived from the request itself —
-        intent runs whose configuration enables qualification get a dedicated
-        composed qualifier; exploration runs and disabled-qualifier intent runs
-        fall back to the builder's default permissive qualifier.
-
-        Returns a RunnerComposition so the composition root can drain any owned
-        resources (e.g. the dedicated qualifier LLM) alongside runner cleanup.
-
-        Build-time cleanup: every adapter created here is registered onto a
-        local list before the next step runs. If any step after creation fails
-        (composer auth refusal, telemetry connection error, builder.build()
-        raising), every registered adapter is drained in reverse-creation
-        order before re-raising — no resource leaks before a RunnerComposition
-        exists. The runner's own cleanup path takes over once builder.build()
-        succeeds.
+        Whether a qualifier is attached is derived from the request: qualification-enabled intent
+        runs get a dedicated composed qualifier, while exploration and disabled-qualifier intent runs
+        fall back to the builder's default permissive one. Returns a :class:`RunnerComposition` so the
+        composition root can drain owned resources (e.g. the dedicated qualifier LLM) alongside runner
+        cleanup. If any step after creation fails, every adapter registered so far is drained in
+        reverse-creation order before re-raising; the runner's own cleanup takes over once
+        ``builder.build()`` succeeds.
         """
 
         device_configuration = self.__assembly.build_device_configuration(request=request)

@@ -6,11 +6,10 @@ from fathom.schemas.artifact import ArtifactMetadata, ArtifactReceipt
 
 class NoopSink(ArtifactSinkPort):
     """
-    Sink that performs no remote persistence.
+    Sink that persists nothing and keeps the locally staged copy.
 
-    Returns a receipt that asks the pipeline to keep the staged EFS
-    copy — useful for development, fixture-replay loops, and tests
-    where cloud upload is not desired.
+    The receipt carries an empty identifier, so the pipeline records no durable artifact.
+    Use it in development, fixture-replay loops, and tests where cloud upload is not wanted.
     """
 
     async def persist(

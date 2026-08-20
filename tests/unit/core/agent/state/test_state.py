@@ -265,7 +265,9 @@ class AgentStateLastActionPersistenceTest(unittest.TestCase):
         )
 
     def test_last_action_round_trips_through_checkpoint(self) -> None:
-        """``to_checkpoint`` / ``from_checkpoint`` must preserve ``__last_action_type`` and ``__last_action_description`` so a graph-state restore between nodes does not wipe the descriptor the LoopDetector will consume on the next ``update_screen``."""
+        """
+        ``to_checkpoint`` / ``from_checkpoint`` must preserve ``__last_action_type`` and ``__last_action_description`` so a graph-state restore between nodes does not wipe the descriptor the LoopDetector will consume on the next ``update_screen``.
+        """
 
         state = AgentState(intent="test", capabilities=self.__caps())
 
@@ -423,7 +425,7 @@ class AgentStatePlannerRetryBudgetTest(unittest.TestCase):
         )
 
     @staticmethod
-    def __tap_action(*, target: str = "More on Swiggy") -> Action:
+    def __tap_action(*, target: str = "More on Delivery") -> Action:
         """
         Tap action used to exercise the budget reset on EXECUTE dispatch.
         """
@@ -729,7 +731,7 @@ class AgentStatePlannerRetryBudgetTest(unittest.TestCase):
         state.tick_planner_retry(
             kind=RetryKind.SILENT_REJECTION,
             branch=RetryBranch.SHOULD_AVOID_ACTION,
-            action="Swipe left on More on Swiggy",
+            action="Swipe left on More on Delivery",
         )
 
         attempt = state.last_retry_attempt
@@ -737,7 +739,7 @@ class AgentStatePlannerRetryBudgetTest(unittest.TestCase):
         assert attempt is not None
         self.assertIs(attempt.kind, RetryKind.SILENT_REJECTION)
         self.assertIs(attempt.branch, RetryBranch.SHOULD_AVOID_ACTION)
-        self.assertEqual(attempt.action, "Swipe left on More on Swiggy")
+        self.assertEqual(attempt.action, "Swipe left on More on Delivery")
 
 
 class AgentStatePlannerRetryCheckpointTest(unittest.TestCase):
@@ -873,13 +875,13 @@ class AgentStateTargetAuthorityCheckpointTest(unittest.TestCase):
         state = AgentState(
             intent="x",
             capabilities=self.__caps(),
-            target_authority=TargetAuthority.requested(package="com.meesho.supply"),
+            target_authority=TargetAuthority.requested(package="com.example.shop"),
         )
 
         restored = AgentState.from_checkpoint(state.to_checkpoint(), capabilities=self.__caps())
 
         self.assertTrue(restored.target_authority.bound)
-        self.assertEqual(restored.target_authority.package, "com.meesho.supply")
+        self.assertEqual(restored.target_authority.package, "com.example.shop")
 
     def test_default_authority_is_unbound(self) -> None:
         """
@@ -899,7 +901,7 @@ class AgentStateTargetAuthorityCheckpointTest(unittest.TestCase):
         state = AgentState(
             intent="x",
             capabilities=self.__caps(),
-            target_authority=TargetAuthority.requested(package="com.meesho.supply"),
+            target_authority=TargetAuthority.requested(package="com.example.shop"),
         )
         payload = state.to_checkpoint()
         payload.pop("target_authority")
@@ -935,7 +937,7 @@ class AgentStateLoopEvidenceSegmentationTest(unittest.TestCase):
 
         return ScreenState(
             timestamp=0,
-            activity="com.meesho.supply",
+            activity="com.example.shop",
             visual_hash="c" * 16,
             activity_hash="d" * 16,
         )

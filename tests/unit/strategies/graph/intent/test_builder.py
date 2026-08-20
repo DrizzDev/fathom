@@ -245,18 +245,24 @@ class TestIntentGraphBuilderRoutes(unittest.TestCase):
 
 
 class TestRouteAfterExecute(unittest.TestCase):
-    """Pins routing decisions for the new conditional edge after EXECUTE."""
+    """
+    Pins routing decisions for the new conditional edge after EXECUTE.
+    """
 
     @staticmethod
     def __builder(*, is_cancelled: bool = False) -> IntentGraphBuilder:
-        """Build a routing-only IntentGraphBuilder bound to a minimal context."""
+        """
+        Build a routing-only IntentGraphBuilder bound to a minimal context.
+        """
 
         return IntentGraphBuilder(
             context=SimpleNamespace(is_cancelled=is_cancelled),  # type: ignore[arg-type]
         )
 
     def test_cancellation_routes_to_end(self) -> None:
-        """A cancelled context overrides any other state and routes to END."""
+        """
+        A cancelled context overrides any other state and routes to END.
+        """
 
         route = self.__builder(is_cancelled=True)._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
             {IntentStateKey.SHOULD_RETRY: True},
@@ -265,7 +271,9 @@ class TestRouteAfterExecute(unittest.TestCase):
         self.assertEqual(route, NodeName.END)
 
     def test_terminal_completion_routes_to_end(self) -> None:
-        """A terminal completion reason routes to END."""
+        """
+        A terminal completion reason routes to END.
+        """
 
         for reason in TERMINAL_COMPLETION_REASONS:
             with self.subTest(reason=reason):
@@ -278,7 +286,9 @@ class TestRouteAfterExecute(unittest.TestCase):
                 self.assertEqual(route, NodeName.END)
 
     def test_non_terminal_completion_routes_to_verify(self) -> None:
-        """A non-terminal completion (e.g. success) routes to VERIFY."""
+        """
+        A non-terminal completion (e.g. success) routes to VERIFY.
+        """
 
         route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
             {
@@ -290,7 +300,9 @@ class TestRouteAfterExecute(unittest.TestCase):
         self.assertEqual(route, NodeName.VERIFY)
 
     def test_should_retry_routes_to_ground(self) -> None:
-        """SHOULD_RETRY from EXECUTE (HITL unavailable) routes back to GROUND."""
+        """
+        SHOULD_RETRY from EXECUTE (HITL unavailable) routes back to GROUND.
+        """
 
         route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
             {IntentStateKey.SHOULD_RETRY: True},
@@ -299,7 +311,9 @@ class TestRouteAfterExecute(unittest.TestCase):
         self.assertEqual(route, NodeName.GROUND)
 
     def test_default_path_routes_to_observe(self) -> None:
-        """Successful execution with no termination/retry signal routes to OBSERVE."""
+        """
+        Successful execution with no termination/retry signal routes to OBSERVE.
+        """
 
         route = self.__builder()._IntentGraphBuilder__route_after_execute(  # type: ignore[attr-defined]
             {},

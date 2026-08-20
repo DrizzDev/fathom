@@ -127,16 +127,16 @@ class VerdictPayload:
 
 
 REAL_EXECUTABLE_INTENTS = (
-    "Search for McPuff",
+    "Search for Veg Roll",
     "open the contact app add new contact to it",
     "Search for a product, add it to cart, and complete checkout.",
     "Scroll vertically until you find Dominoes on the screen",
     "Scroll until you find McDonal's on the screen",
     "Scroll the food catalog section until you find Salad on the screen",
     "Scroll down until you find Jars & containers on the screen",
-    "Open Meesho and then scroll down until you find Jars & containers on the screen",
+    "Open Shopping and then scroll down until you find Jars & containers on the screen",
     (
-        "Open Swiggy app. Tap on Location dropdown. Select 'HSR Layout'. Tap on search bar. "
+        "Open Delivery app. Tap on Location dropdown. Select 'HSR Layout'. Tap on search bar. "
         "Enter 'Biryani' in search bar. Scroll up 40% auto suggest page. Tap on Show results."
     ),
 )
@@ -156,7 +156,7 @@ UNDER_SPECIFIED_UI_INTENTS = (
 
 
 POLITE_QUESTION_EXECUTABLE_INTENTS = (
-    "Can you open Swiggy and search for Biryani?",
+    "Can you open Delivery and search for Biryani?",
     "Can you tap the checkout button?",
     "Could you scroll down and find the price?",
     "Can you go back to the previous screen?",
@@ -219,7 +219,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         llm = ScriptedLLM(contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.9)])
         qualifier = LLMIntentQualifier(llm=llm)
 
-        await qualifier.qualify(intent="Open Swiggy")
+        await qualifier.qualify(intent="Open Delivery")
 
         self.assertEqual(len(llm.structured_outputs), 1)
         structured = llm.structured_outputs[0]
@@ -234,7 +234,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
 
         llm = ScriptedLLM(contents=[VerdictPayload.json(label="EXECUTABLE", confidence=0.95)])
         qualifier = LLMIntentQualifier(llm=llm)
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.UI_TASK)
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
@@ -268,7 +268,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         """
 
         qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=["definitely not json"]))
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
@@ -282,7 +282,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         for body in ("[]", '"foo"', "123", "null", "true"):
             with self.subTest(body=body):
                 qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[body]))
-                verdict = await qualifier.qualify(intent="Search for McPuff")
+                verdict = await qualifier.qualify(intent="Search for Veg Roll")
                 self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
                 self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
                 self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
@@ -294,7 +294,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
 
         body = json.dumps({"label": "EXECUTABLE", "confidence": 0.9, "rationale": "oops"})
         qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[body]))
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
 
@@ -315,13 +315,15 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         qualifier = LLMIntentQualifier(llm=llm)
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
 
     async def test_unknown_probably_executable_string_fails_open(self) -> None:
-        """QualificationLabel is binary."""
+        """
+        QualificationLabel is binary.
+        """
 
         llm = ScriptedLLM(
             contents=[
@@ -382,7 +384,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         qualifier = LLMIntentQualifier(llm=llm)
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.rationale.category, RationaleCategory.QUALIFIER_ERROR)
 
     async def test_markdown_fence_is_stripped(self) -> None:
@@ -393,7 +395,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         wrapped = "```json\n" + VerdictPayload.json(label="EXECUTABLE", confidence=0.9) + "\n```"
 
         qualifier = LLMIntentQualifier(llm=ScriptedLLM(contents=[wrapped]))
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
 
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
 
@@ -403,7 +405,7 @@ class LLMIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         """
 
         qualifier = LLMIntentQualifier(llm=ExplodingLLM())
-        verdict = await qualifier.qualify(intent="Search for McPuff")
+        verdict = await qualifier.qualify(intent="Search for Veg Roll")
 
         self.assertFalse(GATE_POLICY.should_block(verdict=verdict))
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
@@ -450,7 +452,7 @@ class CorpusRegressionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_polite_question_executable_intents_pass(self) -> None:
         """
-        Polite-question-form UI commands ('Can you open Swiggy?') must pass the
+        Polite-question-form UI commands ('Can you open Delivery?') must pass the
         gate. Question mark is not a block signal.
         """
 

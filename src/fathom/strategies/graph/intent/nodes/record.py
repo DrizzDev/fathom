@@ -74,9 +74,7 @@ class RecordNode:
 
     async def run(self, *, state: IntentGraphState) -> IntentGraphState:
         """
-        Record the execution result.
-
-        ERROR BOUNDARY: Wraps recording in try/except to handle storage/telemetry failures gracefully.
+        Record the execution result; storage/telemetry failures are contained so the graph continues.
         """
 
         logger.info(
@@ -143,7 +141,6 @@ class RecordNode:
         step_result: StepResult = recorded_step
         record_watch = Stopwatch()
 
-        # ERROR BOUNDARY: Wrap recording logic
         try:
             # Record in agent state (internal bookkeeping, always done)
             self.__provider.context.agent_state.record_step(result=step_result)

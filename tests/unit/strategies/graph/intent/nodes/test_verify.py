@@ -167,14 +167,14 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
 
     def _final_agent_state(self) -> AgentState:
         state = AgentState(
-            intent="change the address to salaryse office",
+            intent="change the address to finance office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
         state.update_screen(screen=self._screen())
         state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Tap address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance office address"),
             ]
         )
         state.advance_current_sub_goal()
@@ -282,7 +282,7 @@ class VerifyNodeSubGoalTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         provider = _Provider(
             agent_state=self._final_agent_state(),
-            llm_content=self._complete_with_assertion(reason="SalarySe office is selected"),
+            llm_content=self._complete_with_assertion(reason="Finance office is selected"),
         )
         node = VerifyNode(provider=provider)  # type: ignore[arg-type]
 

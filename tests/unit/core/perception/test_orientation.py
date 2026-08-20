@@ -26,7 +26,7 @@ class CaptureOrientationResolverTest(unittest.TestCase):
 
     def test_landscape_image_with_portrait_report_swaps_dims(self) -> None:
         """
-        Cooking-Craze-style mismatch: image is wider than tall, device reports portrait.
+        game-app-style mismatch: image is wider than tall, device reports portrait.
         """
 
         image = self.__png_bytes(width=2340, height=1080)

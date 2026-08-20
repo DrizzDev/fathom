@@ -12,7 +12,7 @@ RECORDER_BUILDER: Final[str] = "recorder@1"
 REQUEST_EXPIRY_DAYS: Final[int] = 30
 
 
-# These are build-time defaults, NOT deployment-tunable's:
+# These are build-time defaults, NOT deployment-tunables:
 TIMELINE_MAX_LIMIT: Final[int] = 500
 TIMELINE_DEFAULT_LIMIT: Final[int] = 100
 
@@ -63,7 +63,8 @@ CURSOR_VERSION: Final[str] = "v1"
 SHA256_HEX_LENGTH: Final[int] = 64
 
 
-# Default retention windows used by the conversation cleanup service. Hosts override these per-tenant via CleanupRequest fields.
+# Default retention windows used by the conversation cleanup service.
+# Hosts override these per-tenant via CleanupRequest fields.
 # Stored as timedelta so the unit is encoded in the type rather than the identifier suffix.
 CLEANUP_DEFAULT_BATCH_LIMIT: Final[int] = 1_000
 CLEANUP_DEFAULT_EVENT_RETENTION: Final[timedelta] = timedelta(days=90)

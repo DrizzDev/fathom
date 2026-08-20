@@ -147,7 +147,7 @@ class LLMConfiguration(BaseModel):
         description=(
             "Vision token density. 'high' gives Gemini more vertical resolution "
             "and is required for accurate bbox grounding on tall mobile screenshots. "
-            "Lower values trade latency for spatial accuracy on the failure path; for live agents the oss-of-grounding cost dominates."
+            "Lower values trade latency for spatial accuracy on the failure path; for live agents the loss-of-grounding cost dominates."
         ),
     )
 
@@ -178,14 +178,14 @@ class StorageConfiguration(BaseModel):
     backends: Set[StorageBackend] = Field(
         default={StorageBackend.LOCAL},
         description=(
-            "Storage backends to enable. Defaults to LOCAL only so unconfigured "
+            "Storage backends to enable. Defaults to LOCAL only so un-configured "
             "local runs do not attempt cloud uploads without ADC credentials. "
-            "Deployments that want CLOUD uploads pass ``backends={LOCAL, CLOUD}`` "
-            "explicitly (see ``services/crawler/manager.py``)."
+            "Deployments that want CLOUD uploads pass ``backends={LOCAL, CLOUD}`` explicitly."
         ),
     )
     storage_bucket: Optional[str] = Field(
-        default="drizz-dev-crawler-artifacts", description="Cloud storage bucket name"
+        default=None,
+        description="Cloud storage bucket name (required when the CLOUD backend is enabled)",
     )
     project_id: Optional[str] = Field(
         default=None, description="Project identifier for cloud storage"
@@ -256,14 +256,8 @@ class SwipeInteractionPolicy(BaseModel):
 
 class _DeprecatedAdaptivePolicy(BaseModel):
     """
-    Inert backwards-compatibility stub for the deleted adaptive-scroll subsystem.
-
-    The adaptive-scroll runtime was removed when the swipe coordinator replaced
-    it. Older host callers (enricher / healing bridge) still construct
-    ``ScrollInteractionPolicy.AdaptivePolicy(...)``; this stub accepts the
-    legacy kwargs without applying any behavior so those hosts continue to
-    boot while they migrate. Emit a deprecation warning per construction so
-    the migration is visible.
+    Inert stub for the removed adaptive-scroll subsystem: accepts the legacy
+    ``AdaptivePolicy(...)`` kwargs without effect and warns once per construction so callers migrate.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -597,11 +591,10 @@ class QualifierConfiguration(BaseModel):
     """
     Configuration for the intent executability qualifier.
 
-    Owns all qualifier-specific tuning defaults via `default_factory`. Each field of the inference block is set explicitly
-    from the constants module so a future generic InferenceConfiguration consumer cannot accidentally inherit qualifier-flavored values.
-
-    Use `QualifierConfiguration.evolve(...)` to override individual inference fields while keeping the rest at the eval-validated defaults;
-    see method docstring for the rationale (avoids the verbose "respecify every field" boilerplate that strict-no-defaults forces on callers).
+    Owns all qualifier tuning defaults via ``default_factory``, each inference field set explicitly from
+    the constants module so a future generic InferenceConfiguration consumer cannot inherit
+    qualifier-flavored values. Use ``evolve(...)`` to override individual inference fields while keeping
+    the rest at the eval-validated defaults.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -625,12 +618,11 @@ class QualifierConfiguration(BaseModel):
     @classmethod
     def evolve(cls, **inference_overrides: Any) -> "QualifierConfiguration":
         """
-        Build a QualifierConfiguration replacing only the named inference fields,
-        keeping all other qualifier-tuned defaults.
+        Build a QualifierConfiguration replacing only the named inference fields, keeping the rest.
 
-        Implementation routes the merged kwargs through the InferenceConfiguration constructor (not model_copy(update=...))
-        so the nested schema's `extra="forbid"` policy enforces field names. Typos in `inference_overrides` raise ValidationError
-        instead of being silently dropped onto the model's data dict.
+        Routes the merged kwargs through the InferenceConfiguration constructor (not
+        ``model_copy(update=...)``) so its ``extra="forbid"`` policy rejects a mistyped override with
+        ValidationError instead of silently dropping it.
         """
 
         base = cls()
@@ -741,7 +733,7 @@ class TelemetryConfiguration(BaseModel):
     )
     topic: Optional[str] = Field(
         default=None,
-        description="Topic or channel pattern (e.g., enricher:commands:v1:logs:{session_id})",
+        description="Topic or channel pattern (e.g., commands:v1:logs:{session_id})",
     )
     session_id: Optional[str] = Field(
         default=None, description="Session ID for channel interpolation"

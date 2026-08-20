@@ -61,7 +61,6 @@ class Reasoner:
         evidence_list: List[str] = []
         action = self.__require_action(analysis=analysis)
 
-        # Determine what we're checking completion for
         target_goal = (current_sub_goal or self.__intent).lower()
         goal_type = "sub-goal" if current_sub_goal else "intent"
 
@@ -71,16 +70,12 @@ class Reasoner:
             f"action_type={action.action_type}"
         )
 
-        # 1. Primary Signal: LLM Flag (Zero Cost - already computed)
         if analysis.is_goal_complete:
             evidence_list.append(f"LLM explicitly flagged {goal_type} completion")
 
-        # 2. Secondary Signal: Action Type (Zero Cost)
         if action.action_type == ActionType.COMPLETE:
             evidence_list.append(f"Agent recommended COMPLETE action for {goal_type}")
 
-        # 3. Tertiary Signal: Fast Fuzzy Match
-        # We check if the reasoning text semantically overlaps with the target goal
         context = f"{analysis.reasoning} {screen_description or ''}".lower()
 
         similarity = SequenceMatcher(None, target_goal, context).ratio()
@@ -91,21 +86,15 @@ class Reasoner:
         keyword_match = similarity >= RATIONALE_KEYWORD_MATCH_THRESHOLD
         action_indicates_complete = action.action_type == ActionType.COMPLETE
 
-        # 4. Additional Signal for Sub-Goals: Action Execution on Non-Opening Tasks
-        # If we're checking a sub-goal like "Open X" and the LLM is DOING something
-        # (not just planning), it means "Open X" is likely ALREADY complete
         action_suggests_next_phase = False
         if (
             current_sub_goal
             and self.__opener_policy.advanced(action_type=action.action_type)
             and any(word in target_goal for word in OPENER_GOAL_WORDS)
         ):
-            # LLM is actively performing actions. If the current sub-goal is an opener
-            # (contains "open", "launch", "navigate to", "go to"), then performing
-            # a tap/type suggests we're past the opening phase.
-            # Check if reasoning suggests we're at a next phase
+            # An opener sub-goal ("open", "launch", "navigate to", "go to") is likely already past its opening
+            # phase once the model performs a tap/type, so a next-phase keyword in the rationale confirms it.
             reasoning_lower = analysis.reasoning.lower()
-            # More flexible keyword matching - check for partial matches
             if any(keyword in reasoning_lower for keyword in NEXT_PHASE_KEYWORDS):
                 evidence_list.append(
                     f"LLM performing next-phase action ({action.action_type.value})"
@@ -202,10 +191,8 @@ class Reasoner:
                 similarity,
             )
 
-        # Surface the rejection mode for observability: a completion
-        # keyword landed in the rationale but the rationale text shares
-        # too little with the target to be trusted as evidence. This is
-        # the regression mode the similarity floor was raised to catch.
+        # Surface the rejection mode for observability: a completion keyword landed in the rationale but the
+        # rationale text shares too little with the target to be trusted as evidence.
         if keywords_found and similarity < RATIONALE_MIN_SIMILARITY_FLOOR:
             logger.info(
                 "Rationale rejected: completion keyword present but similarity below floor",

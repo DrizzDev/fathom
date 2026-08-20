@@ -43,7 +43,7 @@ logger = getLogger(__name__)
 
 class ADBRemoteDeviceAdapter(DevicePort):
     """
-    Adapter for controlling devices hosted on remote providers (e.g., Enricher).
+    Adapter for controlling devices hosted on a remote device farm.
     Implements the standard Fathom Remote Device Protocol.
     """
 
@@ -51,7 +51,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
     def __init__(self, configuration: DeviceConfiguration) -> None:
         """
-        Initialize remote device adapter.
+        Validate the remote coordinates, build the runtime configuration, and open the HTTP/2 client
+        bound to the session's interaction base URL.
         """
 
         remote = configuration.remote
@@ -110,7 +111,8 @@ class ADBRemoteDeviceAdapter(DevicePort):
     )
     async def __execute_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """
-        Executes an HTTP request with automatic retries for transient errors (5xx, timeouts). Immediately raises on 4xx errors.
+        Execute an HTTP request, retrying transient failures like 5xx responses and timeouts;
+        4xx responses raise immediately.
         """
 
         if self.__client.is_closed:
@@ -476,20 +478,20 @@ class ADBRemoteDeviceAdapter(DevicePort):
         Standardized JSend payload extractor.
         """
 
-        # 1. Check for standard JSend 'data' field
+        # JSend success envelope: unwrap the "data" object.
         if "data" in response_data and isinstance(response_data["data"], dict):
             return cast("Dict[str, Any]", response_data["data"])
 
-        # 2. Fallback to legacy 'content' field
+        # Older providers wrapped the payload in "content" instead.
         if "content" in response_data and isinstance(response_data["content"], dict):
             return cast("Dict[str, Any]", response_data["content"])
 
-        # 3. Return the root if neither is present (direct response)
+        # No wrapper present: treat the body itself as the payload.
         return response_data
 
     async def __send_command(self, request: RemoteInteractionRequest) -> ActionResult:
         """
-        Helper to transmit interaction request.
+        Send one interaction request and map the provider's status envelope to an :class:`ActionResult`.
         """
 
         start = time.time()
@@ -523,7 +525,7 @@ class ADBRemoteDeviceAdapter(DevicePort):
 
     async def close(self) -> None:
         """
-        Cleanup HTTP client.
+        Close the underlying HTTP client.
         """
 
         await self.__client.aclose()

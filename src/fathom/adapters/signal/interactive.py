@@ -48,11 +48,10 @@ class SharedInputBus:
 
 class InteractiveSignal(SignalPort):
     """
-    High-performance, event-driven HITL signal adapter.
+    Event-driven HITL signal adapter.
 
-    Architecture:
-    - Zero-Thread Multiplexing: Uses `loop.add_reader` on `sys.stdin` for O(1) kernel-level notifications.
-    - Singleton Input Bus: Broadcasts input to all active listeners (preventing theft).
+    Uses ``loop.add_reader`` on ``sys.stdin`` for thread-free kernel-level notifications, and a singleton
+    input bus that broadcasts each line to every active listener so no listener steals another's input.
     """
 
     # Global input bus for all concurrent instances
@@ -61,7 +60,7 @@ class InteractiveSignal(SignalPort):
 
     def __init__(self) -> None:
         """
-        Initialize high-scale interactive signal adapter.
+        Reset pause and context state, register the shared stdin listener, and print the HITL instructions.
         """
 
         self.__pause_requested = False
@@ -243,7 +242,7 @@ class InteractiveSignal(SignalPort):
 
     def __render_instructions(self) -> None:
         """
-        Log Instructions
+        Print the HITL controls panel to the console.
         """
 
         console.print("\n[bold cyan]HITL Mode Active[/bold cyan]")
@@ -258,7 +257,7 @@ class InteractiveSignal(SignalPort):
 
     def __render_pause_menu(self) -> None:
         """
-        Render Menu (For Pause)
+        Render the paused-execution banner and any pending injected context.
         """
 
         console.print(
@@ -269,7 +268,7 @@ class InteractiveSignal(SignalPort):
 
     def __render_options(self) -> None:
         """
-        Renders HITL Options
+        Render the resume/inject/cancel choice prompt.
         """
 
         console.print("[1] Resume | [2] Inject Context | [3] Cancel\n[bold]Choice:[/bold] ", end="")
@@ -277,7 +276,7 @@ class InteractiveSignal(SignalPort):
 
     def __handle_resume(self) -> None:
         """
-        Handler For Resume Event
+        Clear the pause flag and print the resume banner.
         """
 
         logger.info(f"InteractiveSignal: Clearing pause flag (was: {self.__pause_requested})")
@@ -286,7 +285,7 @@ class InteractiveSignal(SignalPort):
 
     async def __handle_injection(self) -> None:
         """
-        Handler For Injection Event
+        Read one injected instruction from the input bus and queue it.
         """
 
         console.print("\n[bold]Enter instruction:[/bold]")
@@ -299,7 +298,7 @@ class InteractiveSignal(SignalPort):
 
     def __del__(self) -> None:
         """
-        Cleanup singleton listener if this was the last instance (Optional).
+        No-op finalizer; listener teardown is handled elsewhere.
         """
 
         return None

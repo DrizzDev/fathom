@@ -17,7 +17,7 @@ class FakeTitleLlm(LLMPort):
     LLM test double for conversation title composition.
     """
 
-    def __init__(self, *, content: str = '"HealthTap Login"') -> None:
+    def __init__(self, *, content: str = '"Healthcare Login"') -> None:
         """
         Store the generated content returned by the fake model.
         """
@@ -70,15 +70,15 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
         title = await TitleComposer(llm=FakeTitleLlm(content='"Test login flow"')).compose(
             context=TitleContext(
                 intent=(
-                    "Open HealthTap and login with email siddhant.sisodiya@drizz.dev "
+                    "Open Healthcare and login with email test.user@example.com "
                     "and password Testin@23"
                 ),
-                package="com.healthtap.userhtexpress",
+                package="com.example.health",
             )
         )
 
         self.assertEqual(title, "Test login flow")
-        self.assertNotIn("siddhant.sisodiya", title)
+        self.assertNotIn("test.user", title)
         self.assertNotIn("Testin@23", title)
 
     async def test_compose_rejects_rogue_intent_echo(self) -> None:
@@ -89,13 +89,13 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
         title = await TitleComposer(
             llm=FakeTitleLlm(
                 content=(
-                    "Open HealthTap and login with email siddhant.sisodiya@drizz.dev "
+                    "Open Healthcare and login with email test.user@example.com "
                     "and password Testin@23"
                 )
             )
-        ).compose(context=TitleContext(intent=self.__long_intent(), package="com.healthtap"))
+        ).compose(context=TitleContext(intent=self.__long_intent(), package="com.example.health"))
 
-        self.assertEqual(title, "Authoring com.healthtap")
+        self.assertEqual(title, "Authoring com.example.health")
 
     async def test_compose_without_llm_uses_package_fallback(self) -> None:
         """
@@ -105,16 +105,16 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
         title = await TitleComposer().compose(
             context=TitleContext(
                 intent=(
-                    "Open HealthTap and login with email siddhant.sisodiya@drizz.dev "
+                    "Open Healthcare and login with email test.user@example.com "
                     "and password Testin@23"
                 ),
-                package="com.healthtap.userhtexpress",
+                package="com.example.health",
             )
         )
 
-        self.assertEqual(title, "Authoring com.healthtap.userhtexpress")
-        self.assertNotIn("HealthTap", title)
-        self.assertNotIn("siddhant.sisodiya", title)
+        self.assertEqual(title, "Authoring com.example.health")
+        self.assertNotIn("Healthcare", title)
+        self.assertNotIn("test.user", title)
 
     async def test_initial_uses_generic_authoring_fallback_without_package(self) -> None:
         """
@@ -122,7 +122,7 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
         """
 
         title = TitleComposer().initial(
-            context=TitleContext(intent="Open HealthTap and login", package=None)
+            context=TitleContext(intent="Open Healthcare and login", package=None)
         )
 
         self.assertEqual(title, "Authoring session")
@@ -177,7 +177,7 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
         prompt = TitlePromptBuilder()
 
         system = prompt.build_system_instruction()
-        user = prompt.build_prompt(intent="Open HealthTap and login with email and password")
+        user = prompt.build_prompt(intent="Open Healthcare and login with email and password")
 
         self.assertIn("short title for an authoring run", system)
         self.assertIn("Create a fresh 2-6 word action phrase", system)
@@ -191,9 +191,9 @@ class TitleComposerTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def __long_intent() -> str:
         """
-        Return a repeated intent like staging supplied for the HealthTap run.
+        Return a repeated intent like staging supplied for the Healthcare run.
         """
 
         return "\n".join(
-            "HealthTap app is opened, now login with email and password" for _ in range(10)
+            "Healthcare app is opened, now login with email and password" for _ in range(10)
         )

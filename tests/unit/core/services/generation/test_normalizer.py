@@ -34,10 +34,10 @@ class RunTraceNormalizerTest(unittest.TestCase):
 
     def __fixture_dir(self) -> Path:
         """
-        Return the committed 78a8dcbf run fixture directory.
+        Return the committed launcher run fixture directory.
         """
 
-        return Path("assets/history/2026-06-23/78a8dcbf")
+        return Path("assets/history/2026-06-23/launcher-run")
 
     def __record(
         self,
@@ -88,14 +88,14 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution="com.meesho.supply"),
-            self.__record(number=1, execution="com.meesho.supply"),
+            self.__record(number=0, execution="com.example.shop"),
+            self.__record(number=1, execution="com.example.shop"),
         )
 
         launches = self.__launches(entries=self.__normalizer.normalize(records=records).entries)
 
         self.assertEqual(len(launches), 1)
-        self.assertEqual(launches[0].package, "com.meesho.supply")
+        self.assertEqual(launches[0].package, "com.example.shop")
         self.assertEqual(launches[0].provenance, LaunchProvenance.SYNTHETIC_WARM_START)
         self.assertEqual(launches[0].source_steps, ())
 
@@ -105,15 +105,15 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution=self.__launcher(), activity="com.meesho.supply"),
-            self.__record(number=1, execution="com.meesho.supply"),
+            self.__record(number=0, execution=self.__launcher(), activity="com.example.shop"),
+            self.__record(number=1, execution="com.example.shop"),
         )
 
         entries = self.__normalizer.normalize(records=records).entries
         launches = self.__launches(entries=entries)
 
         self.assertEqual(len(launches), 1)
-        self.assertEqual(launches[0].package, "com.meesho.supply")
+        self.assertEqual(launches[0].package, "com.example.shop")
         self.assertEqual(launches[0].provenance, LaunchProvenance.LAUNCHER_TRANSITION)
         self.assertEqual(launches[0].source_steps, (0,))
         self.assertEqual(self.__kept(entries=entries), (1,))
@@ -124,9 +124,9 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution="com.meesho.supply"),
+            self.__record(number=0, execution="com.example.shop"),
             self.__record(number=1, execution="com.google.android.gms"),
-            self.__record(number=2, execution="com.meesho.supply"),
+            self.__record(number=2, execution="com.example.shop"),
         )
 
         entries = self.__normalizer.normalize(records=records).entries
@@ -140,10 +140,10 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution="com.healthtap.userhtexpress"),
+            self.__record(number=0, execution="com.example.health"),
             self.__record(
                 number=1,
-                execution="com.healthtap.userhtexpress",
+                execution="com.example.health",
                 activity="com.android.chrome",
             ),
             self.__record(number=2, execution="com.android.chrome"),
@@ -152,7 +152,7 @@ class RunTraceNormalizerTest(unittest.TestCase):
         entries = self.__normalizer.normalize(records=records).entries
         launches = self.__launches(entries=entries)
 
-        self.assertEqual([marker.package for marker in launches], ["com.healthtap.userhtexpress"])
+        self.assertEqual([marker.package for marker in launches], ["com.example.health"])
         self.assertEqual(self.__kept(entries=entries), (0, 1, 2))
 
     def test_launcher_opened_browser_remains_a_real_launch(self) -> None:
@@ -161,7 +161,7 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution="com.healthtap.userhtexpress"),
+            self.__record(number=0, execution="com.example.health"),
             self.__record(
                 number=1,
                 execution=self.__launcher(),
@@ -174,7 +174,7 @@ class RunTraceNormalizerTest(unittest.TestCase):
 
         self.assertEqual(
             [marker.package for marker in launches],
-            ["com.healthtap.userhtexpress", "com.android.chrome"],
+            ["com.example.health", "com.android.chrome"],
         )
 
     def test_trailing_launcher_step_is_dropped_without_launch(self) -> None:
@@ -183,7 +183,7 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution="com.meesho.supply"),
+            self.__record(number=0, execution="com.example.shop"),
             self.__record(
                 number=1, execution=self.__launcher(), activity=self.__launcher(), action="home"
             ),
@@ -245,21 +245,21 @@ class RunTraceNormalizerTest(unittest.TestCase):
         """
 
         records = (
-            self.__record(number=0, execution=self.__launcher(), activity="com.meesho.supply"),
-            self.__record(number=1, execution="com.meesho.supply"),
+            self.__record(number=0, execution=self.__launcher(), activity="com.example.shop"),
+            self.__record(number=1, execution="com.example.shop"),
         )
 
         launches = self.__launches(entries=self.__normalizer.normalize(records=records).entries)
 
         self.assertTrue(all(marker.package not in LAUNCHER_PACKAGES for marker in launches))
 
-    def test_78a8dcbf_run_normalizes_to_meesho_launch(self) -> None:
+    def test_launcher_run_normalizes_to_shopping_launch(self) -> None:
         """
-        The recorded launcher-launched Meesho run yields one Meesho launch and keeps system steps.
+        The recorded launcher-launched Shopping run yields one Shopping launch and keeps system steps.
         """
 
         if not self.__fixture_dir().exists():
-            self.skipTest("78a8dcbf run history fixture absent (fixtures are gitignored).")
+            self.skipTest("launcher run history fixture absent (fixtures are gitignored).")
 
         records: List[StepRecord] = []
         for path in sorted(self.__fixture_dir().glob("history__com.*.json")):
@@ -270,7 +270,7 @@ class RunTraceNormalizerTest(unittest.TestCase):
         launches = self.__launches(entries=entries)
 
         self.assertEqual(len(launches), 1)
-        self.assertEqual(launches[0].package, "com.meesho.supply")
+        self.assertEqual(launches[0].package, "com.example.shop")
         self.assertEqual(launches[0].provenance, LaunchProvenance.LAUNCHER_TRANSITION)
         self.assertIn(0, launches[0].source_steps)
         self.assertTrue(all(marker.package not in LAUNCHER_PACKAGES for marker in launches))

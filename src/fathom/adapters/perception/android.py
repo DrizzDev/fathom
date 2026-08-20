@@ -21,7 +21,7 @@ class AndroidPerceptionAdapter(PerceptionPort):
 
     def __init__(self, *, device: DevicePort, include_hierarchy: bool) -> None:
         """
-        Initialize Android perception adapter.
+        Bind the device adapter, whether to include the hierarchy dump, and a fresh hierarchy breaker.
         """
 
         self.__device = device

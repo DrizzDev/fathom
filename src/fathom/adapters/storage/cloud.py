@@ -17,7 +17,7 @@ class CloudStorage(StoragePort):
 
     def __init__(self, storage: IImageStorage) -> None:
         """
-        Initialize cloud storage adapter with injected storage infrastructure.
+        Bind the adapter to the injected image-storage backend.
         """
 
         self.__storage = storage

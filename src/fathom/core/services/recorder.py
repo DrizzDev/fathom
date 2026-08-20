@@ -90,12 +90,9 @@ T = TypeVar("T")
 
 class RecorderHealth:
     """
-    Tracks recorder activity so the first durable-write failure suppresses
-    subsequent writes for the lifetime of the run.
-
-    The recorder is best-effort by design: a broken interaction port should
-    never crash a Fathom run. After the first InteractionError, the recorder
-    no-ops and emits one error event so the host can surface the outage.
+    Track recorder activity so the first durable-write failure suppresses subsequent writes for the
+    run; after the first InteractionError the recorder no-ops and emits one error event so the host
+    can surface the outage.
     """
 
     def __init__(self) -> None:
@@ -116,7 +113,8 @@ class RecorderHealth:
     def record_failure(self) -> bool:
         """
         Mark a failure.
-        Return True for the first failure (caller emits one error event); False for subsequent failures (silent suppression).
+        Return True for the first failure (caller emits one error event);
+        False for subsequent failures (silent suppression).
         """
 
         first = self.__active
@@ -145,8 +143,9 @@ class RecorderHealth:
 
 class ConversationRecorder:
     """
-    Host-neutral recorder that translates runtime facts into conversation
-    use cases. Every durable write is paired with a structured telemetry event so live clients can render activity without polling.
+    Host-neutral recorder that translates runtime facts into conversation use cases. Every durable
+    write is paired with a structured telemetry event so live clients can render activity without
+    polling.
     """
 
     def __init__(
@@ -359,12 +358,11 @@ class ConversationRecorder:
         envelope_for: Callable[[T], TelemetryEnvelope],
     ) -> Optional[T]:
         """
-        Run a recorder operation, suppressing further writes after the first
-        durable-write failure and emitting one structured telemetry event per successful write.
+        Run a recorder operation, suppressing further writes after the first durable-write failure and
+        emitting one structured telemetry event per successful write.
 
-        The recorder is best-effort: a broken interaction port (locked DB, filesystem error, integrity violation, network blip on a remote adapter)
-        must never crash a Fathom run. We catch every Exception from the interaction port. InteractionError preserves the typed message;
-        any other exception is wrapped into a generic disabled notice so the host can alert without losing the run.
+        Best-effort: every Exception from the interaction port is caught so a broken port never crashes
+        a run; InteractionError keeps its typed message, any other error becomes a generic disabled notice.
         """
 
         if not self.__health.is_active():
@@ -692,12 +690,9 @@ class ConversationRecorder:
         """
         Create or join the requesting actor for the run thread.
 
-        Two concurrent runs starting in the same conversation can race on
-        thread creation: both observe "no thread", both call create_thread,
-        and the second collides on the threads PRIMARY KEY. We catch only
-        the typed ThreadConflictError (one specific case from create_thread)
-        and fall through to the existing-thread path. Any other failure
-        from get_thread or create_thread propagates so the recorder's failure-suppression layer can disable cleanly.
+        Two concurrent runs can race on thread creation and collide on the threads PRIMARY KEY; only
+        the typed ThreadConflictError is caught, falling through to the existing-thread path, while any
+        other failure propagates so the failure-suppression layer can disable cleanly.
         """
 
         thread_existed = await self.__thread_exists(run=run)
@@ -815,7 +810,8 @@ class ConversationRecorder:
     async def __thread_exists(self, *, run: Run) -> bool:
         """
         Probe whether the run's thread already exists. Returns False on the
-        typed ThreadNotFoundError; any other failure propagates so the recorder's failure-suppression layer can disable cleanly.
+        typed ThreadNotFoundError; any other failure propagates so the recorder's
+        failure-suppression layer can disable cleanly.
         """
 
         return await self.__conversation.internal_exists(

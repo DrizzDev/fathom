@@ -31,7 +31,7 @@ class LauncherClassifierTest(unittest.TestCase):
         A real app package is not classified as a launcher.
         """
 
-        self.assertFalse(self.__classifier.is_launcher(package="com.meesho.supply"))
+        self.assertFalse(self.__classifier.is_launcher(package="com.example.shop"))
 
     def test_honours_an_injected_launcher_set(self) -> None:
         """

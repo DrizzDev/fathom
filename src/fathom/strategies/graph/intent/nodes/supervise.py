@@ -131,11 +131,8 @@ class SuperviseNode:
         step = planned_step.model_copy(update={"action": resolve_result.action})
 
         if resolve_result.status == ResolveStatus.RESOLVED:
-            # Perception cascade — Stage 1: snap_to_label against the
-            # merged manifest. ``state[ELEMENTS]`` contains XML, OCR,
-            # icon, and CV entries thanks to ManifestMerger, so a
-            # successful snap may be sourced from any perception layer,
-            # not only XML.
+            # A successful snap may bind against any perception layer: ManifestMerger populates
+            # ``state[ELEMENTS]`` with XML, OCR, icon, and CV entries, not only XML.
             logger.info(
                 "Perception cascade Stage 1 (snap) committed",
                 extra={
@@ -148,10 +145,8 @@ class SuperviseNode:
             )
             localization = self.__localization_from_snap(step=step)
         else:
-            # Stage 2: vision-localizer (Gemini) + local-localizer
-            # (DocumentAI / icon templates / overlay pixels) via the
-            # gate. Runs when the manifest snap could not bind the
-            # target to a concrete bounds.
+            # Runs when the manifest snap could not bind the target to concrete bounds: fall back to the
+            # vision-localizer plus local-localizer (icon templates / overlay pixels) via the gate.
             snap_outcome = resolve_result.unresolved_kind
             logger.info(
                 "Perception cascade Stage 2 (vision-localizer) engaged",

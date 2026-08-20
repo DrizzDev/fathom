@@ -389,7 +389,7 @@ class TestLiveConversationLayerPostgres:
                 audience=Audience.THREAD,
                 created=now + timedelta(seconds=6),
                 body={
-                    "package": "com.drizz.live",
+                    "package": "com.example.live",
                     "intent": "Run the live Postgres path.",
                 },
             )
@@ -716,7 +716,7 @@ class TestLiveConversationLayerPostgres:
         assert summary.runs[0].execution.id == ids.execution
 
         assert summary.runs[0].intent.packages is not None
-        assert summary.runs[0].intent.packages.target == "com.drizz.live"
+        assert summary.runs[0].intent.packages.target == "com.example.live"
         assert summary.runs[0].intent.text == "Run the live Postgres path."
 
         assert summary.runs[0].outcome.status == "success"

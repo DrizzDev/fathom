@@ -12,31 +12,23 @@ logger = logging.getLogger(__name__)
 
 class LLMSummarizer(SummarizationPort):
     """
-    Uses an LLM with structured tool calling to semantically compress execution traces.
+    Compresses an execution trace into a structured milestone via LLM tool calling.
 
-    Produces structured milestones that capture:
-    - What was accomplished (outcomes)
-    - How it was done (key actions)
-    - What challenges were faced (failures/retries)
-
-    Uses tool calling for speed and structured output.
+    The milestone captures what was accomplished (outcomes), the key actions that got there,
+    and any challenges (failures or retries).
     """
 
     def __init__(self, llm: LLMPort) -> None:
         """
-        Initialize with an LLM provider.
+        Bind the LLM port used for summarization.
         """
 
         self.__llm = llm
 
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
         """
-        Generates a structured semantic summary using tool calling.
-
-        Returns a formatted milestone string that includes:
-        - Main accomplishment
-        - Key actions taken
-        - Challenges faced (if any)
+        Build a milestone summary of the trace via tool calling: the accomplishment, the key actions,
+        and any challenges, falling back to plain content or a counts line when no tool call returns.
         """
 
         if not trace:

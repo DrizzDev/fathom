@@ -145,7 +145,7 @@ class FathomBuilderWithAssemblyTest(unittest.TestCase):
     QualifierConfiguration.inference.{model, timeout, max_retries, ...} actually
     take effect. Without it, the builder falls back to running the qualifier on
     the planner LLM and ignores the inference block — the documented prior
-    behavior that Enricher silently inherited.
+    behavior that host callers silently inherited.
     """
 
     @staticmethod

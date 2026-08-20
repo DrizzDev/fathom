@@ -12,7 +12,7 @@ from fathom.schemas.steps import StepRecord
 
 class AuditService:
     """
-    Handles logging and console visualization of agent execution.
+    Renders per-step execution audits, prompts, and context to a Rich console.
     """
 
     def __init__(self, *, console: Optional[Any] = None) -> None:
@@ -31,7 +31,6 @@ class AuditService:
         full_context = manager.get_full_context()
         Panel, Table, escape = self.__rich_types()
 
-        # 1. Build Roadmap Table
         roadmap = full_context.get("roadmap")
         roadmap_table = Table.grid(padding=(0, 1))
         roadmap_table.add_column(style="bold blue")
@@ -40,7 +39,6 @@ class AuditService:
         intent = getattr(roadmap, "intent", "Unknown")
         roadmap_table.add_row("Intent:", escape(str(intent)))
 
-        # 2. Build Guidance Block
         if guidance := manager.get_user_guidance():
             guidance_panel = Table.grid(padding=(0, 1))
             for instruction in guidance:
@@ -58,7 +56,6 @@ class AuditService:
                 )
             )
 
-        # 3. Build Milestones/Trace summary
         summary = Table.grid(padding=(0, 1))
         summary.add_column(style="dim")
         summary.add_column()
@@ -150,7 +147,6 @@ class AuditService:
         if is_stuck:
             audit_grid.add_row("[bold red]STUCK:[/bold red]", "YES")
 
-        # Duration metrics
         audit_grid.add_row("Grounding:", self.__format_ms(seconds=grounding_duration))
 
         if hierarchy_duration > 0:
@@ -162,7 +158,6 @@ class AuditService:
                     "LLM Analysis:", self.__format_ms(seconds=plan.metrics["llm_analysis"])
                 )
 
-            # Token usage
             prompt_t = int(plan.metrics.get("prompt_tokens", 0))
             completion_t = int(plan.metrics.get("completion_tokens", 0))
 
@@ -170,7 +165,6 @@ class AuditService:
                 token_info = f"{prompt_t + completion_t:,} (P:{prompt_t:,} | C:{completion_t:,})"
                 audit_grid.add_row("Tokens:", f"[dim]{token_info}[/dim]")
 
-        # Add confidence score
         if plan.step and plan.step.action:
             confidence_pct = plan.step.action.confidence * 100
             confidence_color = (
@@ -200,12 +194,10 @@ class AuditService:
             )
         )
 
-        # Reasoning Output
         action_info = Table.grid(padding=(0, 2))
         action_info.add_column(style="bold yellow")
         action_info.add_column()
 
-        # Use NLP description for the action
         action_info.add_row("Action:", escape(str(result.action_description or result.action_type)))
         action_info.add_row("Target:", escape(str(result.natural_language_target or result.target)))
 
@@ -218,7 +210,7 @@ class AuditService:
 
     def __format_ms(self, seconds: float = 0, milliseconds: float = 0) -> str:
         """
-        Format time elegantly.
+        Format a duration as seconds with a bracketed millisecond value.
         """
 
         total_ms = (seconds * 1000) + milliseconds

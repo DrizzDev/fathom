@@ -29,8 +29,8 @@ class _ActivePhase:
 
 class PhaseAnnouncer:
     """
-    Emits client-facing phase events through the telemetry port and keeps a
-    single background heartbeat alive while the most recently announced phase is still in flight.
+    Emits client-facing phase events through the telemetry port and keeps a single background
+    heartbeat alive while the most recently announced phase is still in flight.
     """
 
     def __init__(self, *, message: PhaseMessage, telemetry: TelemetryPort) -> None:
@@ -229,8 +229,8 @@ class PhaseAnnouncer:
 
     async def __heartbeat(self, *, kind: PhaseKind, intent: str) -> None:
         """
-        Emit the heartbeat message at the configured cadence, bounded by the
-        configured beat limit; cancellation stops the loop immediately.
+        Emit the heartbeat message at the configured cadence, bounded by the configured beat limit;
+        cancellation stops the loop immediately.
         """
 
         budget = self.__message.heartbeat

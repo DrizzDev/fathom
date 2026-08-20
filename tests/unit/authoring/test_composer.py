@@ -155,7 +155,7 @@ class StepDraftComposerTest(unittest.TestCase):
         evidence = Evidence(
             intent="login",
             goal="login",
-            package="com.healthtap.userhtexpress",
+            package="com.example.health",
             partial=False,
             steps=(
                 EvidenceStep(
@@ -163,7 +163,7 @@ class StepDraftComposerTest(unittest.TestCase):
                     event="launch",
                     action="launch",
                     launch=StepLaunch(
-                        package="com.healthtap.userhtexpress",
+                        package="com.example.health",
                         provenance=LaunchProvenance.LAUNCHER_TRANSITION,
                         source_steps=(0,),
                     ),
@@ -174,14 +174,14 @@ class StepDraftComposerTest(unittest.TestCase):
         baseline = AuthoringBaseline(
             content="\n".join(
                 (
-                    "OPEN_APP: com.healthtap.userhtexpress",
+                    "OPEN_APP: com.example.health",
                     'Type "user@example.com" into Email field',
                 )
             ),
             partial=False,
             commands=(
                 AuthoringBaselineCommand(
-                    text="OPEN_APP: com.healthtap.userhtexpress",
+                    text="OPEN_APP: com.example.health",
                     role=ScriptCommandRole.LAUNCH,
                     source_steps=(0,),
                 ),
@@ -192,7 +192,7 @@ class StepDraftComposerTest(unittest.TestCase):
             ),
         )
         drafts = (
-            self.__draft(step=0, text="OPEN_APP: com.healthtap.userhtexpress"),
+            self.__draft(step=0, text="OPEN_APP: com.example.health"),
             self.__draft(step=1, text='Type "user@example.com" into Email field'),
         )
 
@@ -200,7 +200,7 @@ class StepDraftComposerTest(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.text.splitlines().count("OPEN_APP: com.healthtap.userhtexpress"), 1)
+        self.assertEqual(result.text.splitlines().count("OPEN_APP: com.example.health"), 1)
 
     def test_warm_start_launch_baseline_is_kept_without_source_steps(self) -> None:
         """
@@ -211,7 +211,7 @@ class StepDraftComposerTest(unittest.TestCase):
         evidence = Evidence(
             intent="login",
             goal="login",
-            package="com.healthtap.userhtexpress",
+            package="com.example.health",
             partial=False,
             steps=(
                 EvidenceStep(
@@ -219,7 +219,7 @@ class StepDraftComposerTest(unittest.TestCase):
                     event="launch",
                     action="launch",
                     launch=StepLaunch(
-                        package="com.healthtap.userhtexpress",
+                        package="com.example.health",
                         provenance=LaunchProvenance.SYNTHETIC_WARM_START,
                     ),
                 ),
@@ -229,14 +229,14 @@ class StepDraftComposerTest(unittest.TestCase):
         baseline = AuthoringBaseline(
             content="\n".join(
                 (
-                    "OPEN_APP: com.healthtap.userhtexpress",
+                    "OPEN_APP: com.example.health",
                     'Type "user@example.com" into Email field',
                 )
             ),
             partial=False,
             commands=(
                 AuthoringBaselineCommand(
-                    text="OPEN_APP: com.healthtap.userhtexpress",
+                    text="OPEN_APP: com.example.health",
                     role=ScriptCommandRole.LAUNCH,
                 ),
                 AuthoringBaselineCommand(
@@ -246,7 +246,7 @@ class StepDraftComposerTest(unittest.TestCase):
             ),
         )
         drafts = (
-            self.__draft(step=0, text="OPEN_APP: com.healthtap.userhtexpress"),
+            self.__draft(step=0, text="OPEN_APP: com.example.health"),
             self.__draft(step=1, text='Type "user@example.com" into Email field'),
         )
 
@@ -258,7 +258,7 @@ class StepDraftComposerTest(unittest.TestCase):
             result.text,
             "\n".join(
                 (
-                    "OPEN_APP: com.healthtap.userhtexpress",
+                    "OPEN_APP: com.example.health",
                     'Type "user@example.com" into Email field',
                 )
             ),

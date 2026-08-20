@@ -42,7 +42,7 @@ from fathom.schemas.interaction import (
 
 class TaskRepository:
     """
-    persistent-store backed repository for durable conversation tasks.
+    Persistent-store backed repository for durable conversation tasks.
     """
 
     __FINISH_EVENT_KINDS: Dict[TaskState, EventKind] = {
@@ -336,7 +336,8 @@ class TaskRepository:
 
     async def recent_task(self, *, query: TaskQuery) -> Optional[Task]:
         """
-        Load the most-recently-created task in the thread using a bounded single-row query, honoring the caller's deletion filter.
+        Load the most-recently-created task in the thread using a bounded single-row query,
+        honoring the caller's deletion filter.
         """
 
         row = (

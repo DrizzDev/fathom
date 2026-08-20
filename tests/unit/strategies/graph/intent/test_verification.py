@@ -39,7 +39,7 @@ class VerificationModePolicyTest(unittest.TestCase):
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Open address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance address"),
             ]
         )
 
@@ -54,7 +54,7 @@ class VerificationModePolicyTest(unittest.TestCase):
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
 
         mode = self.__policy.mode_for_producer(agent_state=agent_state)
@@ -68,7 +68,7 @@ class VerificationModePolicyTest(unittest.TestCase):
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
         agent_state.advance_current_sub_goal()
 
@@ -99,7 +99,7 @@ class VerificationModePolicyTest(unittest.TestCase):
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Open address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance address"),
             ]
         )
 
@@ -114,7 +114,7 @@ class VerificationModePolicyTest(unittest.TestCase):
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
 
         mode = self.__policy.mode_for_verify(state={}, agent_state=agent_state)

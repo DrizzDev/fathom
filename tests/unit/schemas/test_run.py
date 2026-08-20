@@ -47,7 +47,7 @@ class TestRunRequest(unittest.TestCase):
                 max_steps=25,
                 use_xml=True,
                 intent="Open Airbnb",
-                package_name="com.airbnb.android",
+                package_name="com.example.airbnb",
             ),
             runtime=RuntimeConfiguration(
                 interactive=True,
@@ -69,7 +69,7 @@ class TestRunRequest(unittest.TestCase):
                             "remote": {
                                 "session_id": "session-123",
                                 "execution_id": "execution-123",
-                                "provider_url": "https://core.drizz.io/v1",
+                                "provider_url": "https://api.example.com/v1",
                             },
                         },
                     )
@@ -171,7 +171,7 @@ class TestRunRequest(unittest.TestCase):
                             "remote": {
                                 "session_id": "session-123",
                                 "execution_id": "execution-123",
-                                "provider_url": "https://core.drizz.io/v1",
+                                "provider_url": "https://api.example.com/v1",
                             },
                         }
                     )

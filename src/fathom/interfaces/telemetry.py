@@ -8,7 +8,7 @@ TelemetryLevel: TypeAlias = Literal["debug", "info", "warning", "error"]
 
 class TelemetryPort(ABC):
     """
-    Abstract interface for telemetry and observability.
+    Leveled structured-logging and observability sink.
     """
 
     @abstractmethod

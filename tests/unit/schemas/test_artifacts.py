@@ -93,7 +93,7 @@ class TestScreenArtifact(unittest.TestCase):
         """
 
         with self.assertRaises(ValidationError):
-            ScreenArtifact(uri="/tmp/before.png", storage_backend="cloudinary")  # type: ignore[arg-type]
+            ScreenArtifact(uri="/tmp/before.png", storage_backend="unknown_backend")  # type: ignore[arg-type]
 
     def test_artifact_is_frozen(self) -> None:
         """

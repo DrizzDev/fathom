@@ -26,7 +26,7 @@ class PermissiveIntentQualifierTest(unittest.IsolatedAsyncioTestCase):
         A well-formed intent must be accepted with PERMISSIVE rationale.
         """
 
-        verdict = await self.__qualifier.qualify(intent="Search for McPuff")
+        verdict = await self.__qualifier.qualify(intent="Search for Veg Roll")
         self.assertEqual(verdict.label, QualificationLabel.EXECUTABLE)
         self.assertEqual(verdict.rationale.category, RationaleCategory.PERMISSIVE)
         self.assertFalse(self.__policy.should_block(verdict=verdict))

@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 class MessageRepository:
     """
-    persistent-store backed repository for durable conversation messages.
+    Persistent-store backed repository for durable conversation messages.
     """
 
     def __init__(

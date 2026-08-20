@@ -11,13 +11,10 @@ class DocumentAiCredentials(BaseModel):
     """
     Provider credentials for the Document AI OCR adapter loaded from env vars.
 
-    ``credentials`` carries the same service-account material that the
-    Gemini adapter consumes (either an inline dict from
-    ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` or a file path from
-    ``GOOGLE_APPLICATION_CREDENTIALS``). The adapter materializes it
-    into a :class:`google.oauth2.service_account.Credentials` instance
-    so Document AI authenticates against the same identity as Gemini —
-    no reliance on ambient ``gcloud`` ADC or GCE metadata.
+    ``credentials`` carries the same service-account material the Gemini adapter consumes — an inline dict
+    from ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` or a path from ``GOOGLE_APPLICATION_CREDENTIALS`` — which
+    the adapter materializes into a :class:`google.oauth2.service_account.Credentials` so Document AI
+    authenticates as the same identity as Gemini, never via ambient ``gcloud`` ADC or GCE metadata.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -131,14 +128,12 @@ class JournalConfiguration(BaseModel):
 
 class PerceptionConfiguration(BaseModel):
     """
-    Boot-time configuration for the perception layer (OCR, CV, icon, overlay).
+    Boot-time configuration for the perception layer.
 
-    Every perception subsystem is opt-in. When all four flags are False
-    the runtime falls back to the original XML+LLM-only flow: drawer
-    extracts elements from the platform XML, LLM grounds against that
-    manifest, snap-to-label resolves coordinates. Each ``enabled`` flag
-    turns its subsystem into a fallback contributor that augments the
-    manifest when the primary path has insufficient evidence.
+    Every subsystem is opt-in. With all disabled the runtime runs the XML+LLM-only flow (drawer extracts
+    elements from platform XML, the LLM grounds against that manifest, snap-to-label resolves
+    coordinates); each ``enabled`` flag makes its subsystem a fallback contributor that augments the
+    manifest when the primary path lacks evidence.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

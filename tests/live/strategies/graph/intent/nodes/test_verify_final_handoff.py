@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import time
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence
 from unittest.mock import AsyncMock, MagicMock
@@ -91,9 +90,9 @@ def _print_llm_responses(*, responses: List[str]) -> None:
         print(f"\n[VERIFY_LLM_RESPONSE_{index}]\n{response}\n")
 
 
-class SalarySeModalFixture:
+class FinanceModalFixture:
     """
-    Builds a visual replay of the SalarySe address-confirmation blocker.
+    Builds a visual replay of the Finance address-confirmation blocker.
     """
 
     @staticmethod
@@ -107,7 +106,7 @@ class SalarySeModalFixture:
 
         draw.rectangle((0, 0, 402, 874), fill="#f3f3f3")
         draw.text((30, 60), "Selected Address", fill="#666666")
-        draw.text((30, 90), "SalarySe office", fill="#111111")
+        draw.text((30, 90), "Finance office", fill="#111111")
         draw.rectangle((0, 0, 402, 874), fill="#000000")
 
         draw.rectangle((36, 280, 366, 560), fill="#ffffff", outline="#222222", width=2)
@@ -125,13 +124,13 @@ class SalarySeModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.swiggy.android/.HomeActivity",
+            activity="com.example.delivery/.HomeActivity",
         )
 
     @staticmethod
     def completed_capture() -> ScreenCapture:
         """
-        Render the post-correction screen where the SalarySe address is selected and no modal remains.
+        Render the post-correction screen where the Finance address is selected and no modal remains.
         """
 
         image = Image.new("RGB", (402, 874), "#ffffff")
@@ -140,9 +139,9 @@ class SalarySeModalFixture:
         draw.rectangle((0, 0, 402, 96), fill="#fc8019")
         draw.text((24, 36), "Selected Address", fill="#ffffff")
         draw.rectangle((24, 140, 378, 260), fill="#f7fff7", outline="#178a3b", width=3)
-        draw.text((48, 170), "SalarySe office", fill="#111111")
+        draw.text((48, 170), "Finance office", fill="#111111")
         draw.text((48, 205), "Delivery address selected", fill="#178a3b")
-        draw.text((48, 330), "Restaurants near SalarySe office", fill="#111111")
+        draw.text((48, 330), "Restaurants near Finance office", fill="#111111")
         draw.rectangle((48, 385, 354, 455), fill="#f1f1f1", outline="#dddddd")
         draw.text((72, 410), "Food delivery home screen", fill="#333333")
 
@@ -154,60 +153,7 @@ class SalarySeModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.swiggy.android/.HomeActivity",
-        )
-
-
-class HsrProdAssetFixture:
-    """
-    Loads the downloaded 6f72ec86 Swiggy screenshots for live verifier replay.
-    """
-
-    ASSET_ROOT = Path(
-        "/Users/aman/Desktop/Drizz/fathom/debug/"
-        "6f72ec86-5952-4850-add9-631b4858c6aa/assets/screenshot/"
-        "6f72ec86-5952-4850-add9-631b4858c6aa"
-    )
-    MODAL_SCREENSHOT = ASSET_ROOT / "step-005__screenshot__2026-06-11T06-28-10Z-692.png"
-    COMPLETED_SCREENSHOT = ASSET_ROOT / "step-006__screenshot__2026-06-11T06-28-25Z-609.png"
-
-    @classmethod
-    def is_available(cls) -> bool:
-        """
-        Return whether the downloaded prod replay screenshots are present locally.
-        """
-
-        return cls.MODAL_SCREENSHOT.exists() and cls.COMPLETED_SCREENSHOT.exists()
-
-    @classmethod
-    def captures(cls) -> List[ScreenCapture]:
-        """
-        Return modal and completed captures from the downloaded prod artifacts.
-        """
-
-        return [
-            cls.__capture(path=cls.MODAL_SCREENSHOT, timestamp=1781159290692),
-            cls.__capture(path=cls.COMPLETED_SCREENSHOT, timestamp=1781159305609),
-        ]
-
-    @staticmethod
-    def __capture(*, path: Path, timestamp: int) -> ScreenCapture:
-        """
-        Build a ScreenCapture from a downloaded screenshot path.
-        """
-
-        image = Image.open(path)
-        try:
-            width, height = image.size
-        finally:
-            image.close()
-
-        return ScreenCapture(
-            width=width,
-            height=height,
-            image=path.read_bytes(),
-            timestamp=timestamp,
-            activity="in.swiggy.android",
+            activity="com.example.delivery/.HomeActivity",
         )
 
 
@@ -335,7 +281,7 @@ class _Provider:
             agent_state=agent_state,
             perception=_Perception(
                 captures=captures
-                or [SalarySeModalFixture.capture(), SalarySeModalFixture.completed_capture()]
+                or [FinanceModalFixture.capture(), FinanceModalFixture.completed_capture()]
             ),
             context_manager=self.context_manager,
             auditor=SimpleNamespace(log_step=MagicMock()),
@@ -355,7 +301,7 @@ class _Provider:
         return False
 
 
-class TestSalarySeFinalVerifyLive:
+class TestFinanceFinalVerifyLive:
     """
     Live Gemini replay for the final-subgoal VERIFY rejection case.
     """
@@ -363,7 +309,7 @@ class TestSalarySeFinalVerifyLive:
     @staticmethod
     def __agent_state() -> AgentState:
         """
-        Build AgentState with the final SalarySe sub-goal active.
+        Build AgentState with the final Finance sub-goal active.
         """
 
         agent_state = AgentState(
@@ -375,52 +321,16 @@ class TestSalarySeFinalVerifyLive:
                 timestamp=1,
                 visual_hash="1" * 16,
                 activity_hash="a" * 16,
-                activity="in.swiggy.android/.HomeActivity",
+                activity="com.example.delivery/.HomeActivity",
             )
         )
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Tap address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance office address"),
             ]
         )
         agent_state.advance_current_sub_goal()
-        return agent_state
-
-    @staticmethod
-    def __hsr_agent_state() -> AgentState:
-        """
-        Build AgentState at the 6f72ec86 final-confirmation handoff.
-        """
-
-        agent_state = AgentState(
-            intent="Change the address to HSR Layout",
-            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
-        )
-        agent_state.update_screen(
-            screen=ScreenState(
-                timestamp=1,
-                visual_hash="1" * 16,
-                activity_hash="a" * 16,
-                activity="in.swiggy.android",
-            )
-        )
-        agent_state.set_sub_goals(
-            [
-                SubGoalFixtures.make(
-                    index=0, description="Tap on the current address or change address option"
-                ),
-                SubGoalFixtures.make(
-                    index=1, description="Type HSR Layout into the address search field"
-                ),
-                SubGoalFixtures.make(index=2, description="Tap HSR Layout from the search results"),
-                SubGoalFixtures.make(
-                    index=3, description="Tap the button to confirm or save the address change"
-                ),
-            ]
-        )
-        for _ in range(3):
-            agent_state.advance_current_sub_goal()
         return agent_state
 
     @staticmethod
@@ -454,28 +364,7 @@ class TestSalarySeFinalVerifyLive:
             timestamp=2,
             visual_hash="2" * 16,
             activity_hash="a" * 16,
-            activity="in.swiggy.android/.HomeActivity",
-        )
-
-    @staticmethod
-    def __hsr_corrective_step_result() -> StepResult:
-        """
-        Build the corrective HSR modal action from the prod run.
-        """
-
-        action = Action(
-            confidence=1.0,
-            action_type=ActionType.TAP,
-            target="Yes, continue with this location",
-            rationale="Tap the confirmation modal action before validating HSR Layout",
-        )
-        return StepResult(
-            success=True,
-            duration=6749,
-            pre_hash="f75dfff77f7ff7df",
-            post_hash="ae41df2b4e7fb7df",
-            screen_changed=True,
-            step=Step(action=action, step_number=6, screen_hash="f75dfff77f7ff7df"),
+            activity="com.example.delivery/.HomeActivity",
         )
 
     def __record_state(self) -> Dict[object, object]:
@@ -486,34 +375,12 @@ class TestSalarySeFinalVerifyLive:
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__completed_screen_state(),
-            IntentStateKey.POST_ACTIVITY: "in.swiggy.android/.HomeActivity",
+            IntentStateKey.POST_ACTIVITY: "com.example.delivery/.HomeActivity",
             CommonStateKey.STEP_RESULT: self.__corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
                 is_complete=True,
-                reason="SalarySe office address is selected",
-            ),
-        }
-
-    def __hsr_record_state(self) -> Dict[object, object]:
-        """
-        Build the graph patch that RECORD sees after tapping the HSR confirmation action.
-        """
-
-        return {
-            CommonStateKey.IS_NEW_SCREEN: True,
-            CommonStateKey.SCREEN_STATE: ScreenState(
-                timestamp=2,
-                visual_hash="ae41df2b4e7fb7df",
-                activity_hash="a" * 16,
-                activity="in.swiggy.android",
-            ),
-            IntentStateKey.POST_ACTIVITY: "in.swiggy.android",
-            CommonStateKey.STEP_RESULT: self.__hsr_corrective_step_result(),
-            IntentStateKey.PLAN: PlanResult(
-                step=None,
-                is_complete=True,
-                reason="HSR Layout is selected in the delivery address header",
+                reason="Finance office address is selected",
             ),
         }
 
@@ -569,53 +436,6 @@ class TestSalarySeFinalVerifyLive:
         assert pending_again[IntentStateKey.VERIFY_MODE] == VerifyMode.PENDING_FINAL_COMMIT.value
         assert agent_state.is_complete is False
         assert agent_state.verification_loop is None
-
-        accepted = await verify.run(state=pending_again)  # type: ignore[arg-type]
-
-        assert accepted[CommonStateKey.IS_COMPLETE] is True
-        assert accepted[IntentStateKey.SHOULD_RETRY] is False
-        assert accepted[IntentStateKey.VERIFY_MODE] is None
-        assert agent_state.is_complete is True
-        assert agent_state.all_sub_goals_complete() is True
-        assert provider.context_manager.cleared is True
-        _print_llm_responses(responses=recording_llm.responses)
-
-    async def test_hsr_prod_artifact_replay_rejects_then_completes(self, llm: LLMPort) -> None:
-        """
-        Live Gemini replay of 6f72ec86 using the downloaded modal and post-correction screenshots.
-        """
-
-        if not HsrProdAssetFixture.is_available():
-            pytest.skip("6f72ec86 downloaded screenshots are not available in debug assets")
-
-        agent_state = self.__hsr_agent_state()
-        recording_llm = _RecordingLlm(llm=llm)
-        provider = _Provider(
-            llm=recording_llm,
-            agent_state=agent_state,
-            captures=HsrProdAssetFixture.captures(),
-            intent="Change the address to HSR Layout",
-            workflow_id="live-6f72ec86-hsr-final-verify",
-        )
-        verify = VerifyNode(provider=provider)  # type: ignore[arg-type]
-        record = RecordNode(provider=provider)  # type: ignore[arg-type]
-
-        rejected = await verify.run(
-            state={IntentStateKey.VERIFY_MODE: VerifyMode.PENDING_FINAL_COMMIT.value}
-        )  # type: ignore[arg-type]
-
-        assert rejected[CommonStateKey.IS_COMPLETE] is False
-        assert rejected[IntentStateKey.SHOULD_RETRY] is True
-        assert agent_state.current_sub_goal_index == 3
-        assert provider.context_manager.feedback
-
-        pending_again = await record.run(state=self.__hsr_record_state())  # type: ignore[arg-type]
-
-        assert pending_again[CommonStateKey.IS_COMPLETE] is True
-        assert pending_again[IntentStateKey.SHOULD_RETRY] is False
-        assert pending_again[IntentStateKey.VERIFY_MODE] == VerifyMode.PENDING_FINAL_COMMIT.value
-        assert agent_state.current_sub_goal_index == 3
-        assert agent_state.is_complete is False
 
         accepted = await verify.run(state=pending_again)  # type: ignore[arg-type]
 

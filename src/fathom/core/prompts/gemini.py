@@ -23,7 +23,9 @@ class GeminiPromptBuilder(PromptBuilder):
     """
 
     def build(self, *, tools: AllowedTools) -> str:
-        """Build the stable system prompt scoped to the allowed tools."""
+        """
+        Build the stable system prompt scoped to the allowed tools.
+        """
 
         parts = [
             self.__get_persona(),
@@ -80,12 +82,11 @@ class GeminiPromptBuilder(PromptBuilder):
 
         parts = []
 
-        # Runtime task metadata previously embedded in system prompt (kept dynamic for cache stability).
+        # Runtime task metadata kept in the dynamic user payload for cache stability.
         if runtime_brief := self.__build_runtime_brief(intent=intent, hints=hints):
             parts.append(runtime_brief)
 
-        # 1a. Sub-goal Progress (if sequential intent execution is active) - SINGLE FOCUS MODE
-        # Only pass current sub-goal, no remaining steps list
+        # Single-focus mode: expose only the current sub-goal, never the remaining-steps list.
         sub_goal_info = kwargs.get("sub_goal_info")
         if sub_goal_info and isinstance(sub_goal_info, dict):
             index = sub_goal_info.get("index")
@@ -142,7 +143,6 @@ class GeminiPromptBuilder(PromptBuilder):
                     f"task={(description or '')[:50]}"
                 )
 
-        # 1a-bis. App Launch Semantics (when package is known)
         if hints and hints.get("package_name") and hints.get("package_name") != "unknown":
             pkg = hints.get("package_name")
             parts.append(
@@ -156,7 +156,6 @@ class GeminiPromptBuilder(PromptBuilder):
             )
             logger.info(f"[H3] App Launch Semantics | package={pkg}")
 
-        # 1. Memory Ledger (Factual Memory - PERSISTENT ACROSS SCREENS)
         if ledger := self.__get_ledger_segment(memory=memory):
             parts.append(
                 f"<MEMORY_LEDGER>\n"
@@ -168,13 +167,11 @@ class GeminiPromptBuilder(PromptBuilder):
         else:
             logger.info("[H3] No Memory Ledger | memory is empty or None")
 
-        # 2. Roadmap & Milestones (Tier 2 Context)
         if milestones := context.get("milestones", []):
             parts.append(
                 "<MILESTONES>\n" + "\n".join(f"- {text}" for text in milestones) + "\n</MILESTONES>"
             )
 
-        # 3. Execution Trace (Tier 3 Context - The Hot Suffix)
         trace = context.get("trace", [])
         current_screen_hash: Optional[str] = kwargs.get("current_screen_hash")
 
@@ -183,10 +180,9 @@ class GeminiPromptBuilder(PromptBuilder):
         ):
             parts.append(f"<CURRENT_TRACE>\n{interaction_context}\n</CURRENT_TRACE>")
 
-        # 3a. Screen Change Notice — belt-and-suspenders signal when the current
-        # screen no longer matches the most recent trace observation.  This helps
-        # the LLM break out of stale-context loops (e.g. "Verify Identity" screen
-        # persisting in the trace after the user has already dismissed it).
+        # Extra signal for when the current screen no longer matches the most recent trace observation; it helps
+        # the LLM break out of stale-context loops (e.g. a "Verify Identity" screen lingering in the trace after
+        # the user already dismissed it).
         if current_screen_hash and trace:
             last_obs = trace[-1].get("observation", "")
             if last_obs.startswith("Screen: "):
@@ -201,7 +197,6 @@ class GeminiPromptBuilder(PromptBuilder):
                         "</SCREEN_CHANGE_NOTICE>"
                     )
 
-        # 4. User Override (real human instructions — MUST comply)
         if guidance := context.get("guidance", []):
             instructions = [f"- {item}" for item in guidance]
             parts.append(
@@ -216,7 +211,6 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</USER_OVERRIDE>"
             )
 
-        # 5. Verifier Feedback (VERIFY-node rejection — adjust the next action)
         if verifier_feedback := context.get("verifier_feedback", []):
             entries = [
                 f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}" for item in verifier_feedback
@@ -238,7 +232,6 @@ class GeminiPromptBuilder(PromptBuilder):
                 "</VERIFIER_FEEDBACK>"
             )
 
-        # 5b. Completion Feedback (post-action vision refuted the sub-goal — correct the approach)
         if completion_feedback := context.get("completion_feedback", []):
             notes = [
                 f"- {str(item)[:MAX_VERIFIER_FEEDBACK_PROMPT_CHARS]}"
@@ -253,8 +246,7 @@ class GeminiPromptBuilder(PromptBuilder):
                 + "\n</COMPLETION_FEEDBACK>"
             )
 
-        # 6. Interaction Cadence (Deterministic Repetition Tracking)
-        # Placed LAST to ensure maximum recency bias and adherence when stuck
+        # Placed last so the repetition-tracking alert carries maximum recency bias when the agent is stuck.
         if tracking_note:
             parts.append(f"<SYSTEM_ALERT>\nCRITICAL: {tracking_note}\n</SYSTEM_ALERT>")
 
@@ -338,15 +330,12 @@ class GeminiPromptBuilder(PromptBuilder):
             notes.append("- SEARCH FLOW: If suggestions are visible, type then tap suggestion.")
 
         notes.append("- COMPLETE CHECK: If goal appears fully achieved, verify goal explicitly.")
-        # notes.append(
-        #     "- DISABLED ELEMENTS: Do NOT interact with elements marked as '[DISABLED]' in the manifest."
-        # )
 
         return "NOTES:\n" + "\n".join(notes)
 
     def __get_ledger_segment(self, memory: Optional[Dict[str, str]]) -> str:
         """
-        High-density ledger memory.
+        Render the memory ledger, dropping internal context keys to keep the payload compact.
         """
 
         if not memory:

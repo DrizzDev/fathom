@@ -21,7 +21,7 @@ class ConsoleTelemetryAdapter(TelemetryPort):
         console: Optional[Console] = None,
     ) -> None:
         """
-        Initialize console telemetry with a wrapped telemetry adapter.
+        Wrap an inner telemetry adapter and bind a Rich console for CLI rendering.
         """
 
         self.__inner = inner

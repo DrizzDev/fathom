@@ -24,14 +24,14 @@ class DistillerTest(unittest.TestCase):
 
     def __fixture(self) -> Path:
         """
-        Return the committed Meesho loop run fixture path.
+        Return the committed Shopping loop run fixture path.
         """
 
-        return Path("assets/history/2026-06-09/15a28bb0/history__com.meesho.supply.json")
+        return Path("assets/history/2026-06-09/loop-run/history__com.example.shop.json")
 
     def __recovery_steps(self) -> Tuple[int, ...]:
         """
-        Return the recorded recovery step numbers in the Meesho loop fixture.
+        Return the recorded recovery step numbers in the Shopping loop fixture.
         """
 
         return (10, 14, 15, 27, 28)
@@ -340,13 +340,13 @@ class DistillerTest(unittest.TestCase):
         self.assertFalse(result.partial)
         self.assertIsNone(result.reason)
 
-    def test_meesho_loop_fixture_is_distilled(self) -> None:
+    def test_shopping_loop_fixture_is_distilled(self) -> None:
         """
-        The recorded Meesho loop drops recovery, collapses inside the region, and flags partial.
+        The recorded Shopping loop drops recovery, collapses inside the region, and flags partial.
         """
 
         if not self.__fixture().exists():
-            self.skipTest("Meesho loop history fixture absent (fixtures are gitignored).")
+            self.skipTest("Shopping loop history fixture absent (fixtures are gitignored).")
 
         payload = json.loads(self.__fixture().read_text())
         records = tuple(StepRecord.model_validate(item) for item in payload["history"])
