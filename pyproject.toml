@@ -8,7 +8,7 @@ version = "1.1.0"
 readme = "README.md"
 description = "Vision-driven agent orchestration framework for UI crawling"
 
-license = "MIT"
+license = "BUSL-1.1"
 requires-python = ">=3.11"
 authors = [
     { name = "Drizz", email = "tech@drizz.dev" },
@@ -28,7 +28,7 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -192,7 +192,7 @@ disallow_subclassing_any = false
 # inside test modules.
 search-path = ["src", "."]
 project-includes = ["src/**/*.py", "tests/**/*.py"]
-project-excludes = ["**/.venv/**", "**/__pycache__/**"]
+project-excludes = ["**/.venv/**", "**/__pycache__/**", "**/*.toml"]
 fallback-python-interpreter-name = "python"
 
 [tool.pytest.ini_options]
