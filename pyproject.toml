@@ -60,7 +60,7 @@ dependencies = [
     "tortoise-orm[asyncpg]>=1.1.7",
     "types-PyYAML>=6.0.12.20250915",
     "google-cloud-documentai>=2.20.0",
-    "langgraph>=0.0.10",
+    "langgraph>=1.2.11",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "lark>=1.1.9"
 ]
