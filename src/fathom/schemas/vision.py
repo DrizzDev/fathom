@@ -84,11 +84,9 @@ class PastActionEntry(BaseModel):
     """
     Typed annotation for one prior action surfaced into the vision prompt.
 
-    Built from the raw history dict already maintained by the memory/knowledge
-    layer rather than reconstructing the full :class:`Action` schema, because
-    the vision prompt sits downstream of that layer and only has the persisted
-    fields. ``kind`` is derived from the recorded action-type token, which is
-    authoritative for kind classification at serialization time.
+    Built from the memory/knowledge layer's raw history dict (the only fields available downstream), not
+    the full :class:`Action` schema. ``kind`` is derived from the recorded action-type token, which is
+    authoritative for kind classification.
     """
 
     model_config = ConfigDict(frozen=True)

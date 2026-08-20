@@ -7,14 +7,8 @@ from fathom.core.safety.classifier import IntentSafetyClassifier
 
 class IntentSafetyClassifierTest(unittest.TestCase):
     """
-    Pins the pre-execution intent-safety classifier behaviour.
-
-    The classifier replaces the previous per-step safety scan.
-    Per-step scanning
-    matched ``"wipe"`` inside ``"swipe"`` and blocked every scroll
-    gesture; intent-level screening only runs once on the user's stated
-    goal so legitimate swipe / type / tap actions cannot be blocked by
-    a substring false positive.
+    Pins the pre-execution intent-safety classifier: it screens the stated goal once, so
+    legitimate swipe / type / tap actions are never blocked by a substring false positive.
     """
 
     def test_safe_intent_is_cleared(self) -> None:
@@ -22,7 +16,7 @@ class IntentSafetyClassifierTest(unittest.TestCase):
         A benign intent passes the classifier with no matched keyword.
         """
 
-        verdict = IntentSafetyClassifier().classify(intent="Open Swiggy app and search for dosa")
+        verdict = IntentSafetyClassifier().classify(intent="Open Delivery app and search for dosa")
 
         self.assertTrue(verdict.safe)
         self.assertIsNone(verdict.matched_keyword)

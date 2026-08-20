@@ -65,7 +65,7 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             "      these with passive declarative's — see the NOT_EXECUTABLE\n"
             "      bullet below for that contrast.\n"
             "    - the same kind of command phrased politely as a question\n"
-            "      ('Can you open Swiggy?', 'Could you scroll down?', 'Can\n"
+            "      ('Can you open Food-delivery?', 'Could you scroll down?', 'Can\n"
             "      you tap Continue?'). Polite question form ≠ answer-seeking.\n"
             "\n"
             "NOT_EXECUTABLE\n"
@@ -90,7 +90,7 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             "QUESTION-FORM HEURISTIC (important)\n"
             "  A question mark does NOT mean block. Read past politeness and\n"
             "  look for an operative UI verb + object pair:\n"
-            "    - 'Can you open Swiggy and search for Biryani?' → operative\n"
+            "    - 'Can you open Maps and search for a cafe?' → operative\n"
             "      verb is 'open' / 'search' → EXECUTABLE.\n"
             "    - 'What should I do next?' → operative verb is 'should I do'\n"
             "      (asks for an answer, not for an action) → NOT_EXECUTABLE.\n"
@@ -132,7 +132,7 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             "\n"
             "ANCHOR EXAMPLES\n"
             "\n"
-            'Intent: "Open Swiggy and search for Biryani"\n'
+            'Intent: "Open Maps and search for a cafe"\n'
             '{"label": "EXECUTABLE", "confidence": 0.97, '
             '"rationale": {"category": "ui_task", '
             '"reasoning": "App + search query both named; clear UI flow."}}\n'
@@ -142,7 +142,7 @@ class GeminiQualifierPromptBuilder(QualifierPromptBuilder):
             '"rationale": {"category": "ui_task", '
             '"reasoning": "Recognized UI gesture meaningful on any screen."}}\n'
             "\n"
-            'Intent: "Search for McPuff"\n'
+            'Intent: "Search for headphones"\n'
             '{"label": "EXECUTABLE", "confidence": 0.92, '
             '"rationale": {"category": "ui_task", '
             '"reasoning": "Concrete search query; the agent uses whatever search field is on screen."}}\n'

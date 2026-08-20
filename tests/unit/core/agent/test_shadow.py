@@ -18,7 +18,7 @@ from fathom.schemas.success import (
 from fathom.schemas.target import TargetAuthority
 
 
-def _observed(*, assertion: str = "Amazon home screen shown") -> ObservedSuccess:
+def _observed(*, assertion: str = "Retail home screen shown") -> ObservedSuccess:
     return ObservedSuccess(observation=ObservationRequirement(assertion=assertion))
 
 
@@ -70,7 +70,7 @@ class TestGoalTypeRelationship:
 
 class TestSatisfiedWithActionIsRecordedNotEnforced:
     def test_satisfied_with_action_is_a_divergence(self) -> None:
-        # Slice 2 records the conflict; the action still executes live and no goal advances.
+        # The assessor records the conflict; the action still executes live and no goal advances.
         out = ShadowAssessor().assess(
             success=_observed(),
             assessment=_assessment(VisualVerdict.SATISFIED),
@@ -88,21 +88,21 @@ class TestSatisfiedWithActionIsRecordedNotEnforced:
 
 
 class TestPackageAuthorityContradiction:
-    __SHOPPING = "com.amazon.mShop.android.shopping"
+    __SHOPPING = "com.retail.mShop.android.shopping"
 
-    def test_amazon_music_does_not_satisfy_amazon_shopping(self) -> None:
+    def test_retail_music_does_not_satisfy_retail_shopping(self) -> None:
         out = ShadowAssessor().assess(
-            success=_observed(assertion="Open Amazon"),
+            success=_observed(assertion="Open Retail"),
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
             authority=TargetAuthority.requested(package=self.__SHOPPING),
-            foreground_package="com.amazon.mp3",
+            foreground_package="com.retail.mp3",
         )
         assert _kinds(out) == {ShadowDivergenceKind.PACKAGE_CONTRADICTION}
 
     def test_exact_authoritative_package_matches(self) -> None:
         out = ShadowAssessor().assess(
-            success=_observed(assertion="Open Amazon"),
+            success=_observed(assertion="Open Retail"),
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
             authority=TargetAuthority.requested(package=self.__SHOPPING),
@@ -111,24 +111,24 @@ class TestPackageAuthorityContradiction:
         assert out == ()
 
     def test_prefix_is_not_package_identity(self) -> None:
-        # P0 regression: package identity is exact, never a prefix. ``com.amazon.app.evil``
-        # must not satisfy an authority bound to ``com.amazon.app``.
+        # Package identity is exact, never a prefix. ``com.retail.app.evil``
+        # must not satisfy an authority bound to ``com.retail.app``.
         out = ShadowAssessor().assess(
             success=_observed(),
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
-            authority=TargetAuthority.requested(package="com.amazon.app"),
-            foreground_package="com.amazon.app.evil",
+            authority=TargetAuthority.requested(package="com.retail.app"),
+            foreground_package="com.retail.app.evil",
         )
         assert _kinds(out) == {ShadowDivergenceKind.PACKAGE_CONTRADICTION}
 
     def test_unbound_authority_never_contradicts(self) -> None:
         out = ShadowAssessor().assess(
-            success=_observed(assertion="Open Amazon"),
+            success=_observed(assertion="Open Retail"),
             assessment=_assessment(VisualVerdict.SATISFIED),
             action_present=False,
             authority=TargetAuthority.unbound(),
-            foreground_package="com.amazon.mp3",
+            foreground_package="com.retail.mp3",
         )
         assert out == ()
 

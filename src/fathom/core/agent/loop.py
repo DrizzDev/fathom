@@ -33,10 +33,9 @@ logger = getLogger(__name__)
 
 class LoopDetector(BaseModel):
     """
-    Detects when agent is stuck in a loop using multi-strategy pattern analysis.
+    Detects when the agent is stuck in a loop using multi-strategy pattern analysis.
 
-    Note: stateful. Designed for single-threaded asyncio access — coordinator
-    instances are scoped per agent run, so cross-task mutation does not occur under the current execution model.
+    Stateful and single-threaded: instances are scoped per agent run, so no cross-task mutation occurs.
     """
 
     max_recovery: int = Field(
@@ -163,15 +162,10 @@ class LoopDetector(BaseModel):
         """
         Tell the detector a new screen was seen.
 
-        Advances the loop-detection window only when the new screen is
-        *genuinely* distinct from the previous one — hamming greater than
-        :data:`SCREEN_PROGRESS_HAMMING_THRESHOLD`. The progress threshold
-        is deliberately much higher than the near-duplicate threshold
-        used by the stuck detectors below, so cosmetic differences
-        (status-bar tick, suggestion-count increment, anti-aliasing
-        noise) do not trip ``advance()`` and wipe accumulating evidence.
-        That distinction is what enables the scroll-loop detection to
-        actually fire on long sequences of near-identical screens.
+        Advances the window only when the screen is genuinely distinct — hamming above
+        :data:`SCREEN_PROGRESS_HAMMING_THRESHOLD`, set much higher than the stuck detectors'
+        near-duplicate threshold so cosmetic diffs don't ``advance()`` and wipe accumulating
+        evidence (which is what lets scroll-loop detection fire on near-identical screens).
         """
 
         progressed = current.has_visual_progress_from(
@@ -322,11 +316,9 @@ class LoopDetector(BaseModel):
         """
         Detect identical action descriptors paired with trailing NO_PROGRESS effects.
 
-        Fires when the last ``inert_repetition_threshold`` action
-        descriptors are identical AND the matching trailing effect
-        statuses are all ``NO_PROGRESS``. Both conditions must hold
-        so cosmetic same-action retries on a screen that *did* change
-        don't false-fire (the planner explores during real scrolling and that's not stuck).
+        Fires when the last ``inert_repetition_threshold`` action descriptors are identical AND the
+        matching trailing effect statuses are all ``NO_PROGRESS`` — both required so same-action
+        retries on a screen that did change (e.g. real scrolling) don't false-fire.
         """
 
         if len(self.__recent_actions) < self.inert_repetition_threshold:
@@ -414,14 +406,12 @@ class LoopDetector(BaseModel):
 
     def __detect_near_duplicate_visual_repetition(self) -> bool:
         """
-        Detect screens whose visual pHash is within a tight hamming threshold
-        of one another, ignoring structural and interaction hashes.
+        Detect screens whose visual pHash lies within a tight hamming threshold, ignoring
+        structural and interaction hashes.
 
-        Distinct from ``__detect_repetition`` (which uses ``is_same_screen``):
-        that path returns False as soon as ``xml_hash`` or ``interaction_hash`` disagree, which masks overlay-animation and map-redraw loops.
-
-        The visual-only check is intentionally narrow (threshold = pHash hamming)
-        and only counts repetition when the same near-duplicate appears at least ``self.threshold`` times in the window.
+        Unlike ``__detect_repetition`` (``is_same_screen``), this survives ``xml_hash`` /
+        ``interaction_hash`` flips that mask overlay-animation and map-redraw loops; counts a
+        near-duplicate only when it recurs at least ``self.threshold`` times in the window.
         """
 
         hashes = [hash for hash in self.__recent_hashes if hash]
@@ -490,12 +480,10 @@ class LoopDetector(BaseModel):
 
     def __recent_hashes_are_converging(self) -> bool:
         """
-        Return True when the most recent ``self.threshold`` visual
-        hashes all lie within :data:`LOOP_HASH_CLUSTER_HAMMING_THRESHOLD`
-        of one another.
+        Return True when the most recent ``self.threshold`` visual hashes all lie within
+        :data:`LOOP_HASH_CLUSTER_HAMMING_THRESHOLD` of one another.
 
-        Used by the scroll-repetition guard to distinguish productive
-        scrolling (screens diverging through fresh content) from stuck
+        Distinguishes productive scrolling (screens diverging through fresh content) from stuck
         scrolling (screens converging into a near-duplicate cluster).
         """
 
@@ -754,11 +742,9 @@ class LoopDetector(BaseModel):
         """
         Typed read-only snapshot consumed by the escalation gate.
 
-        ``reason`` identifies which detection strategy classified the window as
-        stuck (or ``NOT_STUCK``). ``since_progress`` is the trailing slice of
-        turns starting after the most recent PROGRESS effect — that is the
-        only span the gate is allowed to consider, because older turns belong
-        to a prior recovery cycle and must not unlock escalation on their own.
+        ``reason`` identifies which detection strategy classified the window as stuck (or
+        ``NOT_STUCK``). ``since_progress`` is the trailing slice after the most recent PROGRESS
+        effect — the only span the gate may consider, since older turns belong to a prior cycle.
         """
 
         reason = self.__classify_reason()

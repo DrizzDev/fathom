@@ -145,16 +145,10 @@ class CommandExecutor:
         """
         Build configured runtime runner and bundle it with owned resources.
 
-        Returns a RunnerComposition so the caller can drain the dedicated
-        qualifier LLM (or any other infrastructure the composer creates)
-        alongside runner cleanup.
-
-        Build-time cleanup: every adapter is registered on a local list before
-        the next step runs. If any step fails (composer auth refusal, telemetry
-        connection error, builder.build() raising), every registered adapter is
-        drained in reverse-creation order before re-raising — no resource leaks
-        before a RunnerComposition exists. The runner's own cleanup path takes
-        over once builder.build() succeeds.
+        Returns a :class:`RunnerComposition` so the caller can drain the dedicated qualifier LLM
+        (or other composer-created infrastructure) alongside runner cleanup. If any step fails, every
+        adapter registered so far is drained in reverse-creation order before re-raising; the runner's
+        own cleanup takes over once ``builder.build()`` succeeds.
         """
 
         path_manager = SharedPathManager(settings=self.__settings)

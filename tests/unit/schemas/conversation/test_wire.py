@@ -306,7 +306,7 @@ class TestWireRequestBodyProjection(unittest.TestCase):
         """
 
         projected = WireRequestBody.project(
-            body={"intent": "search for burgers", "starting_package": "com.swiggy"}
+            body={"intent": "search for burgers", "starting_package": "com.delivery"}
         )
 
         assert projected is not None

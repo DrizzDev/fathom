@@ -264,8 +264,9 @@ class PhaseAnnouncerPulseTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_shutdown_after_unpaired_phase_open_kills_pulse(self) -> None:
         """
-        Regression: a phase method that opens a pulse without a paired terminal call (e.g. INTENT_QUALIFYING with no INTENT_QUALIFIED closer)
-        must be cancellable by shutdown. In prod, a leaked QUALIFYING pulse kept firing PHASE_HEARTBEAT events for minutes after the workflow ended — pin shutdown is the safety net.
+        A phase method that opens a pulse without a paired terminal call (e.g. INTENT_QUALIFYING with
+        no INTENT_QUALIFIED closer) must still be cancellable by shutdown, so no PHASE_HEARTBEAT
+        events outlive the workflow.
         """
 
         announcer, telemetry = self.__build(threshold=0.05, limit=120)

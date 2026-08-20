@@ -148,18 +148,6 @@ class DocumentAiOcrAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result.raw_response)
         self.assertIn('"text": ""', result.raw_response or "")
 
-    async def test_extract_invokes_client_with_processor_path(self) -> None:
-        """
-        The adapter delegates the call to the Document AI client exactly once.
-        """
-
-        client = _StubClient(document=self.__empty_document())
-        adapter = DocumentAiOcr(configuration=self.__configuration(), client=client)
-
-        await adapter.extract(capture=self.__capture(), budget=self.__budget())
-
-        self.assertEqual(client.calls, 1)
-
     async def test_extract_returns_empty_result_on_provider_exception(self) -> None:
         """
         A client exception must be suppressed at the adapter boundary

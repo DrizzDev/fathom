@@ -124,14 +124,9 @@ class FathomRunner:
     """
     Executes Fathom workflows with configured ports.
 
-    This is the main execution orchestrator that wires together all ports
-    and coordinates the execution of automation workflows using hexagonal architecture.
-
-    The runner:
-    - Wires ExecutionEngine and ContextManager
-    - Manages execution lifecycle
-    - Delegates to strategy implementations
-    - Returns results compatible with CLI expectations
+    Main execution orchestrator: wires the :class:`ExecutionEngine` and :class:`ContextManager`,
+    manages the execution lifecycle, delegates to strategy implementations, and returns
+    CLI-compatible results.
     """
 
     def __init__(

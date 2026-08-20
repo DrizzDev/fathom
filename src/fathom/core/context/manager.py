@@ -81,15 +81,9 @@ class ContextManager:
         """
         Background worker that drains the persistence queue.
 
-        NOTE: GCC context persistence to Ledger is DISABLED.
-
-        Rationale:
-        - GCC context is internal system state, not user-actionable memory
-        - Storing it in Ledger causes memory pollution (thousands of tokens)
-        - GCC context is already available in-memory via get_full_context()
-        - If persistence is needed, use separate storage mechanism (not Ledger)
-
-        The queue draining logic is kept for potential future use with separate context storage.
+        GCC-context persistence to Ledger is disabled: it is internal system state, not
+        user-actionable memory, and storing it there pollutes memory with thousands of tokens.
+        Drain logic is kept for a possible future separate context store.
         """
 
         while True:
@@ -127,14 +121,10 @@ class ContextManager:
 
     async def hydrate(self) -> None:
         """
-        Restores the entire context hierarchy from the distributed store.
+        Restore the context hierarchy from the distributed store.
 
-        NOTE: GCC context hydration from Ledger is DISABLED.
-
-        Rationale:
-        - GCC context is NOT stored in Ledger (see __persistence_worker)
-        - Each session starts with fresh GCC context
-        - If persistence is needed, implement separate context storage
+        GCC-context hydration from Ledger is disabled (it is never stored there); each session
+        starts with fresh GCC context.
         """
 
         # GCC context is not loaded from Ledger; each session starts fresh. If GCC persistence is required,
@@ -147,12 +137,10 @@ class ContextManager:
 
     async def __enqueue_persist(self) -> None:
         """
-        Captures a snapshot of the current state and queues it for persistence.
-        This operation is O(1) in-memory and non-blocking.
+        Snapshot current state and queue it for persistence (O(1), non-blocking).
 
-        DISABLED: persistence worker is not spawned (see __init__). Returning
-        early avoids growing __persist_queue unbounded with snapshots that no
-        consumer will drain. Re-enable in lockstep with __start_persistence_loop.
+        Disabled: the persistence worker is not spawned, so this returns early to avoid growing
+        ``__persist_queue`` unbounded; re-enable in lockstep with ``__start_persistence_loop``.
         """
 
         return

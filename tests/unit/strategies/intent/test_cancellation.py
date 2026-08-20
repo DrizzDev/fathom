@@ -156,7 +156,7 @@ class IntentStrategyScriptGeneratedRunOutcomeTest(unittest.IsolatedAsyncioTestCa
         await self.__invoke_emit(
             strategy=strategy,
             run_outcome=RunOutcome.COMPLETED,
-            script_data="open swiggy\nsearch biryani",
+            script_data="open delivery\nsearch biryani",
         )
 
         call = telemetry.info.call_args

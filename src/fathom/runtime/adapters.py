@@ -88,10 +88,8 @@ class AdapterAssembly:
         """
         Expose the loaded perception configuration to downstream wiring.
 
-        Strategies that need to thread perception toggles into domain
-        services (e.g. ``cv_enabled`` for :class:`HierarchyService`)
-        read this rather than rebuilding the configuration from the
-        loader.
+        Strategies read this to thread perception toggles (e.g. ``cv_enabled`` for
+        :class:`HierarchyService`) into domain services rather than rebuilding it from the loader.
         """
 
         return self.__perception
@@ -135,9 +133,8 @@ class AdapterAssembly:
         """
         Build the icon detector when explicitly enabled; otherwise noop.
 
-        The template registry ships empty until a future entry populates
-        it, so a "default-on" icon detector adds latency without value.
-        Gated behind :attr:`IconConfiguration.enabled` so the original XML+LLM flow runs without it.
+        Gated behind :attr:`IconConfiguration.enabled` because the template registry ships empty,
+        so a default-on detector would only add latency to the XML+LLM flow.
         """
 
         if not self.__perception.icon.enabled:
@@ -230,11 +227,9 @@ class AdapterAssembly:
         """
         Build the artifact pipeline wired against the configured backends.
 
-        When ``"CLOUD"`` is enabled and a bucket is configured, the
-        pipeline uploads to the cloud :class:`StoragePort` and clears
-        the locally staged copy on success. Otherwise the pipeline retains
-        the locally staged copy via :class:`EfsSink` — the local copy is
-        the durable artifact in that mode.
+        With ``"CLOUD"`` enabled and a bucket configured, it uploads to the cloud :class:`StoragePort`
+        and clears the locally staged copy on success; otherwise :class:`EfsSink` retains that local
+        copy as the durable artifact.
         """
 
         sink = self.__resolve_sink(configuration=storage_configuration)
@@ -320,9 +315,8 @@ class AdapterAssembly:
         """
         Build one ensemble member by its typed name.
 
-        ``DOCUMENT_AI_LAYOUT`` is a downstream consumer of OCR tokens —
-        it has nothing to localize against when OCR is disabled or un-configured.
-        Drop it at composition so the ensemble never carries a member that can only ever return ``None``.
+        ``DOCUMENT_AI_LAYOUT`` consumes OCR tokens, so it is dropped at composition when OCR is
+        disabled or un-configured rather than carrying a member that can only ever return ``None``.
         """
 
         if name == EnsembleMemberName.GEMINI_VISION:
@@ -349,14 +343,11 @@ class AdapterAssembly:
         """
         Pick the artifact sink based on the configured storage backends.
 
-        Cloud-enabled deployments upload via :class:`CloudSink` wrapping
-        a fresh cloud-only :class:`StoragePort` — wrapping the runtime's
-        composite storage instead would re-write the same local file the
-        producer just wrote and race downstream readers.
-
-        Local-only deployments fall back to :class:`EfsSink`, which
-        keeps the locally staged copy as the durable artifact and reports
-        no remote cleanup so the pipeline never deletes the local file.
+        Cloud-enabled deployments upload via :class:`CloudSink` over a fresh cloud-only
+        :class:`StoragePort`; wrapping the runtime's composite storage would re-write the file the
+        producer just wrote and race downstream readers. Local-only deployments fall back to
+        :class:`EfsSink`, which keeps the staged copy as the durable artifact and reports no remote
+        cleanup so the pipeline never deletes the local file.
         """
 
         if self.__cloud_enabled(configuration=configuration):

@@ -14,6 +14,7 @@ from fathom.constants.state import CommonStateKey, CompletionReason, IntentState
 from fathom.core.agent.state import AgentState
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.exceptions import HITLNotAvailableError
+from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.execution import ExecutionContext
@@ -48,6 +49,7 @@ class TestIntentExecutionFlowIntegration:
             agent_state=agent_state,
             is_cancelled=False,
             max_steps=8,
+            clock=RunClock(),
             workflow_id="integration-graph-missing-context",
         )
         provider = MagicMock(name="IntentNodeProvider")
@@ -150,6 +152,7 @@ class TestHitlUnavailableReplan:
             is_cancelled=False,
             max_steps=5,
             catalog=CommandCatalogProvider().build(),
+            clock=RunClock(),
             workflow_id="integration-hitl-unavailable",
         )
         provider = MagicMock(name="IntentNodeProvider")

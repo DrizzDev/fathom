@@ -97,17 +97,12 @@ class FathomBuilder:
 
     def with_runtime_configuration(self, loader: RuntimeConfigLoader) -> FathomBuilder:
         """
-        Attach a pre-bound :class:`RuntimeConfigLoader` so its settings
-        ride all the way down to :class:`AdapterAssembly` inside the
-        strategy. Required for any deployment whose env-var names
-        differ from fathom's own ``FATHOM_*`` /
-        ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` aliases (e.g.
-        a deployment using a ``DRIZZ_`` prefix).
+        Attach a pre-bound :class:`RuntimeConfigLoader` so its settings reach
+        :class:`AdapterAssembly` inside the strategy.
 
-        The loader is an Application-layer object. The caller (e.g.
-        Temporal worker registry) constructs it as
-        ``RuntimeConfigLoader(settings=settings)`` and the raw
-        :class:`FathomSettings` never crosses this boundary — keeping
+        Required when a deployment's env-var names differ from fathom's own ``FATHOM_*`` /
+        ``GOOGLE_APPLICATION_CREDENTIALS_JSON`` aliases (e.g. a ``DRIZZ_`` prefix). The caller binds
+        settings into the loader; the raw :class:`FathomSettings` never crosses this boundary, keeping
         SA credentials and other secrets confined to caller scope.
         """
 
@@ -228,17 +223,11 @@ class FathomBuilder:
         llm_factory: Optional[LLMFactoryPort] = None,
     ) -> FathomBuilder:
         """
-        Wire the bits the qualifier composer needs to build a dedicated
-        qualifier LLM (separate from the planner LLM passed to .with_llm).
+        Bind a dedicated qualifier LLM, separate from the planner LLM, for ``build()`` to construct.
 
-        When supplied, build() resolves the qualifier's model / timeout /
-        retries through `assembly.build_qualifier_model_configuration(...)`
-        and constructs a fresh LLM via `llm_factory.create(...)` — so the
-        eval-tuned defaults in QualifierConfiguration.inference actually
-        take effect for direct SDK callers (Enricher, integration tests,
-        notebooks). When omitted, the qualifier falls back to running on
-        the caller-supplied planner LLM and inference.* settings are
-        ignored — preserves existing behavior for callers that don't opt in.
+        When set, ``build()`` resolves the qualifier's model/timeout/retries from the assembly and
+        builds a fresh LLM so ``QualifierConfiguration.inference`` applies; when omitted, the qualifier
+        runs on the planner LLM and ``inference.*`` is ignored.
         """
 
         self.__assembly = assembly
@@ -337,25 +326,13 @@ class FathomBuilder:
 
     def __compose_qualifier(self) -> tuple[IntentQualifierPort, List[LLMPort]]:
         """
-        Construct the qualifier port and any resources the runner must own.
+        Build the qualifier port and any LLM the runner must own (sync counterpart of
+        :meth:`QualifierComposer.compose`).
 
-        Two paths:
-          - assembly supplied (.with_assembly): build a dedicated qualifier LLM
-            via the assembly's qualifier-model configuration. The dedicated LLM
-            is returned alongside the qualifier so the runner can clean it up.
-            inference.{model, timeout, max_retries, ...} take effect here.
-          - assembly NOT supplied: fall back to the planner LLM. inference.* is
-            stored on the config but ignored — preserves the pre-with_assembly
-            behavior for direct callers that haven't opted in.
-
-        This is the sync equivalent of QualifierComposer.compose(). Diverges
-        only in cleanup-on-failure: if IntentQualifierFactory.create raises
-        AFTER the dedicated LLM is built, the LLM is not awaited-closed (the
-        builder is a startup-time call; on construction failure the process
-        typically dies and the OS reclaims connections). Temporal / CLI paths
-        use the proper async QualifierComposer with full cleanup; this sync
-        version exists so direct SDK callers don't need to make build()
-        async.
+        With an assembly, builds a dedicated qualifier LLM (returned so the runner can close it) and
+        ``inference.*`` applies; without one, falls back to the planner LLM and ignores ``inference.*``.
+        Unlike the async composer it does not close the dedicated LLM if the factory raises after it is
+        built — acceptable because this runs at startup, where a construction failure ends the process.
         """
 
         # build() raises ConfigurationError before reaching here if self.__llm is None;

@@ -143,13 +143,13 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
+                package_name="com.shopping.supply",
                 execution_activity=self.__launcher(),
             )
             await service.save_step(
                 self.__result(number=1),
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
             await service.save_step(
                 self.__result(number=2),
@@ -172,7 +172,7 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
+                package_name="com.shopping.supply",
                 execution_activity=self.__launcher(),
             )
 
@@ -191,8 +191,8 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
                 goal=StepGoal(
                     index=2,
                     description="Check whether customer rating is >= 4.2",
@@ -217,8 +217,8 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
 
             backups = list(directory.glob("history__execution.corrupt.*.json"))
@@ -240,15 +240,15 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
             await service.save_step(
                 self.__result(number=0),
                 intent="open and verify",
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
 
             self.assertEqual(len(refresher.scheduled), 1)
             execution_id, objective = refresher.scheduled[0]
             self.assertEqual(execution_id, "wf-1")
             self.assertEqual(objective.intent, "open and verify")
-            self.assertEqual(objective.package, "com.meesho.supply")
+            self.assertEqual(objective.package, "com.shopping.supply")
 
     async def test_flush_drains_baseline_refresher(self) -> None:
         """
@@ -283,15 +283,15 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
             await service.save_step(
                 self.__result(number=0),
                 intent="open and verify login screen",
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
             service.save_completion_assertions(assertions=(assertion,))
 
             self.assertEqual(len(refresher.scheduled), 2)
             self.assertEqual(refresher.scheduled[1][0], "wf-1")
             self.assertEqual(refresher.scheduled[1][1].intent, "open and verify login screen")
-            self.assertEqual(refresher.scheduled[1][1].package, "com.meesho.supply")
+            self.assertEqual(refresher.scheduled[1][1].package, "com.shopping.supply")
 
     async def test_normal_mode_writes_only_workflow_trace_for_step_history(self) -> None:
         """
@@ -304,13 +304,13 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
 
             self.assertTrue((directory / "history__execution.json").exists())
-            self.assertFalse((directory / "history__com.meesho.supply.json").exists())
-            self.assertFalse((directory / "history__com.meesho.supply.yaml").exists())
+            self.assertFalse((directory / "history__com.shopping.supply.json").exists())
+            self.assertFalse((directory / "history__com.shopping.supply.yaml").exists())
 
     async def test_debug_mode_writes_per_package_step_history(self) -> None:
         """
@@ -326,13 +326,13 @@ class HistoryWorkflowTraceTest(unittest.IsolatedAsyncioTestCase):
 
             await service.save_step(
                 self.__result(number=0),
-                package_name="com.meesho.supply",
-                execution_activity="com.meesho.supply",
+                package_name="com.shopping.supply",
+                execution_activity="com.shopping.supply",
             )
 
             self.assertTrue((directory / "history__execution.json").exists())
-            self.assertTrue((directory / "history__com.meesho.supply.json").exists())
-            self.assertTrue((directory / "history__com.meesho.supply.yaml").exists())
+            self.assertTrue((directory / "history__com.shopping.supply.json").exists())
+            self.assertTrue((directory / "history__com.shopping.supply.yaml").exists())
 
 
 class HistoryFinalizationTest(unittest.IsolatedAsyncioTestCase):

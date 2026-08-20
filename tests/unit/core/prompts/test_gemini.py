@@ -55,7 +55,7 @@ class GeminiPromptBuilderTest(unittest.TestCase):
                     {"reason": "modal still visible"},
                 ]
             },
-            sub_goal_info={"description": "Confirm SalarySe office address"},
+            sub_goal_info={"description": "Confirm Finance office address"},
         )
 
         self.assertIn("Take the next concrete UI action", user_context)
@@ -104,8 +104,8 @@ class GeminiAssertionThreadingTest(unittest.TestCase):
             sub_goal_info={
                 "index": 1,
                 "total": 3,
-                "description": "Search for ghar soap on Amazon",
-                "assertion": "The Amazon search results page for 'ghar soap' is displayed with product cards.",
+                "description": "Search for ghar soap on Retail",
+                "assertion": "The Retail search results page for 'ghar soap' is displayed with product cards.",
             },
         )
 
@@ -121,8 +121,8 @@ class GeminiAssertionThreadingTest(unittest.TestCase):
             sub_goal_info={
                 "index": 1,
                 "total": 3,
-                "description": "Search for ghar soap on Amazon",
-                "assertion": "The Amazon search results for 'ghar soap' are displayed.",
+                "description": "Search for ghar soap on Retail",
+                "assertion": "The Retail search results for 'ghar soap' are displayed.",
             },
         )
 

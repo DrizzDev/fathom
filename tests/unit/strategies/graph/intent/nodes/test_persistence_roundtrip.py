@@ -219,8 +219,8 @@ class GraphStatePersistenceRoundTripTest(unittest.TestCase):
                 pre_hash="pre",
                 post_hash="post",
             ),
-            current_activity="com.meesho.supply",
-            execution_activity="com.meesho.supply",
+            current_activity="com.shopping.supply",
+            execution_activity="com.shopping.supply",
         )
 
         goal = context.history.enqueue_save_step.call_args.kwargs["goal"]  # type: ignore[attr-defined]

@@ -158,33 +158,16 @@ class DocumentAiOcr(OcrPort):
         """
         Recover the true pixel resolution of ``capture.image``.
 
-        Document AI is handed the raw PNG bytes and reports ``normalized_vertices``
-        in 0..1 of *that image*. :class:`DocumentAiMapper` multiplies those by the
-        width/height it is given and stamps the result ``DEVICE_PIXEL``, so the
-        dimensions passed in must be the image's own pixel size.
+        Document AI reports ``normalized_vertices`` in 0..1 of the raw PNG; :class:`DocumentAiMapper`
+        multiplies by the given width/height and stamps ``DEVICE_PIXEL``, so the dimensions must be the
+        image's own pixel size. ``ScreenCapture.width``/``height`` hold dispatch-space dimensions —
+        device pixels for some adapters, logical points for others — so on a retina device a logical
+        pair is doubly divided by the scale in ``to_logical_dispatch`` and every OCR tap lands at
+        1/scale of its true offset from the origin. Decoding the image yields the true pixel size
+        whichever convention the adapter used, and is a no-op for adapters that already report pixels.
 
-        ``ScreenCapture.width``/``height`` cannot be relied on for that: they hold
-        the dispatch-space dimensions, which are device pixels for some adapters
-        (the local iOS one reads them straight off the PNG header) and logical
-        points for others — ``ScreenObservation.__capture_dimension_system``
-        resolves which at runtime. Where they are logical, a 2x retina device makes
-        them exactly half the image, so passing that pair produced bounds already
-        in logical space but labelled ``DEVICE_PIXEL``. ``to_logical_dispatch``
-        then divided them by the scale a second time and every OCR-resolved tap
-        landed at 1/scale of its correct distance from the top-left origin.
-
-        Decoding the image sidesteps the ambiguity entirely: it yields the true
-        pixel size whichever convention the adapter used, and is a no-op for the
-        adapters that already report pixels.
-
-        On a retina device where the reported dimensions are logical, treating
-        them as pixels doubly divides by the scale factor: the error is a few
-        pixels near the origin but grows toward the bottom-right until taps miss
-        their target entirely.
-
-        Mirrors ``ActionExecutor.__resolve_pixel_dimensions``. Falls back to the
-        logical pair when the bytes cannot be decoded — that is the pre-existing
-        behaviour and is correct for 1x devices, where the two are equal anyway.
+        Mirrors ``ActionExecutor.__resolve_pixel_dimensions``. Falls back to the logical pair when the
+        bytes cannot be decoded — correct for 1x devices, where the two are equal anyway.
         """
 
         if not capture.image:

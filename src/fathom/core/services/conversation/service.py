@@ -251,13 +251,10 @@ class ConversationService:
         labels: Tuple[Label, ...],
     ) -> InteractionSchemas.Content:
         """
-        Build message content with classifier labels + sanitizer stamping.
+        Build message content with classifier labels and sanitizer stamping.
 
-        Every persisted message is run through the sanitizer pipeline so the
-        `sanitized_at` / `sanitizer` columns are always populated. The default
-        sanitizer profile is a no-op (`noop@1`) that returns the body verbatim
-        but records that the pipeline ran; swapping in a PII-redacting profile
-        flows through every write path without touching call sites.
+        Every message runs through the sanitizer so ``sanitized_at`` / ``sanitizer`` are always
+        populated; the default ``noop@1`` profile returns the body verbatim while recording the run.
         """
 
         classified = self.__classifier.classify(body=body, existing=labels)

@@ -48,11 +48,10 @@ class SharedInputBus:
 
 class InteractiveSignal(SignalPort):
     """
-    High-performance, event-driven HITL signal adapter.
+    Event-driven HITL signal adapter.
 
-    Architecture:
-    - Zero-Thread Multiplexing: Uses `loop.add_reader` on `sys.stdin` for O(1) kernel-level notifications.
-    - Singleton Input Bus: Broadcasts input to all active listeners (preventing theft).
+    Uses ``loop.add_reader`` on ``sys.stdin`` for thread-free kernel-level notifications, and a singleton
+    input bus that broadcasts each line to every active listener so no listener steals another's input.
     """
 
     # Global input bus for all concurrent instances

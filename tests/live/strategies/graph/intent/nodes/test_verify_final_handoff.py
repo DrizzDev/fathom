@@ -91,9 +91,9 @@ def _print_llm_responses(*, responses: List[str]) -> None:
         print(f"\n[VERIFY_LLM_RESPONSE_{index}]\n{response}\n")
 
 
-class SalarySeModalFixture:
+class FinanceModalFixture:
     """
-    Builds a visual replay of the SalarySe address-confirmation blocker.
+    Builds a visual replay of the Finance address-confirmation blocker.
     """
 
     @staticmethod
@@ -107,7 +107,7 @@ class SalarySeModalFixture:
 
         draw.rectangle((0, 0, 402, 874), fill="#f3f3f3")
         draw.text((30, 60), "Selected Address", fill="#666666")
-        draw.text((30, 90), "SalarySe office", fill="#111111")
+        draw.text((30, 90), "Finance office", fill="#111111")
         draw.rectangle((0, 0, 402, 874), fill="#000000")
 
         draw.rectangle((36, 280, 366, 560), fill="#ffffff", outline="#222222", width=2)
@@ -125,13 +125,13 @@ class SalarySeModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.swiggy.android/.HomeActivity",
+            activity="in.delivery.android/.HomeActivity",
         )
 
     @staticmethod
     def completed_capture() -> ScreenCapture:
         """
-        Render the post-correction screen where the SalarySe address is selected and no modal remains.
+        Render the post-correction screen where the Finance address is selected and no modal remains.
         """
 
         image = Image.new("RGB", (402, 874), "#ffffff")
@@ -140,9 +140,9 @@ class SalarySeModalFixture:
         draw.rectangle((0, 0, 402, 96), fill="#fc8019")
         draw.text((24, 36), "Selected Address", fill="#ffffff")
         draw.rectangle((24, 140, 378, 260), fill="#f7fff7", outline="#178a3b", width=3)
-        draw.text((48, 170), "SalarySe office", fill="#111111")
+        draw.text((48, 170), "Finance office", fill="#111111")
         draw.text((48, 205), "Delivery address selected", fill="#178a3b")
-        draw.text((48, 330), "Restaurants near SalarySe office", fill="#111111")
+        draw.text((48, 330), "Restaurants near Finance office", fill="#111111")
         draw.rectangle((48, 385, 354, 455), fill="#f1f1f1", outline="#dddddd")
         draw.text((72, 410), "Food delivery home screen", fill="#333333")
 
@@ -154,19 +154,19 @@ class SalarySeModalFixture:
             height=874,
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
-            activity="in.swiggy.android/.HomeActivity",
+            activity="in.delivery.android/.HomeActivity",
         )
 
 
-class HsrProdAssetFixture:
+class FinalVerifyAssetFixture:
     """
-    Loads the downloaded 6f72ec86 Swiggy screenshots for live verifier replay.
+    Loads the downloaded Delivery screenshots for live verifier replay.
     """
 
     ASSET_ROOT = Path(
         "/Users/aman/Desktop/Drizz/fathom/debug/"
-        "6f72ec86-5952-4850-add9-631b4858c6aa/assets/screenshot/"
-        "6f72ec86-5952-4850-add9-631b4858c6aa"
+        "final-verify-run/assets/screenshot/"
+        "final-verify-run"
     )
     MODAL_SCREENSHOT = ASSET_ROOT / "step-005__screenshot__2026-06-11T06-28-10Z-692.png"
     COMPLETED_SCREENSHOT = ASSET_ROOT / "step-006__screenshot__2026-06-11T06-28-25Z-609.png"
@@ -207,7 +207,7 @@ class HsrProdAssetFixture:
             height=height,
             image=path.read_bytes(),
             timestamp=timestamp,
-            activity="in.swiggy.android",
+            activity="in.delivery.android",
         )
 
 
@@ -335,7 +335,7 @@ class _Provider:
             agent_state=agent_state,
             perception=_Perception(
                 captures=captures
-                or [SalarySeModalFixture.capture(), SalarySeModalFixture.completed_capture()]
+                or [FinanceModalFixture.capture(), FinanceModalFixture.completed_capture()]
             ),
             context_manager=self.context_manager,
             auditor=SimpleNamespace(log_step=MagicMock()),
@@ -355,7 +355,7 @@ class _Provider:
         return False
 
 
-class TestSalarySeFinalVerifyLive:
+class TestFinanceFinalVerifyLive:
     """
     Live Gemini replay for the final-subgoal VERIFY rejection case.
     """
@@ -363,7 +363,7 @@ class TestSalarySeFinalVerifyLive:
     @staticmethod
     def __agent_state() -> AgentState:
         """
-        Build AgentState with the final SalarySe sub-goal active.
+        Build AgentState with the final Finance sub-goal active.
         """
 
         agent_state = AgentState(
@@ -375,13 +375,13 @@ class TestSalarySeFinalVerifyLive:
                 timestamp=1,
                 visual_hash="1" * 16,
                 activity_hash="a" * 16,
-                activity="in.swiggy.android/.HomeActivity",
+                activity="in.delivery.android/.HomeActivity",
             )
         )
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Tap address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance office address"),
             ]
         )
         agent_state.advance_current_sub_goal()
@@ -390,7 +390,7 @@ class TestSalarySeFinalVerifyLive:
     @staticmethod
     def __hsr_agent_state() -> AgentState:
         """
-        Build AgentState at the 6f72ec86 final-confirmation handoff.
+        Build AgentState at the final-confirmation handoff.
         """
 
         agent_state = AgentState(
@@ -402,7 +402,7 @@ class TestSalarySeFinalVerifyLive:
                 timestamp=1,
                 visual_hash="1" * 16,
                 activity_hash="a" * 16,
-                activity="in.swiggy.android",
+                activity="in.delivery.android",
             )
         )
         agent_state.set_sub_goals(
@@ -454,7 +454,7 @@ class TestSalarySeFinalVerifyLive:
             timestamp=2,
             visual_hash="2" * 16,
             activity_hash="a" * 16,
-            activity="in.swiggy.android/.HomeActivity",
+            activity="in.delivery.android/.HomeActivity",
         )
 
     @staticmethod
@@ -486,12 +486,12 @@ class TestSalarySeFinalVerifyLive:
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__completed_screen_state(),
-            IntentStateKey.POST_ACTIVITY: "in.swiggy.android/.HomeActivity",
+            IntentStateKey.POST_ACTIVITY: "in.delivery.android/.HomeActivity",
             CommonStateKey.STEP_RESULT: self.__corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
                 is_complete=True,
-                reason="SalarySe office address is selected",
+                reason="Finance office address is selected",
             ),
         }
 
@@ -506,9 +506,9 @@ class TestSalarySeFinalVerifyLive:
                 timestamp=2,
                 visual_hash="ae41df2b4e7fb7df",
                 activity_hash="a" * 16,
-                activity="in.swiggy.android",
+                activity="in.delivery.android",
             ),
-            IntentStateKey.POST_ACTIVITY: "in.swiggy.android",
+            IntentStateKey.POST_ACTIVITY: "in.delivery.android",
             CommonStateKey.STEP_RESULT: self.__hsr_corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
@@ -580,22 +580,22 @@ class TestSalarySeFinalVerifyLive:
         assert provider.context_manager.cleared is True
         _print_llm_responses(responses=recording_llm.responses)
 
-    async def test_hsr_prod_artifact_replay_rejects_then_completes(self, llm: LLMPort) -> None:
+    async def test_artifact_replay_rejects_then_completes(self, llm: LLMPort) -> None:
         """
-        Live Gemini replay of 6f72ec86 using the downloaded modal and post-correction screenshots.
+        Live Gemini replay using the downloaded modal and post-correction screenshots.
         """
 
-        if not HsrProdAssetFixture.is_available():
-            pytest.skip("6f72ec86 downloaded screenshots are not available in debug assets")
+        if not FinalVerifyAssetFixture.is_available():
+            pytest.skip("downloaded screenshots are not available in debug assets")
 
         agent_state = self.__hsr_agent_state()
         recording_llm = _RecordingLlm(llm=llm)
         provider = _Provider(
             llm=recording_llm,
             agent_state=agent_state,
-            captures=HsrProdAssetFixture.captures(),
+            captures=FinalVerifyAssetFixture.captures(),
             intent="Change the address to HSR Layout",
-            workflow_id="live-6f72ec86-hsr-final-verify",
+            workflow_id="live-final-verify",
         )
         verify = VerifyNode(provider=provider)  # type: ignore[arg-type]
         record = RecordNode(provider=provider)  # type: ignore[arg-type]

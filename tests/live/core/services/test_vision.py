@@ -17,7 +17,7 @@ from fathom.schemas.screens import ScreenCapture
 
 pytestmark = pytest.mark.release
 
-EMAIL = "dev+test+Ilu+z2O5@varomoney.com"
+EMAIL = "dev+test+Ilu+z2O5@example.com"
 
 
 class NoopTelemetry(TelemetryPort):
@@ -80,7 +80,7 @@ class LoginScreenFixture:
 
         image = Image.new("RGB", (402, 874), "white")
         draw = ImageDraw.Draw(image)
-        draw.text((38, 80), "Varo", fill="black")
+        draw.text((38, 80), "Banking", fill="black")
         draw.text((38, 140), "Email", fill="black")
         draw.rectangle((38, 170, 364, 225), outline="black", width=2)
         draw.text((50, 188), EMAIL, fill="black")
@@ -93,7 +93,7 @@ class LoginScreenFixture:
         return ScreenCapture(
             width=402,
             height=874,
-            activity="com.varomoney.varo",
+            activity="com.banking.app",
             image=buffer.getvalue(),
             timestamp=int(time.time() * 1000),
         )

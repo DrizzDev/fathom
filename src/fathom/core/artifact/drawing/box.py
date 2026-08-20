@@ -13,15 +13,9 @@ class BoxDrawer:
     """
     Single shared primitive for drawing labelled boxes on annotated artifacts.
 
-    Owns font, font size, outline width, label format, and the
-    source-keyed colour palette so every annotated-artifact renderer
-    (manifest, perception, per-source perception) draws boxes in a
-    consistent visual style.
-
-    Label priority is numeric ``label_id`` first, then visible text,
-    then role — the planner reads numeric labels off the manifest, so
-    keeping numeric labels visible on every annotated image is the
-    fastest mental round-trip for human review.
+    Owns font, font size, outline width, label format, and the source-keyed colour palette so every
+    annotated-artifact renderer draws in a consistent style. Label priority is numeric ``label_id``
+    first, then visible text, then role — matching the numeric labels the planner reads off the manifest.
     """
 
     __SOURCE_COLOURS: Final[Mapping[ElementSource, str]] = {
@@ -99,29 +93,26 @@ class BoxDrawer:
         role: Optional[str],
     ) -> str:
         """
-        Pick the most informative label without falling back to noise.
-
-        Numeric label_id is preferred because it matches what the LLM
-        sees in the manifest. Visible text is the next-best identifier
-        for human reviewers. Role is the last-resort marker so empty
-        boxes never go un-labelled.
+        Pick the most informative label: numeric ``label_id`` (matches the manifest the LLM sees),
+        else visible text, else role as a last-resort marker so empty boxes never go un-labelled.
         """
 
         if label_id:
             return label_id
+
         if text and text.strip():
             return text.strip()[:32]
+
         if role:
             return role
+
         return ""
 
     @staticmethod
     def __label_position(*, bounds: Tuple[int, int, int, int]) -> Tuple[int, int]:
         """
-        Anchor the label at the top-left interior of the box.
-
-        Drawing inside the box keeps labels readable on dense screens
-        where boxes are stacked and outside-labels overlap each other.
+        Anchor the label at the top-left interior of the box; drawing inside keeps labels readable on
+        dense screens where stacked boxes make outside labels overlap.
         """
 
         x1, y1, _x2, _y2 = bounds
@@ -133,12 +124,8 @@ class BoxDrawer:
     @classmethod
     def __resolve_font(cls, *, size: int) -> ImageFont.ImageFont:
         """
-        Load a TrueType font at the requested size, falling back to the
-        Pillow default when no system font is available.
-
-        ``ImageFont.load_default()`` is used as a guaranteed fallback so
-        rendering never crashes when the runtime environment lacks the
-        usual platform font paths.
+        Load a TrueType font at the requested size, falling back to the Pillow default
+        (``ImageFont.load_default()``) so rendering never crashes when no system font path exists.
         """
 
         for path in cls.__FONT_SEARCH_PATHS:
@@ -147,4 +134,5 @@ class BoxDrawer:
                     return ImageFont.truetype(path, size)
                 except OSError:
                     continue
+
         return ImageFont.load_default()

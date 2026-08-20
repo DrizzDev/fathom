@@ -165,10 +165,10 @@ class PassthroughRendererTest(unittest.TestCase):
 
         renderer = PassthroughRenderer(kind=ArtifactKind.OCR_RAW)
         rendered = renderer.render(
-            record=_Fixtures.record(payload=OcrRawPayload(content='{"text": "Swiggy"}')),
+            record=_Fixtures.record(payload=OcrRawPayload(content='{"text": "Delivery"}')),
         )
 
-        self.assertEqual(rendered, b'{"text": "Swiggy"}')
+        self.assertEqual(rendered, b'{"text": "Delivery"}')
 
     def test_script_encodes_content_as_utf8(self) -> None:
         """

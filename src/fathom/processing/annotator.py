@@ -428,23 +428,14 @@ class ImageAnnotator:
         box_thickness: int = 2,
     ) -> Optional[bytes]:
         """
-        Draw perception-source bounding boxes on top of an existing
-        annotated image and return the new PNG bytes.
+        Draw perception-source bounding boxes on top of an existing annotated image, returning new PNG bytes.
 
-        Used when :class:`fathom.core.services.manifest.ManifestMerger`
-        appends OCR / Icon / Vision elements onto the XML manifest:
-        the LLM-facing image must show a box for every numeric label
-        the LLM sees in the manifest, otherwise the model is being
-        asked to ground against labels it cannot visually verify
-        (a documented hallucination regime).
-
-        ``entries`` are :class:`AppendedManifestEntry` tuples carrying
-        ``(label_id, source, text, bounds)`` — colours come from the
-        :class:`SourceColor` palette so OCR boxes are green, Icon
-        amber, Vision pink, distinguishable from the blue XML and
-        purple CV boxes already on the image. Styling (font size,
-        stroke width, label positioning) matches :meth:`annotate`
-        exactly so the combined image reads as one consistent pass.
+        Used when :class:`fathom.core.services.manifest.ManifestMerger` appends OCR / Icon / Vision
+        elements: the LLM-facing image must carry a box for every numeric label in the manifest, else the
+        model grounds against labels it cannot visually verify (a documented hallucination regime).
+        ``entries`` are :class:`AppendedManifestEntry` tuples ``(label_id, source, text, bounds)``; colours
+        come from :class:`SourceColor` (OCR green, Icon amber, Vision pink) to distinguish them from the
+        blue XML and purple CV boxes, and styling matches :meth:`annotate` so the passes read as one.
         """
 
         if not entries:

@@ -175,12 +175,12 @@ class IntentStrategyTest(unittest.IsolatedAsyncioTestCase):
         """
 
         strategy, telemetry = self.__strategy_with_stubbed_context(step_count=5)
-        await self.__invoke_emit(strategy=strategy, script_data="open swiggy\nsearch biryani")
+        await self.__invoke_emit(strategy=strategy, script_data="open delivery\nsearch biryani")
 
         telemetry.info.assert_awaited_once()
         call = telemetry.info.call_args
 
-        self.assertEqual(call.args[0], "open swiggy\nsearch biryani")
+        self.assertEqual(call.args[0], "open delivery\nsearch biryani")
         self.assertEqual(call.kwargs["type"], FathomEvent.SCRIPT_GENERATED)
         self.assertEqual(call.kwargs["step"], 5)
         self.assertFalse(call.kwargs["is_empty"])

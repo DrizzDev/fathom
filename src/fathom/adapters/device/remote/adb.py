@@ -43,7 +43,7 @@ logger = getLogger(__name__)
 
 class ADBRemoteDeviceAdapter(DevicePort):
     """
-    Adapter for controlling devices hosted on remote providers (e.g., Enricher).
+    Adapter for controlling devices hosted on a remote device farm.
     Implements the standard Fathom Remote Device Protocol.
     """
 

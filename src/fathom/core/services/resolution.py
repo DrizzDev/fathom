@@ -700,7 +700,7 @@ class ReferenceResolutionService:
             if value:
                 token = f"${source}.{key}"
                 resolved_text = resolved_text.replace(token, str(value))
-                logger.info(f"Resolved reference '{token}' to '{value}'")
+                logger.info(f"Resolved reference '{token}'")
             else:
                 logger.warning(f"Could not resolve reference: ${source}.{key}")
 

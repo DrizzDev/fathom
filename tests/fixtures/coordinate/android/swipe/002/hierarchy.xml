@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<hierarchy rotation="0">
-  <node text="" class="android.view.View" bounds="[44,1817][1036,1960]">
-    <node text="Save to draft (to complete later)" class="android.widget.TextView" bounds="[188,1874][892,1918]" />
-    <node text="" class="android.widget.Button" bounds="[44,1817][1036,1960]" />
-  </node>
-</hierarchy>

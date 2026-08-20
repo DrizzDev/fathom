@@ -321,12 +321,12 @@ class ADBDeviceFrameParseTest(unittest.TestCase):
 WINDOW MANAGER WINDOWS (dumpsys window windows)
   Window #0 Window{1a2b3c4 u0 NavigationBar0}:
     mFrame=[0,2148][1080,2208]
-  Window #1 Window{5d6e7f8 u0 com.swiggy.android/com.swiggy.android.MainActivity}:
+  Window #1 Window{5d6e7f8 u0 com.delivery.android/com.delivery.android.MainActivity}:
     mDisplayId=0 rootTaskId=1
     mFrame=[0,80][1080,2080]
   Window #2 Window{9a8b7c6 u0 StatusBar}:
     mFrame=[0,0][1080,80]
-  mCurrentFocus=Window{5d6e7f8 u0 com.swiggy.android/com.swiggy.android.MainActivity}
+  mCurrentFocus=Window{5d6e7f8 u0 com.delivery.android/com.delivery.android.MainActivity}
 """
 
     def test_parses_focused_window_frame(self) -> None:

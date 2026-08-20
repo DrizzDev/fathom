@@ -161,10 +161,8 @@ class _InitializedInteractionBuilder:
 
 class FathomActivitiesPartialBuildTest(unittest.IsolatedAsyncioTestCase):
     """
-    Regression: if any step after partial adapters are created fails during
-    __build_runner, every registered adapter must be drained — not just the
-    LLMs. Earlier versions only tracked LLMs and leaked telemetry / storage
-    / device / perception when the build failed downstream.
+    If any step after partial adapters are created fails during __build_runner, every registered
+    adapter must be drained — telemetry, storage, device, and perception, not just the LLMs.
     """
 
     async def test_partial_build_drains_every_registered_adapter(self) -> None:

@@ -521,7 +521,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
                 result="message-result-no-split",
                 reason=(
                     "All sub-goals completed (LLM disagreed: the screenshot showed a "
-                    "Swiggy McDonald's menu, not the running-shoes result page.)"
+                    "Delivery McDonald's menu, not the running-shoes result page.)"
                 ),
                 code=TaskCode.COMPLETED,
                 finished=self.__now.replace(second=12),
@@ -533,7 +533,7 @@ class TestConversationRecorder(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             "All sub-goals completed (LLM disagreed: the screenshot showed a "
-            "Swiggy McDonald's menu, not the running-shoes result page.)",
+            "Delivery McDonald's menu, not the running-shoes result page.)",
             body["summary"],
         )
         self.assertIsNone(body["detail"])

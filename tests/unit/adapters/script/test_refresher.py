@@ -31,7 +31,7 @@ from fathom.schemas.flow import (
     StepTarget,
 )
 
-PACKAGE: str = "in.swiggy.android"
+PACKAGE: str = "in.delivery.android"
 
 
 class _RecordingSource(EvidenceSource):

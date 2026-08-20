@@ -142,8 +142,8 @@ class SwipeRetryPlannerVerticalTest(unittest.TestCase):
         self.assertNotIn(AbortReason.KEYBOARD_BLOCKED, rejection_reasons)
         self.assertGreaterEqual(len(sequence.accepted), 1)
 
-    def test_short_travel_original_is_dispatched_cGJoU_replay(self) -> None:
-        """cGJoU replay: a gesture whose travel would have triggered the legacy MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched."""
+    def test_short_travel_original_is_dispatched(self) -> None:
+        """A gesture whose travel would have triggered the legacy MINIMUM_TRAVEL_VIOLATED pre-dispatch reject is now dispatched."""
 
         policy = SwipeRetryPolicy(enabled=False, minimum_travel=300)
         sequence = SwipeRetryPlanner().candidates(
@@ -230,7 +230,7 @@ class SwipeRetryPlannerFrameTest(unittest.TestCase):
 
     def test_anchor_in_gesture_zone_is_confined_into_the_frame(self) -> None:
         """
-        The Swiggy full-viewport case: a touch-down at the screen bottom edge is pulled inside the frame instead of dispatching there.
+        The Delivery full-viewport case: a touch-down at the screen bottom edge is pulled inside the frame instead of dispatching there.
         """
 
         path = GesturePath(start_x=540, start_y=2190, end_x=540, end_y=800, duration=300)

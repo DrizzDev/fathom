@@ -209,9 +209,8 @@ class AgentState:
         """
         Typed read-only snapshot of the loop detector for the escalation gate.
 
-        Exposed on :class:`AgentState` so domain components do not reach into
-        the private runtime path. Returns the detector's :class:`LoopEvidence`
-        snapshot: stuck flag, reason, full recent window, and ``since_progress``.
+        Returns the detector's :class:`LoopEvidence`: stuck flag, reason, full recent
+        window, and ``since_progress``.
         """
 
         return self.__runtime.screen.detector.evidence()
@@ -558,11 +557,8 @@ class AgentState:
         """
         Record an attempted (but not dispatched) action against the loop detector.
 
-        Used at planner / supervise rejection sites so the agent's *intent* to
-        repeat the same action enters the LoopDetector window even when the
-        attempt is rejected before reaching the executor. Without this,
-        successive same-target attempts that are rejected upstream stay
-        invisible to ``action_repetition`` and the agent can loop silently.
+        Feeds a rejected repeat-intent into the LoopDetector window so ``action_repetition``
+        sees same-target attempts rejected upstream; without it the agent can loop silently.
         """
 
         action_type = action.action_type.value
@@ -658,10 +654,8 @@ class AgentState:
         """
         Increment and return the consecutive complete-deferral counter.
 
-        The router invokes this when it routes an ``is_complete=True``
-        ANALYZE verdict back to GROUND because sub-goals are still
-        open. Returning the post-increment value lets the caller
-        decide whether to escalate.
+        The router calls this when it routes an ``is_complete=True`` verdict back to GROUND with
+        sub-goals still open; the post-increment value lets the caller decide whether to escalate.
         """
 
         self.__consecutive_complete_deferrals += 1
@@ -671,10 +665,7 @@ class AgentState:
         """
         Zero the consecutive complete-deferral counter.
 
-        Called on real progress: a non-complete plan, a successful
-        sub-goal advancement, or a verifier pass. Without the reset,
-        a single late deferral would forever bias the bounded-retry
-        threshold against the planner.
+        Called on real progress — a non-complete plan, a sub-goal advancement, or a verifier pass.
         """
 
         self.__consecutive_complete_deferrals = 0
@@ -1007,14 +998,10 @@ class AgentState:
 
     def record_action_effect(self, *, effect: ActionEffect) -> None:
         """
-        Append a structured action-effect outcome to the rolling
-        trajectory window.
+        Append a structured action-effect outcome to the rolling trajectory window.
 
-        Called from EXECUTE after each step using
-        :meth:`ActionEffect.from_screen_diff` against the post-action
-        :class:`ScreenDiff`. The window is bounded by
-        ``ACTION_EFFECT_TRAJECTORY_WINDOW`` so the prompt size stays
-        stable regardless of run length.
+        Called from EXECUTE via :meth:`ActionEffect.from_screen_diff` on the post-action
+        :class:`ScreenDiff`; the window is bounded by ``ACTION_EFFECT_TRAJECTORY_WINDOW``.
         """
 
         self.__runtime.effects.record_effect(effect=effect)
@@ -1037,24 +1024,11 @@ class AgentState:
 
     def build_loop_observation(self) -> Optional[LoopObservation]:
         """
-        Construct a :class:`LoopObservation` summarizing the current
-        stuck evidence, or ``None`` when the agent is not stuck.
+        Construct a :class:`LoopObservation` summarizing the current stuck evidence, or ``None``
+        when the agent is not stuck.
 
-        The observation is the structured input the ANALYZE prompt
-        renders into ``<SYSTEM_OBSERVATION>``. Built here (not in the
-        prompt assembler) so the rules for *when* to inject — and what
-        evidence to surface — live with the state that produced the
-        evidence.
-
-        Returns ``None`` when:
-
-        - The loop detector hasn't fired (``is_stuck`` is False) AND
-        - The action-effect trajectory hasn't crossed the no-progress
-          recovery threshold.
-
-        In either of those branches the agent receives no
-        ``SYSTEM_OBSERVATION`` block — the runtime tells the agent
-        nothing when there's nothing reliable to tell.
+        Feeds the ANALYZE prompt's ``<SYSTEM_OBSERVATION>`` block. Returns ``None`` unless the loop
+        detector fired or the action-effect trajectory crossed the no-progress recovery threshold.
         """
 
         stuck = self.is_stuck
@@ -1118,10 +1092,8 @@ class AgentState:
         """
         Number of trailing actions classified as ``NO_PROGRESS``.
 
-        Used by the RECORD node to decide whether to emit the
-        ``NO_PROGRESS`` recovery trigger. Counts only the contiguous
-        tail of the trajectory window — a single ``PROGRESS`` step
-        resets the counter.
+        Counts only the contiguous tail of the trajectory window; a single ``PROGRESS`` step resets
+        the counter. Read by RECORD to decide whether to emit the ``NO_PROGRESS`` recovery trigger.
         """
 
         return self.__runtime.effects.consecutive_no_progress()
@@ -1282,10 +1254,8 @@ class AgentState:
         """
         Record a deterministically blocked action as failure context.
 
-        Also feeds the LoopDetector window via :meth:`record_attempt` so the agent's *intent* to repeat the same blocked action
-        becomes visible to ``action_repetition``. Without this, the planner-side block path returned ``should_retry=True``
-        while the LoopDetector never saw the rejected attempt — so ``is_stuck`` never tripped, the planner's escalation gate never fired ``ASK_USER``,
-        and the workflow looped silently until ``max_steps``.
+        Also feeds the block into the LoopDetector via :meth:`record_attempt` so ``action_repetition``
+        sees the repeat-intent; without it ``is_stuck`` never trips and the workflow loops silently.
         """
 
         activity = (

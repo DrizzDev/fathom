@@ -8,13 +8,9 @@ class RunnerLifecycle(Protocol):
     """
     Lifecycle-only view of a runner: the cleanup and cancel a composition root drives.
 
-    Used by RunnerComposition.runner so the schema layer can stay decoupled
-    from the concrete FathomRunner implementation while still expressing the
-    cleanup / cancel contract the composition root relies on.
-
-    Runtime callers that need richer surface (run_intent, run_exploration,
-    device access) must keep the concrete FathomRunner reference at their
-    own layer; this protocol intentionally exposes only lifecycle methods.
+    Lets RunnerComposition.runner stay decoupled from the concrete FathomRunner. Callers needing richer
+    surface (run_intent, run_exploration, device access) must keep their own concrete FathomRunner
+    reference; this protocol intentionally exposes only lifecycle methods.
     """
 
     async def cleanup(self) -> None:

@@ -63,7 +63,7 @@ class Progress(BaseModel):
     )
     proof: Optional[PendingProof] = Field(
         default=None,
-        description="Additive checkpointed P5 evidence: a correlated command receipt ignored by live decisions until P6.",
+        description="Checkpointed command-receipt evidence, recorded additively and ignored by live decisions until final verification.",
     )
 
 

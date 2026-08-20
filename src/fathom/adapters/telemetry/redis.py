@@ -77,7 +77,7 @@ class RedisTelemetryAdapter(TelemetryPort):
         context: Dict[str, Any],
     ) -> None:
         """
-        Publish log event to Redis matching the farm-wrap gateway schema.
+        Publish log event to Redis matching the gateway schema.
         """
 
         try:

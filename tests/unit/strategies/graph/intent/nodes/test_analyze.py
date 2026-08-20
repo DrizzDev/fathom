@@ -365,11 +365,11 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(
-            intent="change the address to salaryse office",
+            intent="change the address to finance office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
         planner = Mock()
         planner.plan_step = AsyncMock(
@@ -434,13 +434,13 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(
-            intent="change the address to salaryse office",
+            intent="change the address to finance office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Tap address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance address"),
             ]
         )
         planner = Mock()
@@ -513,7 +513,7 @@ class AnalyzeNodeVerifyModeTest(unittest.IsolatedAsyncioTestCase):
         """
 
         agent_state = AgentState(
-            intent="change the address to salaryse office",
+            intent="change the address to finance office",
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
         for reason in TERMINAL_COMPLETION_REASONS:

@@ -158,7 +158,7 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
         agent_state.record_complete_deferral()
         agent_state.record_verify_rejection(
@@ -192,9 +192,9 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent_state.consecutive_complete_deferrals, 0)
         provider.completion.evaluate.assert_not_called()
 
-    async def test_hsr_final_confirmation_replay_routes_pending_verify(self) -> None:
+    async def test_final_confirmation_replay_routes_pending_verify(self) -> None:
         """
-        HSR prod replay: after tapping the final confirmation, RECORD must route to pending final VERIFY without committing the final sub-goal.
+        After tapping the final confirmation, RECORD must route to pending final VERIFY without committing the final sub-goal.
         """
 
         agent_state = AgentState(
@@ -226,7 +226,7 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
                 CommonStateKey.STEP_RESULT: self.__step_result(),
                 CommonStateKey.SCREEN_STATE: self.__screen(),
                 CommonStateKey.IS_NEW_SCREEN: True,
-                IntentStateKey.POST_ACTIVITY: "in.swiggy.android",
+                IntentStateKey.POST_ACTIVITY: "in.delivery.android",
                 IntentStateKey.PLAN: PlanResult(
                     is_complete=True,
                     reason="HSR Layout is selected after tapping Yes, continue with this location",
@@ -285,7 +285,7 @@ class RecordNodeCompletionRouteTest(unittest.IsolatedAsyncioTestCase):
 
         agent_state = AgentState(intent="change address", capabilities=self.__caps())
         agent_state.set_sub_goals(
-            [SubGoalFixtures.make(index=0, description="Confirm SalarySe address")]
+            [SubGoalFixtures.make(index=0, description="Confirm Finance address")]
         )
         agent_state.advance_current_sub_goal()
         agent_state.record_complete_deferral()

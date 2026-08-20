@@ -53,6 +53,7 @@ class EscalationProductionScenarioIntegrationTest(unittest.IsolatedAsyncioTestCa
             consume_user_guidance=Mock(),
             clear_user_guidance=Mock(),
             clear_verifier_feedback=Mock(),
+            clear_completion_feedback=Mock(),
         )
 
     @staticmethod

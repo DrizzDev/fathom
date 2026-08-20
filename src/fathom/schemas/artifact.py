@@ -97,8 +97,8 @@ class LocalArtifactPolicy(BaseModel):
         description=(
             "Whether the pipeline unlinks the EFS-staged file after the sink "
             "acknowledges cleanup. Hosts that read the staged path after the "
-            "sink ack (e.g. enricher's healing bridge queueing a delayed "
-            "Cloudinary upload) disable this and own a fallback sweep."
+            "sink ack (e.g. a host queueing a delayed remote upload) "
+            "disable this and own a fallback sweep."
         ),
     )
 

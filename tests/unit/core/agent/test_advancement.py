@@ -301,7 +301,7 @@ class TestCaptureExecution:
         assert _decide(self._capture_success(), evidence) is AdvanceKind.ADVANCE
 
     def test_capture_advances_despite_free_text_subject_difference(self) -> None:
-        # Regression (live Amazon run): the planner phrases the STORE subject independently of the
+        # Regression (live Retail run): the planner phrases the STORE subject independently of the
         # decomposer's; identity is the NAME, so a differing free-text subject must still advance.
         action = _action(
             ActionType.STORE,
@@ -342,11 +342,8 @@ class TestConfidenceFloor:
 
 class TestEscalation:
     """
-    Ported loop-bounding incidents: a stalled retain escalates, and a refuted own-observation is terminal.
-
-    These preserve the documented production loops (runs 59cd9b0b/6033fea1/44abb3b9/9c8704be/154ec8a1)
-    as a hermetic invariant on the new stall-driven policy, without the gitignored replay tapes: a
-    sub-goal that cannot prove itself may not retain unboundedly once momentum reports a stall.
+    A stalled retain escalates, and a refuted own-observation is terminal: a sub-goal that cannot
+    prove itself may not retain unboundedly once momentum reports a stall.
     """
 
     @staticmethod
@@ -465,11 +462,11 @@ class TestVisualAuthorityIsolation:
         )
 
     def test_satisfied_verdict_for_other_goal_cannot_advance(self) -> None:
-        # "Open Amazon" satisfied must not advance the "search ghar soap" goal.
+        # "Open Retail" satisfied must not advance the "search ghar soap" goal.
         success = ObservedSuccess(observation=_obs("search results for ghar soap shown"))
         evidence = _turn(
             execution=_result(_step(_action(ActionType.TAP))),
-            observation=_obs("Amazon home screen shown"),
+            observation=_obs("Retail home screen shown"),
             verdict=_satisfied(),
         )
         assert _decide(success, evidence) is AdvanceKind.RETAIN
@@ -596,14 +593,14 @@ class TestVisualEvidenceAdvancement:
         A satisfied verdict on the exact bound foreground package advances.
         """
 
-        obs = _obs("Amazon home screen shown")
+        obs = _obs("Retail home screen shown")
         evidence = self.__turn(
             observation=obs,
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.amazon.mShop.android.shopping"),
-                foreground="com.amazon.mShop.android.shopping",
+                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
+                foreground="com.retail.mShop.android.shopping",
             ),
         )
         assert _decide(ObservedSuccess(observation=obs), evidence) is AdvanceKind.ADVANCE
@@ -613,13 +610,13 @@ class TestVisualEvidenceAdvancement:
         A satisfied verdict on a foreground other than the bound target retains.
         """
 
-        obs = _obs("Amazon home screen shown")
+        obs = _obs("Retail home screen shown")
         evidence = self.__turn(
             observation=obs,
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.amazon.mShop.android.shopping"),
+                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
                 foreground="com.android.launcher",
             ),
         )
@@ -630,13 +627,13 @@ class TestVisualEvidenceAdvancement:
         A satisfied verdict under a bound target with an unknown foreground fails closed and retains.
         """
 
-        obs = _obs("Amazon home screen shown")
+        obs = _obs("Retail home screen shown")
         evidence = self.__turn(
             observation=obs,
             visual=self.__visual(
                 observation=obs,
                 verdict=VisualVerdict.SATISFIED,
-                authority=TargetAuthority.requested(package="com.amazon.mShop.android.shopping"),
+                authority=TargetAuthority.requested(package="com.retail.mShop.android.shopping"),
                 foreground=None,
             ),
         )

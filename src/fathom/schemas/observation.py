@@ -33,18 +33,12 @@ class ScreenRelation(StrEnum):
 
 class LoopObservation(BaseModel):
     """
-    Structured loop-observation handed to the agent through the
-    ANALYZE prompt when the deterministic LoopDetector has accumulated
-    enough evidence to call the current sub-goal stuck.
+    Structured loop-observation surfaced to the agent in the ANALYZE prompt once the deterministic
+    LoopDetector has enough evidence to call the current sub-goal stuck.
 
-    **Information, not control.** The observation is rendered into the
-    prompt as a system note. The agent decides whether to try a
-    different target or call ``ask_user``. The system does not override
-    the agent's next action.
-
-    The schema is intentionally minimal — only what the agent needs to
-    reason about its trajectory. Raw timestamps, full screen hashes,
-    and other forensic detail stay in telemetry.
+    Information, not control: rendered as a system note, it never overrides the agent's next action — the
+    agent decides whether to retarget or call ``ask_user``. Intentionally minimal; raw timestamps, full
+    screen hashes, and other forensic detail stay in telemetry.
     """
 
     model_config = ConfigDict(frozen=True)

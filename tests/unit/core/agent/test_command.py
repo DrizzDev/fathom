@@ -139,9 +139,8 @@ class CommandGateTest(unittest.TestCase):
 
     def test_well_formed_commands_admitted_regardless_of_goal(self) -> None:
         """
-        Regression: the gate performs no directive/completion-mode admission. A well-formed
-        proof-bearing or preparatory command is admitted structurally — the old symmetric gate that
-        rejected preparatory tactics under a mismatched goal must not recur.
+        The gate performs no directive/completion-mode admission. A well-formed proof-bearing or
+        preparatory command is admitted structurally, regardless of the active goal.
         """
 
         gate = self.__gate()

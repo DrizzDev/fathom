@@ -97,7 +97,7 @@ class ArtifactRecordValidationTest(unittest.TestCase):
         Raw OCR JSON payloads route through the OCR raw artifact kind.
         """
 
-        payload = OcrRawPayload(content='{"text": "Swiggy"}')
+        payload = OcrRawPayload(content='{"text": "Delivery"}')
 
         self.assertEqual(payload.kind, ArtifactKind.OCR_RAW)
 

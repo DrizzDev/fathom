@@ -122,8 +122,7 @@ class TestMemoryProjectorPagination(unittest.IsolatedAsyncioTestCase):
 
     async def test_projector_walks_every_page(self) -> None:
         """
-        Three pages of messages must all be projected; previously only the
-        first page was read and the rest were silently dropped.
+        Every page of messages must be projected — all three pages here, not just the first.
         """
 
         pages = [

@@ -25,7 +25,7 @@ class FathomActivitiesTest(unittest.IsolatedAsyncioTestCase):
 
         runner = Mock()
         runner.device = Mock()
-        runner.device.get_current_package = AsyncMock(return_value="in.swiggy.android")
+        runner.device.get_current_package = AsyncMock(return_value="in.delivery.android")
         runner.run_intent = AsyncMock(side_effect=RuntimeError("boom"))
         runner.cancel = Mock(side_effect=lambda: cleanup_order.append("cancel"))
         runner.cleanup = AsyncMock(side_effect=lambda: cleanup_order.append("cleanup"))

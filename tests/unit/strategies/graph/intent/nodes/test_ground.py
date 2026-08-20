@@ -158,7 +158,7 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def __observation() -> ScreenObservation:
         """
-        OCR-only observation matching the launcher Swiggy label.
+        OCR-only observation matching the launcher Delivery label.
         """
 
         return ScreenObservation(
@@ -172,7 +172,7 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
             elements=(
                 PerceivedElement(
                     label_id="13",
-                    text="Swiggy",
+                    text="Delivery",
                     parent=None,
                     tappable=False,
                     confidence=0.96,
@@ -248,7 +248,7 @@ class GroundNodeOcrManifestFallbackTest(unittest.IsolatedAsyncioTestCase):
         result: Any = await node(state={})  # type: ignore[arg-type]
 
         elements = result[IntentStateKey.ELEMENTS]
-        self.assertEqual(elements["1"]["text"], "Swiggy")
+        self.assertEqual(elements["1"]["text"], "Delivery")
         self.assertEqual(elements["1"]["source"], "ocr")
         self.assertEqual(elements["1"]["bounds"], "[284,383][392,414]")
         self.assertIsNotNone(result[CommonStateKey.CAPTURE].annotated_image)

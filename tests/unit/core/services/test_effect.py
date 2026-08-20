@@ -121,7 +121,7 @@ class EffectClassifierTest(unittest.TestCase):
             diff=self.__diff(regions=[ScreenChangeRegion(x=410, y=1210, width=180, height=100)]),
             bounds=self.bounds,
             package=None,
-            foreground="com.meesho.supply",
+            foreground="com.shopping.supply",
         )
 
         self.assertIsNone(reading.departed)
@@ -137,7 +137,7 @@ class EffectClassifierTest(unittest.TestCase):
             effect=self.__effect(status=ActionEffectStatus.PROGRESS),
             diff=self.__diff(regions=[]),
             bounds=self.bounds,
-            package="com.meesho.supply",
+            package="com.shopping.supply",
             foreground="com.google.android.gms",
         )
 

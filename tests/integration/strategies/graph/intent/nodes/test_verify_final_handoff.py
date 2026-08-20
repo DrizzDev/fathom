@@ -10,6 +10,7 @@ from tests.builders import SubGoalFixtures
 from fathom.constants import ActionType
 from fathom.constants.state import CommonStateKey, IntentStateKey, VerifyMode
 from fathom.core.agent.state import AgentState
+from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.results import PlanResult
@@ -59,7 +60,7 @@ class _Perception:
             height=200,
             image=b"png",
             timestamp=1,
-            activity="com.swiggy/.HomeActivity",
+            activity="com.delivery/.HomeActivity",
         )
 
 
@@ -166,6 +167,8 @@ class _Provider:
         self.context = SimpleNamespace(
             llm=llm,
             max_steps=20,
+            phase=AsyncMock(),
+            clock=RunClock(),
             artifact_pipeline=None,
             agent_state=agent_state,
             perception=_Perception(),
@@ -224,7 +227,7 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
             timestamp=1,
             visual_hash="b" * 16,
             activity_hash="a" * 16,
-            activity="com.swiggy/.HomeActivity",
+            activity="com.delivery/.HomeActivity",
         )
 
     def __record_state(self, *, step_number: int) -> Dict[object, object]:
@@ -235,12 +238,12 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__screen(),
-            IntentStateKey.POST_ACTIVITY: "com.swiggy/.HomeActivity",
+            IntentStateKey.POST_ACTIVITY: "com.delivery/.HomeActivity",
             CommonStateKey.STEP_RESULT: self.__step_result(step_number=step_number),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
                 is_complete=True,
-                reason="SalarySe office appears selected",
+                reason="Finance office appears selected",
             ),
         }
 
@@ -301,7 +304,7 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         return {
             CommonStateKey.IS_NEW_SCREEN: True,
             CommonStateKey.SCREEN_STATE: self.__screen(),
-            IntentStateKey.POST_ACTIVITY: "in.swiggy.android",
+            IntentStateKey.POST_ACTIVITY: "in.delivery.android",
             CommonStateKey.STEP_RESULT: self.__hsr_corrective_step_result(),
             IntentStateKey.PLAN: PlanResult(
                 step=None,
@@ -322,7 +325,7 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         agent_state.set_sub_goals(
             [
                 SubGoalFixtures.make(index=0, description="Tap address selector"),
-                SubGoalFixtures.make(index=1, description="Confirm SalarySe office address"),
+                SubGoalFixtures.make(index=1, description="Confirm Finance office address"),
             ]
         )
         agent_state.advance_current_sub_goal()
@@ -330,8 +333,8 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
             contents=[
                 '{"is_complete": false, "reason": "Tap Yes, continue first"}',
                 (
-                    '{"is_complete": true, "reason": "SalarySe office is selected", '
-                    '"assertions": [{"kind": "VISIBLE", "subject": "SalarySe office address header"}]}'
+                    '{"is_complete": true, "reason": "Finance office is selected", '
+                    '"assertions": [{"kind": "VISIBLE", "subject": "Finance office address header"}]}'
                 ),
             ]
         )
@@ -379,7 +382,7 @@ class VerifyFinalHandoffIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Step:", llm.prompts[0])
         self.assertIn("User Intent: change the address to salary-se office", llm.prompts[0])
 
-    async def test_hsr_prod_replay_rejects_corrects_then_verifies_final_intent(self) -> None:
+    async def test_replay_rejects_corrects_then_verifies_final_intent(self) -> None:
         """
         Replay 6f72ec86: final VERIFY rejects the modal, corrective tap routes back to final VERIFY, then acceptance completes.
         """

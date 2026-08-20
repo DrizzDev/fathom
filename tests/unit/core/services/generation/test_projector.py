@@ -52,7 +52,7 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
         return DeterministicFlowGenerator()
 
     @staticmethod
-    def __launch(*, index: int = 0, package: str = "in.swiggy.android") -> EvidenceStep:
+    def __launch(*, index: int = 0, package: str = "in.delivery.android") -> EvidenceStep:
         """
         Build a launcher-transition launch evidence step.
         """
@@ -99,20 +99,20 @@ class DeterministicFlowGeneratorTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def __evidence(*, steps: Tuple[EvidenceStep, ...], partial: bool = False) -> Evidence:
         """
-        Wrap evidence steps for the Swiggy-style run.
+        Wrap evidence steps for the Delivery-style run.
         """
 
         return Evidence(
-            intent="order a burger on swiggy",
+            intent="order a burger on delivery",
             goal="McDonald's burger added to cart",
-            package="in.swiggy.android",
+            package="in.delivery.android",
             steps=steps,
             partial=partial,
         )
 
-    async def test_swiggy_run_projects_to_policy_clean_flow(self) -> None:
+    async def test_delivery_run_projects_to_policy_clean_flow(self) -> None:
         """
-        The Swiggy run (launch + taps + validation) projects to a launch-led, validation-terminated, policy-clean flow.
+        The Delivery run (launch + taps + validation) projects to a launch-led, validation-terminated, policy-clean flow.
         """
 
         evidence = self.__evidence(

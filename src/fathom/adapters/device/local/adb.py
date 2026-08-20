@@ -291,18 +291,10 @@ class ADBDevice(DevicePort):
         """
         Bounded post-kill reap of a still-running subprocess.
 
-        ``__run_safe_subprocess`` enforces a wall-clock per-command timeout
-        via :func:`asyncio.wait_for`. Its ``finally`` block sends SIGKILL,
-        then awaits the process to reap. When the host has wedged IO
-        (emulator qcow2 backing exhausted, NFS hang, etc.) the kernel
-        cannot deliver SIGKILL because the process sits in an
-        uninterruptible-IO state; the await would block indefinitely and
-        the entire workflow would stall.
-
-        This helper caps that reap with ``subprocess_cleanup_timeout`` and
-        abandons the process (logging at WARNING) rather than waiting
-        forever. The leaked subprocess will be reaped by the OS once the
-        underlying IO unwedges.
+        When the host has wedged IO the kernel cannot deliver SIGKILL — the process sits in
+        uninterruptible-IO state and the reap await would block forever, stalling the workflow. This
+        helper caps the reap with ``subprocess_cleanup_timeout`` and abandons the process (logging at
+        WARNING); the OS reaps the leak once the underlying IO unw-edges.
         """
 
         try:

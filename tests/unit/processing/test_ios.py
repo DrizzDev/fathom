@@ -67,7 +67,7 @@ class IOSParserTest(unittest.TestCase):
         xml = """
         <AppiumAUT>
           <XCUIElementTypeApplication type="XCUIElementTypeApplication" x="0" y="0" width="440" height="956">
-            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" x="20" y="40" width="160" height="30" visible="true" label="More on Swiggy" />
+            <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" x="20" y="40" width="160" height="30" visible="true" label="More on Delivery" />
             <XCUIElementTypeCollectionView type="XCUIElementTypeCollectionView" x="0" y="756" width="440" height="102" visible="true" enabled="true" />
           </XCUIElementTypeApplication>
         </AppiumAUT>

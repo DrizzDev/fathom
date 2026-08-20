@@ -498,12 +498,11 @@ class VisionService:
         rejection_reason: str,
     ) -> List[ConversationTurn]:
         """
-        Build multi-turn rejection history from an AnalysisResult for cross-iteration
-        feedback. The planner calls this when rejecting a repeated action so the next
-        vision.analyze() cycle can pass it as conversation_history.
+        Build multi-turn rejection history from an AnalysisResult for cross-iteration feedback.
 
-        Returns provider-neutral ConversationTurn objects representing the model's
-        rejected tool call and the rejection reason.
+        The planner calls this when rejecting a repeated action so the next ``vision.analyze()``
+        cycle can pass it as ``conversation_history``; returns the model's rejected tool call and
+        the rejection reason as provider-neutral ConversationTurns.
         """
 
         # Model turn: reconstruct the rejected tool call
@@ -537,13 +536,8 @@ class VisionService:
         """
         Build a multi-turn conversation history from a rejected LLM response.
 
-        Returns a list of ConversationTurn objects representing:
-          1. Original user turn (prompt + image)
-          2. Model's rejected response (its own tool call)
-          3. (The next user turn with correction will be sent as the current prompt)
-
-        This gives the LLM full visibility into what it proposed and why it was wrong,
-        enabling genuine self-correction rather than stateless retry.
+        Returns two ConversationTurns: the original user turn (prompt + image) and the model's
+        rejected tool call; the correction is sent separately as the next user prompt.
         """
 
         # Turn 1: Original user prompt
@@ -670,14 +664,10 @@ class VisionService:
 
     def __render_loop_observation(self, *, observation: LoopObservation) -> str:
         """
-        Render a :class:`LoopObservation` as a structured block in the
-        ANALYZE prompt.
+        Render a :class:`LoopObservation` as a structured block in the ANALYZE prompt.
 
-        The block is deliberately framed as an observation, not as an
-        instruction. The agent reads it, may consult it when choosing
-        the next action, and is free to disagree if it has reason. The
-        runtime enforces nothing here; loop-breaking remains a planner
-        concern, not a prompt contract.
+        The block is framed as an observation, not an instruction: the runtime enforces nothing
+        and loop-breaking stays a planner decision.
         """
 
         progress = (
@@ -758,15 +748,13 @@ class VisionService:
 
     def __format_elements(self, elements: Optional[Dict[str, Any]]) -> str:
         """
-        Convert the drawer label map into a grounding manifest the
-        planner can bind ``label_id`` references against.
+        Convert the drawer label map into a grounding manifest the planner can bind ``label_id``
+        references against.
 
-        Reads attribute keys from both platform vocabularies — Android
-        (``class``, ``text``, ``content-desc``) and iOS / XCUITest
-        (``type``, ``name``, ``label``, ``value``) — so an element
-        coming out of :class:`IOSParser` (which keeps its raw XML
-        attribute names) renders with its real semantic label instead
-        of an anonymous ``View``.
+        Reads both platform vocabularies — Android (``class``, ``text``, ``content-desc``) and
+        iOS / XCUITest (``type``, ``name``, ``label``, ``value``) — so an :class:`IOSParser` element,
+        which keeps its raw XML attribute names, renders with its real semantic label instead of an
+        anonymous ``View``.
         """
 
         logger.info(f"Converting {len(elements) if elements else 0} elements into manifest")

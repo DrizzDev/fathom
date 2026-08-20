@@ -90,12 +90,9 @@ T = TypeVar("T")
 
 class RecorderHealth:
     """
-    Tracks recorder activity so the first durable-write failure suppresses
-    subsequent writes for the lifetime of the run.
-
-    The recorder is best-effort by design: a broken interaction port should
-    never crash a Fathom run. After the first InteractionError, the recorder
-    no-ops and emits one error event so the host can surface the outage.
+    Track recorder activity so the first durable-write failure suppresses subsequent writes for the
+    run; after the first InteractionError the recorder no-ops and emits one error event so the host
+    can surface the outage.
     """
 
     def __init__(self) -> None:
@@ -364,11 +361,8 @@ class ConversationRecorder:
         Run a recorder operation, suppressing further writes after the first durable-write failure and
         emitting one structured telemetry event per successful write.
 
-        The recorder is best-effort: a broken interaction port (locked DB, filesystem error,
-        integrity violation, network blip on a remote adapter) must never crash a Fathom run.
-        We catch every Exception from the interaction port. InteractionError preserves the typed
-        message; any other exception is wrapped into a generic disabled notice so the host can alert
-        without losing the run.
+        Best-effort: every Exception from the interaction port is caught so a broken port never crashes
+        a run; InteractionError keeps its typed message, any other error becomes a generic disabled notice.
         """
 
         if not self.__health.is_active():
@@ -696,13 +690,9 @@ class ConversationRecorder:
         """
         Create or join the requesting actor for the run thread.
 
-        Two concurrent runs starting in the same conversation can race on
-        thread creation: both observe "no thread", both call create_thread,
-        and the second collides on the threads PRIMARY KEY. We catch only
-        the typed ThreadConflictError (one specific case from create_thread)
-        and fall through to the existing-thread path. Any other failure
-        from get_thread or create_thread propagates so the recorder's failure-suppression layer
-        can disable cleanly.
+        Two concurrent runs can race on thread creation and collide on the threads PRIMARY KEY; only
+        the typed ThreadConflictError is caught, falling through to the existing-thread path, while any
+        other failure propagates so the failure-suppression layer can disable cleanly.
         """
 
         thread_existed = await self.__thread_exists(run=run)

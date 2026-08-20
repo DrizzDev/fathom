@@ -25,8 +25,6 @@ class GitContextEngine(ContextEngine):
     3. Background task summarizes the segment and creates a milestone
     4. commit() keeps last N items in shadow_buffer for continuity
     5. LLM sees: Milestones (semantic) + Shadow Buffer (recent details) + Active Log (current)
-
-    This design scales to 100+ step workflows while maintaining context continuity.
     """
 
     def __init__(self, *, context_window: int = 7) -> None:

@@ -16,7 +16,7 @@ class ReasonerAnalyzeCompletionTest(unittest.TestCase):
     """
 
     @staticmethod
-    def __reasoner(intent: str = "open meesho and find Jars & containers") -> Reasoner:
+    def __reasoner(intent: str = "open shopping and find Jars & containers") -> Reasoner:
         """
         Build a Reasoner with a representative intent string.
         """

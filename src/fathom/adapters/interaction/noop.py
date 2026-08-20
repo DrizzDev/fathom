@@ -83,14 +83,10 @@ class NoopInteraction(InteractionPort):
     """
     Interaction adapter that swallows writes and returns empty reads.
 
-    Selected when a host explicitly disables conversation recording. Writes
-    that carry all fields in their request return synthesized entity echoes
-    so callers and the recorder treat them as successful. Writes that depend
-    on prior persisted state (sanitize, finish-task, finish-job) raise
-    InteractionError because there is no state to read; the recorder's
-    failure-suppression layer handles this without crashing the run.
-
-    Reads return None or empty collections.
+    Selected when a host disables conversation recording. Self-contained writes return synthesized entity
+    echoes so callers treat them as successful; writes depending on prior persisted state (sanitize,
+    finish-task, finish-job) raise InteractionError, which the recorder's failure-suppression layer
+    absorbs without crashing the run. Reads return None or empty collections.
     """
 
     async def initialize(self) -> None:

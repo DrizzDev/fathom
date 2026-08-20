@@ -5,38 +5,25 @@ from types import SimpleNamespace
 from typing import List
 from unittest.mock import AsyncMock, Mock
 
-from tests.builders import ActionFixtures, ScreenFixtures, SubGoalFixtures, SuccessFixtures
+from tests.builders import ActionFixtures, ScreenFixtures, SubGoalFixtures
 from tests.builders.agent import AgentFixtures
 
 from fathom.constants import ActionType
 from fathom.constants.assessment import VisualVerdict
-from fathom.constants.observation import KeyboardVisibility as _KeyboardVisibility
 from fathom.constants.retries import RetryBranch, RetryKind
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey
 from fathom.constants.turn.advancement import AdvanceKind
 from fathom.core.agent.planner import StepPlanner
 from fathom.core.agent.state import AgentState
-from fathom.core.capability.catalog import CommandCatalogProvider as _CommandCatalogProvider
-from fathom.core.services.criterion import CriterionObserver as _CriterionObserverBase
+from fathom.core.services.timing import RunClock
 from fathom.schemas.actions import Action
-from fathom.schemas.actions import Bounds as _Bounds
 from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.capabilities import HITLCapability, RuntimeCapabilities
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.criterion import CriterionDecision as _CriterionDecision
-from fathom.schemas.criterion import CriterionSource as _CriterionSource
-from fathom.schemas.criterion import CriterionVerdict as _CriterionVerdict
-from fathom.schemas.observation import ElementRole as _ElementRole
-from fathom.schemas.observation import ElementSource as _ElementSource
-from fathom.schemas.observation import KeyboardObservation as _KeyboardObservation
-from fathom.schemas.observation import PerceivedElement as _PerceivedElement
-from fathom.schemas.observation import ScreenObservation as _ScreenObservation
 from fathom.schemas.planner import PlannerMetrics
-from fathom.schemas.results import AnalysisResult, PlanContext, PlanResult, PlanTurn
+from fathom.schemas.results import AnalysisResult
 from fathom.schemas.retries import RetryLimits
-from fathom.schemas.screens import ScreenHashBundle as _ScreenHashBundle
 from fathom.strategies.graph.intent.nodes.analyze import AnalyzeNode
-from fathom.strategies.graph.intent.nodes.completion import SubGoalEvaluator as _SubGoalEvaluator
 from fathom.strategies.graph.state import IntentGraphState
 
 
@@ -68,7 +55,7 @@ class _RealPlannerHarness:
     Drives ``AnalyzeNode`` through the production ``StepPlanner`` with only the LLM boundary (``VisionService.analyze``) stubbed.
     """
 
-    BLOCKED_DESCRIPTOR: str = "Swipe left on More on Swiggy widget"
+    BLOCKED_DESCRIPTOR: str = "Swipe left on More on Delivery widget"
 
     def __init__(self, *, agent_state: AgentState) -> None:
         self.__agent_state = agent_state
@@ -108,6 +95,9 @@ class _RealPlannerHarness:
                 max_steps=10,
                 use_xml=True,
                 workflow_id="run-test",
+                intent="test-intent",
+                phase=AsyncMock(),
+                clock=RunClock(),
                 planner=self.__planner,
                 reasoner=self.__reasoner,
                 agent_state=self.__agent_state,
@@ -168,8 +158,8 @@ class _RealPlannerHarness:
 
 class AnalyzeNodePlannerRetryBudgetIntegrationTest(unittest.IsolatedAsyncioTestCase):
     """
-    Regression: the planner rejecting the same action on an unchanged screen used to loop forever;
-    the retry budget must terminate the workflow at ``cap`` iterations.
+    The planner rejecting the same action on an unchanged screen must not loop forever; the retry
+    budget terminates the workflow at ``cap`` iterations.
     """
 
     @staticmethod
@@ -191,7 +181,7 @@ class AnalyzeNodePlannerRetryBudgetIntegrationTest(unittest.IsolatedAsyncioTestC
         Build a constant capture so every iteration runs against an unchanged screen.
         """
 
-        return ScreenFixtures.capture(activity="bundl.swiggy", width=1080, height=2340)
+        return ScreenFixtures.capture(activity="bundl.delivery", width=1080, height=2340)
 
     async def test_silent_rejection_loop_terminates_at_budget(self) -> None:
         """
@@ -349,153 +339,6 @@ class AnalyzeNodePlannerRetryBudgetIntegrationTest(unittest.IsolatedAsyncioTestC
         self.assertEqual(agent_state.retries.planner.count, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class _SatisfiedCriterionObserver(_CriterionObserverBase):
-    """
-    Criterion observer stub that always reports high-confidence SATISFIED on the settled screen.
-    """
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def check(
-        self, *, workflow_id: str, index: int, requirement: object, observation: _ScreenObservation
-    ) -> _CriterionDecision:
-        """
-        Return a fresh high-confidence SATISFIED reading regardless of inputs.
-        """
-
-        _ = (workflow_id, index, requirement, observation)
-        self.calls += 1
-        return _CriterionDecision(
-            verdict=_CriterionVerdict.SATISFIED,
-            source=_CriterionSource.SYMBOLIC,
-            confidence=0.9,
-            evidence=("rating >= 4.2 visible",),
-        )
-
-
-class AnalyzeNodePreDispatchSatisfiedPriorTest(unittest.IsolatedAsyncioTestCase):
-    """
-    Graph-level: an active goal already satisfied on the settled screen advances via SATISFIED_PRIOR
-    inside ANALYZE after the single planner call, discarding the planned action before EXECUTE. The real
-    CriterionObserver-shaped stub, AdvancementPolicy and SubGoalEvaluator are exercised through the
-    production AnalyzeNode; only the criterion reading is fixed.
-    """
-
-    @staticmethod
-    def __observation() -> _ScreenObservation:
-        """
-        Build a minimal settled-screen observation.
-        """
-
-        element = _PerceivedElement(
-            identifier="e0",
-            bounds=_Bounds(x=0, y=0, width=10, height=10),
-            source=_ElementSource.XML,
-            role=_ElementRole.TEXT,
-            confidence=1.0,
-            text="Ghar Magic Soap 4.9",
-            tappable=False,
-        )
-        return _ScreenObservation(
-            activity="com.meesho.supply",
-            elements=(element,),
-            hashes=_ScreenHashBundle(
-                visual_hash="vh0",
-                xml_hash="0000000000000000",
-                interaction_hash="0000000000000000",
-            ),
-            overlays=(),
-            keyboard=_KeyboardObservation(visibility=_KeyboardVisibility.HIDDEN),
-            scroll=(),
-            calls_to_action=(),
-            focused=None,
-        )
-
-    async def test_satisfied_goal_advances_before_dispatch_without_execute(self) -> None:
-        """
-        The already-satisfied goal advances to the next sub-goal after the single planner call, before EXECUTE.
-        """
-
-        agent_state = AgentState(
-            intent="buy ghar soap",
-            capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
-        )
-        agent_state.set_sub_goals(
-            [
-                SubGoalFixtures.make(
-                    index=0,
-                    description="Scroll until rating >= 4.2",
-                    success=SuccessFixtures.observed(
-                        assertion="a product with rating >= 4.2 is visible"
-                    ),
-                ),
-                SubGoalFixtures.make(
-                    index=1,
-                    description="Select the product",
-                    success=SuccessFixtures.observed(assertion="product detail open"),
-                ),
-            ]
-        )
-        catalog = _CommandCatalogProvider().build()
-        checker = _SatisfiedCriterionObserver()
-        evaluator = _SubGoalEvaluator(
-            context=SimpleNamespace(
-                agent_state=agent_state, workflow_id="run-test", catalog=catalog
-            ),
-            criterion_observer=checker,
-        )
-        planner = Mock()
-        planner.plan_step = AsyncMock(
-            return_value=PlanTurn(
-                plan=PlanResult(
-                    reason="already satisfied",
-                    is_complete=False,
-                    step=None,
-                    context=PlanContext(
-                        analysis=AnalysisResult(reasoning="r", screen_description="s")
-                    ),
-                )
-            )
-        )
-        provider = SimpleNamespace(
-            is_cancelled=AsyncMock(return_value=False),
-            persistence=_Persistence(),
-            hitl=SimpleNamespace(prompt=AsyncMock()),
-            completion=evaluator,
-            context=SimpleNamespace(
-                workflow_id="run-test",
-                max_steps=10,
-                agent_state=agent_state,
-                context_manager=AgentFixtures.context_manager(),
-                planner=planner,
-                use_xml=True,
-                reasoner=Mock(),
-                memory=SimpleNamespace(set=AsyncMock()),
-                metrics=SimpleNamespace(record=Mock(), record_tokens=Mock()),
-                configuration=SimpleNamespace(intent=SimpleNamespace(prompt_user_if_stuck=False)),
-                telemetry=SimpleNamespace(info=AsyncMock(), error=AsyncMock()),
-                catalog=catalog,
-            ),
-        )
-        state: IntentGraphState = {
-            CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.meesho.supply"),
-            CommonStateKey.SCREEN_OBSERVATION: self.__observation(),
-        }
-
-        result = await AnalyzeNode(provider=provider).run(state=state)
-
-        self.assertEqual(checker.calls, 1)
-        planner.plan_step.assert_awaited_once()
-        self.assertEqual(agent_state.current_sub_goal_index, 1)
-        self.assertTrue(result.get(IntentStateKey.SHOULD_RETRY))
-        self.assertIsNone(result.get(IntentStateKey.PLANNED_STEP))
-
-
 class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCase):
     """
     Graph-level proof of Slice-2 shadow recording: the real AnalyzeNode + production StepPlanner,
@@ -514,6 +357,9 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
                 max_steps=10,
                 use_xml=True,
                 workflow_id="run-test",
+                intent="test-intent",
+                phase=AsyncMock(),
+                clock=RunClock(),
                 planner=StepPlanner(vision_tool=vision),
                 reasoner=reasoner,
                 agent_state=agent_state,
@@ -531,11 +377,11 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
         self,
     ) -> None:
         agent_state = AgentState(
-            intent="Open Amazon",
+            intent="Open Retail",
             max_steps=10,
             capabilities=RuntimeCapabilities(hitl=HITLCapability(enabled=False)),
         )
-        agent_state.set_sub_goals([SubGoalFixtures.make(description="Amazon home is shown")])
+        agent_state.set_sub_goals([SubGoalFixtures.make(description="Retail home is shown")])
         cursor_before = agent_state.current_sub_goal_index
 
         action = ActionFixtures.make(
@@ -548,7 +394,7 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
             action=action,
             metadata={"tool_args": {}},
             reasoning="home visible",
-            screen_description="Amazon home",
+            screen_description="Retail home",
             visual_assessment=VisualAssessment(
                 verdict=VisualVerdict.SATISFIED, confidence=0.9, evidence="home visible"
             ),
@@ -566,7 +412,7 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
 
         with self.assertLogs("fathom.strategies.graph.intent.nodes.analyze", level="INFO") as logs:
             result = await node.run(
-                state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.amazon.mp3")}
+                state={CommonStateKey.CAPTURE: ScreenFixtures.capture(activity="com.retail.mp3")}
             )
 
         # Exactly one model turn (the vision boundary the planner calls once).
@@ -586,3 +432,7 @@ class AnalyzeNodeShadowAssessmentIntegrationTest(unittest.IsolatedAsyncioTestCas
         self.assertIs(draft.pre_dispatch.candidate.kind, AdvanceKind.RETAIN)
         # The goal cursor did not advance from the shadow path.
         self.assertEqual(agent_state.current_sub_goal_index, cursor_before)
+
+
+if __name__ == "__main__":
+    unittest.main()

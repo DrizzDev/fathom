@@ -258,7 +258,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
                     package_name="app",
                     session_id="run-test",
                     created=1_700_000_000_000,
-                    payload=OcrRawPayload(content='{"text": "Swiggy"}'),
+                    payload=OcrRawPayload(content='{"text": "Delivery"}'),
                 )
             )
             await pipeline.drain()
@@ -266,7 +266,7 @@ class ArtifactPipelineStagingTest(unittest.IsolatedAsyncioTestCase):
             payloads = list(tmp_path.rglob("xmls/**/step-000__ocr_raw__*.json"))
 
             self.assertEqual(len(payloads), 1)
-            self.assertEqual(payloads[0].read_text(), '{"text": "Swiggy"}')
+            self.assertEqual(payloads[0].read_text(), '{"text": "Delivery"}')
 
     async def test_emit_drops_record_when_kind_has_no_renderer(self) -> None:
         """
