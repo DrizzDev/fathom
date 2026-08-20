@@ -1,0 +1,40 @@
+name: dco
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify Developer Certificate of Origin sign-off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for commit in $(git rev-list "$BASE".."$HEAD"); do
+            author="$(git show -s --format='%an <%ae>' "$commit")"
+            case "$author" in
+              *"[bot]"*) echo "skipping automated commit $commit by $author"; continue ;;
+            esac
+            if git show -s --format='%B' "$commit" | grep -qiE "^Signed-off-by: .+ <.+@.+>$"; then
+              continue
+            fi
+            echo "::error::commit $commit by $author is missing a Signed-off-by line"
+            missing=1
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Sign off your commits with 'git commit -s'. See CONTRIBUTING.md and DCO."
+            exit 1
+          fi
+          echo "All commits are signed off."

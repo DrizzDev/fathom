@@ -1,6 +1,7 @@
 # Engineering & Architecture Standard
 
-Use this skill for any coding, architecture, refactor, implementation-plan, PRD, design-review, or code-audit task in this workspace unless the user explicitly says otherwise.
+Apply this standard to any coding, architecture, refactor, implementation-plan, design-review
+or code-audit task in this repository unless explicitly stated otherwise.
 
 ## Non-negotiable goals
 
@@ -15,6 +16,32 @@ All systems must be:
 - safe for long-term evolution
 
 Readability, maintainability, and performance must coexist. Do not trade one away casually.
+
+## P0 — non-negotiable rules
+
+These rules are blockers. A change that violates any of them does not merge, regardless of what else it
+accomplishes.
+
+- **Hexagonal architecture is mandatory.** The whole system is built on ports and adapters, and every
+  change must honor the layering: the pure core depends only on typed ports, and vendors, devices, and
+  infrastructure live behind adapters. There is no exception and no "just this once."
+- **No standalone functions.** Everything is a class with appropriate instance, class, or static
+  methods. A module-level function is allowed only for a genuinely pure, stateless transformation —
+  never for behavior, state, or orchestration. A single stray standalone function is a blocker.
+- **No random flags or variables.** Do not sprinkle ad-hoc booleans, string flags, or loose variables
+  to steer behavior. Model control flow with explicit state machines, enums, and typed models; state
+  that drives a decision belongs in a state object, not a local variable threaded through calls.
+- **One-word, generic names.** Folders, files, and modules use a single generic `snake_case` word.
+  Represent multi-word concepts through nesting, not compound names. Long, ugly compound identifiers
+  are rejected on sight.
+- **Dot notation wherever it fits.** Prefer nested structure over flattened compound names — Pydantic
+  fields read as `ocr.enabled`, not `ocr_enabled`. Group related settings and values under a parent so
+  the shape, not the string, carries the meaning.
+- **Structured logging only.** Every significant boundary emits a structured, machine-parseable event
+  with a stable `event` and `component`, never a bare formatted string. Logging lives in outer layers,
+  never in the domain, and never records sensitive values.
+- **No `@dataclass` anywhere.** Pydantic `BaseModel` is the only entity and boundary model, with
+  `Field(description=...)` on each field; raw `dict`/`tuple` must never cross a layer boundary.
 
 ## 1. Architecture
 
@@ -61,7 +88,10 @@ Formats:
 - Protected / Internal: `_snake_case`
 - Constant: `UPPER_SNAKE_CASE`
 - Enum member name: `UPPER_SNAKE_CASE`
-- Enum member value: `UPPER_SNAKE_CASE` for internal/semantic enums (the value mirrors the member name). The only exception is an enum whose values form an external or rendered protocol vocabulary — tokens emitted verbatim into rendered output, an external API/tool contract, or a persisted wire format — which keep their literal protocol form.
+- Enum member value: `UPPER_SNAKE_CASE` for internal/semantic enums (the value mirrors the member name).
+  The only exception is an enum whose values form an external or rendered protocol vocabulary —
+  tokens emitted verbatim into rendered output, an external API/tool contract, or a persisted wire
+  format — which keep their literal protocol form.
 - Module: `snake_case`
 
 ## 4. Imports
@@ -95,8 +125,9 @@ Formats:
 
 ## 7. Data models
 
-- use Pydantic `BaseModel` for anything crossing a boundary
-- use `dataclass` only for pure in-memory domain value objects with no validation/serialization requirement
+- use Pydantic `BaseModel` for entities, validated value models, and anything crossing a boundary
+- never use `@dataclass` anywhere in the repository
+- use an ordinary class only for behavior-only objects that are not entities
 - never use raw `dict` or `tuple` instead of a typed model
 - prefer immutable domain entities/value objects where possible
 - validate at the boundary; Domain may assume valid data
@@ -299,10 +330,24 @@ Levels:
 
 Rules:
 
-- Domain tests must be infrastructure-free
-- tests must be deterministic
-- test observable behavior, not internals
-- critical path coverage is non-negotiable
+- Domain tests must be infrastructure-free, deterministic, and assert observable behavior, not internals.
+- Every test is a class (no function-based tests) and mirrors the source file and folder structure.
+- Add a test only when it pins real behavior. Each test states a concrete input and asserts a concrete
+  output or state transition; it must be able to fail if the behavior regresses.
+
+What to test, deliberately:
+
+- The happy path of the changed behavior, plus each distinct branch and every failure and edge path.
+- Boundary and invariant conditions — empty, missing, malformed, over-limit, and the exact threshold.
+- For a bug fix, both the failing case and the sibling negative case (that the correct thing still works).
+- The real path the behavior walks in production — never a path the test itself fabricates to pass.
+
+What is not a test, and must not be added:
+
+- Asserting that a mock was called, or mocking the very thing under test, with no assertion on real output.
+- Restating what `__init__` set (a getter or round-trip), or asserting only `is not None` / `isinstance`.
+- Re-testing framework behavior (that Pydantic rejects a wrong type, that an enum equals its literal).
+- "No exception raised" with no outcome checked, or an assertion that cannot fail.
 
 ## 30. Controlled complexity
 
@@ -329,7 +374,7 @@ Prohibited:
 - global mutable state
 - magic numbers or strings without named constants
 
-## How to apply this skill
+## How to apply this standard
 
 When implementing or reviewing:
 
@@ -343,15 +388,23 @@ When implementing or reviewing:
 
 For Fathom work, below are strictly compulsory to follow
 
-- Proper layered and nested structure, be it folder, files, or classes, entities, it's fields, and always use single word names for folder, files, etc...
+- Proper layered and nested structure, be it folder, files, or classes, entities, it's fields
+  and always use single word names for folder, files, etc...
 - Proper usages of design pattern, considering all basic coding concepts like OOPS, SOLID, SRP, OCP, LSP, Hexagonal Architecture
 - Using Pydantic for entities with Fields, 1 line descriptions, and defining it at correct files/location (schemas)
 - No hardcoded constants/values, define things inside constants (Use IntEnum, StrEnum, etc...)
 - Don't use any unit(ms, s, etc..) as prefix/suffix for any variables/fields, use description to convey what it means
-- Use elegant, beautiful, sort, generic names for functions, variables, fields (Eg: For Pydantic/Fields, I prefer nested fields, Eg: ocr.enabled and not ocr_enabled, etc...)
-- Always use __ and not _ for private methods/variables, and use __methods to make code readable, making function non-bloated, etc...
-- Doc string should be in format of """\n Crisp, to the point doc-string\n""" and """doc-string"""
-- UTs should follow same file/folder structure, and each UT should be class, no function based UTs, and UT should cover actual real cases and not vague, random, fake cases
-- I don't like standalone functions at all, everything should be class with proper functions (instance method, class/static methods depending on its nature)
-- Nothing should violate HEXAGONAL ARCHITECTURE In any case, We've to maintain SRP, OOPS, Other basic coding standards at all cost, this is non-negotiable
-```
+- Use elegant, short, generic names for functions, variables, and fields. Prefer nested fields for Pydantic models (`ocr.enabled`, not `ocr_enabled`).
+- Always use `__` (not `_`) for private methods and variables, to keep functions readable and un-bloated.
+- Docstrings always use the multi-line form, with the triple-quotes on their own lines, even for one-liners:
+
+  ```python
+  """
+  Crisp, to-the-point docstring.
+  """
+  ```
+
+- Unit tests mirror the source file and folder structure; every test is a class (no function-based tests) and covers real cases
+  not vague or fabricated ones.
+- Avoid standalone functions; model behavior as classes with appropriate instance, class, or static methods.
+- Nothing may violate the hexagonal architecture; SRP, OOP, and the other standards above are non-negotiable.

@@ -204,13 +204,13 @@ __marimo__/
 # Custom
 *.db
 .DS_Store
+
 logs/
 assets/
 debug/
 secrets/
 scripts/
+research/
 documents/
 debugging/
-research/
-debug/scroll/poc/
 tests/fixtures/
