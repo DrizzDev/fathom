@@ -8,6 +8,7 @@ from fathom.adapters.device.local.ios import IOSDevice
 from fathom.adapters.device.remote.adb import ADBRemoteDeviceAdapter
 from fathom.adapters.device.remote.ios import IOSRemoteDeviceAdapter
 from fathom.adapters.llm.gemini import GeminiLLM
+from fathom.adapters.llm.openai import OpenAILLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
     IOSEnhancedPerceptionAdapter,
@@ -94,6 +95,9 @@ class LLMFactory(LLMFactoryPort):
 
         if configuration.provider == "gemini":
             return GeminiLLM(configuration=configuration)
+
+        if configuration.provider == "openai":
+            return OpenAILLM(configuration=configuration)
 
         raise NotImplementedError(
             f"LLM adapter for provider {configuration.provider} is not implemented"
