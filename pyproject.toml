@@ -61,7 +61,7 @@ dependencies = [
     "types-PyYAML>=6.0.12.20250915",
     "google-cloud-documentai>=2.20.0",
     "langgraph>=0.0.10",
-    "langgraph-checkpoint-sqlite>=3.0.3",
+    "langgraph-checkpoint-sqlite>=3.1.1",
     "lark>=1.1.9"
 ]
 
