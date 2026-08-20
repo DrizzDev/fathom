@@ -20,7 +20,7 @@ google-cloud-storage>=2.0.0
 google-cloud-documentai>=2.20.0
 types-PyYAML>=6.0.12.20250915
 rustworkx>=0.15.0
-langgraph>=0.0.10
+langgraph>=1.2.11
 langgraph-checkpoint-sqlite>=3.0.3
 lark>=1.1.9
 
