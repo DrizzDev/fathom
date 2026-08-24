@@ -25,6 +25,14 @@ class LLMSummarizer(SummarizationPort):
 
         self.__llm = llm
 
+    @property
+    def llm(self) -> LLMPort:
+        """
+        The LLM adapter this summarizer was composed with.
+        """
+
+        return self.__llm
+
     async def summarize_trace(self, trace: List[Dict[str, Any]]) -> str:
         """
         Build a milestone summary of the trace via tool calling: the accomplishment, the key actions,
@@ -77,7 +85,7 @@ class LLMSummarizer(SummarizationPort):
 
         # Use tool calling for structured summarization
         tool_definition = {
-            "function_declarations": [
+            "tools": [
                 {
                     "name": "create_milestone",
                     "description": "Create a structured milestone summary of the execution segment",

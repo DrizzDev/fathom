@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+from fathom.adapters.interaction.noop import NoopInteraction
 from fathom.constants.collaboration import TaskCode
+from fathom.constants.llm import ModelProvider
+from fathom.constants.manifest import ModelRole
+from fathom.constants.qualification import QualificationLabel, RationaleCategory
 from fathom.constants.state import CompletionReason
+from fathom.core.config.loader import RuntimeConfigLoader
+from fathom.interfaces.device import DevicePort
+from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.perception import PerceptionPort
+from fathom.runtime.builder import Fathom
 from fathom.runtime.runner import FathomRunner
+from fathom.schemas.llm import ModelIdentity
+from fathom.schemas.qualification import QualificationVerdict, Rationale
 from fathom.schemas.recording import Handle, ScriptOutput
+from fathom.settings.env import FathomSettings
 
 
 class FathomRunnerGeneratedScriptTest(unittest.IsolatedAsyncioTestCase):
@@ -206,3 +219,190 @@ class FathomRunnerExecutionIdentityTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(hasattr(runner, "_FathomRunner__recorder"))
         self.assertTrue(reserve(execution_id=None, workflow_id="workflow-1"))
+
+
+class FathomRunnerManifestEmissionTest(unittest.TestCase):
+    """
+    The runner resolves the model-role manifest at run start, records it for the host to read,
+    and emits it as one structured event.
+    """
+
+    @staticmethod
+    def __runner(*, planner: LLMPort) -> FathomRunner:
+        """
+        Build a runner over the minimum ports needed to resolve a manifest.
+        """
+
+        return (
+            Fathom.builder()
+            .with_llm(port=planner)
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
+            .build()
+        )
+
+    @staticmethod
+    def __loader() -> RuntimeConfigLoader:
+        """
+        Loader bound to explicit settings so the manifest never depends on ambient env.
+        """
+
+        return RuntimeConfigLoader(settings=FathomSettings(ensemble_localizer_enabled=False))
+
+    def test_resolution_records_the_manifest_on_the_runner(self) -> None:
+        """
+        After resolution the runner exposes the manifest with the effective step budget.
+        """
+
+        runner = self.__runner(planner=MagicMock(spec=LLMPort))
+        resolve = runner._FathomRunner__resolve_manifest  # type: ignore[attr-defined]
+
+        returned = resolve(steps=17, loader=self.__loader())
+
+        self.assertIs(runner.manifest, returned)
+        self.assertEqual(returned.steps, 17)
+
+    def test_resolution_emits_one_structured_manifest_event(self) -> None:
+        """
+        The run-start event carries the serialized manifest under a stable event name.
+        """
+
+        runner = self.__runner(planner=MagicMock(spec=LLMPort))
+        resolve = runner._FathomRunner__resolve_manifest  # type: ignore[attr-defined]
+
+        with self.assertLogs("fathom.runtime.runner", level="INFO") as captured:
+            resolve(steps=9, loader=self.__loader())
+
+        events = [
+            record
+            for record in captured.records
+            if getattr(record, "event", None) == "fathom.manifest.resolved"
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].manifest["steps"], 9)  # type: ignore[attr-defined]
+        self.assertEqual(
+            [entry["role"] for entry in events[0].manifest["roles"]],  # type: ignore[attr-defined]
+            [role.value for role in ModelRole],
+        )
+
+    def test_recorded_provider_comes_from_the_declared_identity(self) -> None:
+        """
+        Regression: the recorded provider is what the adapter declares, not its class name.
+
+        A class named ``StubPlanner`` would have been recorded as "stubplanner" by the previous
+        class-name derivation; the declared identity is the only source now.
+        """
+
+        planner = MagicMock(spec=LLMPort)
+        planner.identity = ModelIdentity(
+            provider=ModelProvider.ANTHROPIC,
+            model="claude-x",
+        )
+        runner = self.__runner(planner=planner)
+
+        provider = runner._FathomRunner__llm_provider()  # type: ignore[attr-defined]
+
+        self.assertEqual(provider, "anthropic")
+
+    def test_undeclared_adapter_records_unknown_rather_than_a_guess(self) -> None:
+        """
+        An adapter that declares no identity is recorded as unknown.
+        """
+
+        runner = self.__runner(planner=MagicMock(spec=LLMPort))
+
+        provider = runner._FathomRunner__llm_provider()  # type: ignore[attr-defined]
+
+        self.assertEqual(provider, ModelProvider.UNKNOWN.value)
+
+
+class FathomRunnerRejectedRunManifestTest(unittest.IsolatedAsyncioTestCase):
+    """
+    A run the qualifier rejects still reports which models were composed, so a host can tell
+    a rejection apart from a harness misconfiguration.
+    """
+
+    async def test_rejection_result_carries_the_runs_manifest(self) -> None:
+        """
+        The terminal rejection result carries the manifest resolved for that run.
+        """
+
+        runner = (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_telemetry(port=AsyncMock())
+            .with_interaction(port=NoopInteraction())
+            .build()
+        )
+        resolve = runner._FathomRunner__resolve_manifest  # type: ignore[attr-defined]
+        build = runner._FathomRunner__build_rejection_result  # type: ignore[attr-defined]
+        manifest = resolve(
+            steps=25,
+            loader=RuntimeConfigLoader(settings=FathomSettings(ensemble_localizer_enabled=False)),
+        )
+
+        result = await build(
+            intent="pay the invoice",
+            workflow_id="workflow-1",
+            start_time=0.0,
+            manifest=manifest,
+            verdict=QualificationVerdict(
+                confidence=1.0,
+                message="Cannot run that.",
+                label=QualificationLabel.NOT_EXECUTABLE,
+                rationale=Rationale(
+                    category=RationaleCategory.EMPTY,
+                    reasoning="empty",
+                ),
+            ),
+            verdict_payload={},
+        )
+
+        assert result.manifest is not None
+        self.assertIs(result.manifest, manifest)
+        self.assertEqual(result.manifest.steps, 25)
+        self.assertEqual(result.completion_reason, CompletionReason.NOT_EXECUTABLE.value)
+
+    async def test_rejection_result_manifest_never_leaks_the_intent(self) -> None:
+        """
+        The manifest attached to a rejected run carries no trace of the user's intent text.
+        """
+
+        runner = (
+            Fathom.builder()
+            .with_llm(port=MagicMock(spec=LLMPort))
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_telemetry(port=AsyncMock())
+            .with_interaction(port=NoopInteraction())
+            .build()
+        )
+        resolve = runner._FathomRunner__resolve_manifest  # type: ignore[attr-defined]
+        build = runner._FathomRunner__build_rejection_result  # type: ignore[attr-defined]
+
+        result = await build(
+            intent="transfer 500 to account 12345",
+            workflow_id="workflow-1",
+            start_time=0.0,
+            manifest=resolve(
+                steps=25,
+                loader=RuntimeConfigLoader(
+                    settings=FathomSettings(ensemble_localizer_enabled=False)
+                ),
+            ),
+            verdict=QualificationVerdict(
+                confidence=1.0,
+                message=None,
+                label=QualificationLabel.NOT_EXECUTABLE,
+                rationale=Rationale(category=RationaleCategory.EMPTY, reasoning="empty"),
+            ),
+            verdict_payload={},
+        )
+
+        assert result.manifest is not None
+        payload = json.dumps(result.manifest.model_dump(mode="json"))
+        self.assertNotIn("12345", payload)
+        self.assertNotIn("transfer", payload)

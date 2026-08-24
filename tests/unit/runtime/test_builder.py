@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from fathom.adapters.interaction.noop import NoopInteraction
+from fathom.constants.manifest import ModelRole, RoleBinding
 from fathom.constants.storage import StorageBackend
 from fathom.core.services.qualifier import (
     LLMIntentQualifier,
@@ -23,6 +24,7 @@ from fathom.schemas.configuration import (
     QualifierConfiguration,
     StorageConfiguration,
 )
+from fathom.schemas.perception import LocalizationEnsembleConfiguration
 from fathom.settings.env import FathomSettings
 
 
@@ -387,3 +389,85 @@ _ = Any  # exported for downstream extensions
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FathomBuilderManifestTest(unittest.TestCase):
+    """
+    A built runner can report which model every role resolved to before a run starts,
+    so a host can reject an unfair composition instead of scoring it.
+    """
+
+    @staticmethod
+    def __runner(*, planner: LLMPort):
+        """
+        Build a runner over the minimum ports with the supplied planner.
+        """
+
+        return (
+            Fathom.builder()
+            .with_llm(port=planner)
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_interaction(port=NoopInteraction())
+            .build()
+        )
+
+    def test_manifest_is_absent_until_a_run_resolves_it(self) -> None:
+        """
+        A freshly built runner reports no manifest; it is per-run state, not construction state.
+        """
+
+        runner = self.__runner(planner=MagicMock(spec=LLMPort))
+
+        self.assertIsNone(runner.manifest)
+
+    def test_resolved_manifest_covers_every_role_and_names_the_planner_sharers(self) -> None:
+        """
+        Default composition shares the planner adapter with the qualifier and summarizer.
+        """
+
+        planner = MagicMock(spec=LLMPort)
+        runner = self.__runner(planner=planner)
+        resolver = runner._FathomRunner__manifest_resolver  # type: ignore[attr-defined]
+
+        manifest = resolver.resolve(
+            steps=50,
+            localization=LocalizationEnsembleConfiguration(enabled=False, members=()),
+        )
+
+        self.assertEqual(len(manifest.roles), len(ModelRole))
+        for role in (ModelRole.QUALIFIER, ModelRole.SUMMARIZER, ModelRole.ABORT):
+            entry = manifest.entry(role=role)
+            assert entry is not None
+            self.assertEqual(entry.binding, RoleBinding.SHARED, role.value)
+            self.assertEqual(entry.source, ModelRole.PLANNER, role.value)
+
+    def test_assembly_composed_qualifier_is_reported_independent(self) -> None:
+        """
+        The dedicated qualifier adapter .with_assembly() builds is not the planner's.
+        """
+
+        planner = MagicMock(spec=LLMPort)
+        runner = (
+            Fathom.builder()
+            .with_llm(port=planner)
+            .with_device(port=MagicMock(spec=DevicePort))
+            .with_perception(port=MagicMock(spec=PerceptionPort))
+            .with_assembly(
+                assembly=RunAssemblyBuilder(settings=FathomSettings(gemini_api_key="test-key")),
+                llm_factory=_SpyLLMFactory(),
+            )
+            .with_interaction(port=NoopInteraction())
+            .build()
+        )
+        resolver = runner._FathomRunner__manifest_resolver  # type: ignore[attr-defined]
+
+        manifest = resolver.resolve(
+            steps=50,
+            localization=LocalizationEnsembleConfiguration(enabled=False, members=()),
+        )
+        entry = manifest.entry(role=ModelRole.QUALIFIER)
+
+        assert entry is not None
+        self.assertEqual(entry.binding, RoleBinding.INDEPENDENT)
+        self.assertIsNone(entry.source)

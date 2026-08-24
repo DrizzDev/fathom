@@ -43,6 +43,14 @@ class LLMIntentQualifier(IntentQualifierPort):
         self.__prompt_builder = prompt_builder or GeminiQualifierPromptBuilder()
         self.__structured_output = StructuredOutput(payload=QualificationVerdict)
 
+    @property
+    def llm(self) -> LLMPort:
+        """
+        The LLM adapter this qualifier was composed with.
+        """
+
+        return self.__llm
+
     async def qualify(self, *, intent: str) -> QualificationVerdict:
         """
         Classify the intent's executability and return a verdict.

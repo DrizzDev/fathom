@@ -434,6 +434,10 @@ class EnsembleMemberName(StrEnum):
     Stable names for ensemble vision-localizer members.
     """
 
+    VISION_LLM = "vision_llm"
+    """Provider-neutral LLM-backed visual localizer."""
+
+    # Retained so existing FATHOM_ENSEMBLE_LOCALIZER_MEMBERS values continue to parse.
     GEMINI_VISION = "gemini_vision"
     DOCUMENT_AI_LAYOUT = "document_ai_layout"
 
