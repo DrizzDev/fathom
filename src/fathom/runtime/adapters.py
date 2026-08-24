@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -14,7 +14,7 @@ from fathom.adapters.icon.template import TemplateIconDetector
 from fathom.adapters.journal.jsonl import JsonRuntimeJournal
 from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.localization.document import DocumentAiLayoutLocalizer
-from fathom.adapters.localization.gemini import GeminiVisionLocalizer
+from fathom.adapters.localization.vision import VisionLLMLocalizer
 from fathom.adapters.ocr.document import DocumentAiOcr
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
@@ -33,10 +33,11 @@ from fathom.core.artifact.renderer import (
     VerificationRenderer,
 )
 from fathom.core.config.loader import RuntimeConfigLoader
+from fathom.core.embedding.capability import EmbeddingCapability
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.infrastructure.storage.cloud import GCSImageStorage
 from fathom.interfaces.artifact import ArtifactRendererPort, ArtifactSinkPort
-from fathom.interfaces.embedding import EmbeddingPort
+from fathom.interfaces.embedding import EmbeddingCapable, EmbeddingPort
 from fathom.interfaces.icon import IconDetectorPort
 from fathom.interfaces.journal import RuntimeJournalPort
 from fathom.interfaces.llm import LLMPort
@@ -157,8 +158,7 @@ class AdapterAssembly:
         Build the Gemini embedding adapter sharing auth with the chat LLM; ``None`` when unavailable.
         """
 
-        client = getattr(self.__llm, "client", None)
-        if client is None:
+        if not EmbeddingCapability.available(llm=self.__llm):
             logger.info(
                 "LLM port does not expose an embedding-capable client; embeddings disabled",
                 extra={
@@ -169,7 +169,7 @@ class AdapterAssembly:
             return None
 
         adapter = GeminiEmbeddingAdapter(
-            client=client,
+            client=cast("EmbeddingCapable", self.__llm).client,
             workflow_id=self.__workflow_id,
         )
         self.__log_embedder_wired(adapter=adapter)
@@ -319,8 +319,8 @@ class AdapterAssembly:
         disabled or un-configured rather than carrying a member that can only ever return ``None``.
         """
 
-        if name == EnsembleMemberName.GEMINI_VISION:
-            return GeminiVisionLocalizer(llm=self.__llm, workflow_id=self.__workflow_id)
+        if name in (EnsembleMemberName.VISION_LLM, EnsembleMemberName.GEMINI_VISION):
+            return VisionLLMLocalizer(llm=self.__llm, workflow_id=self.__workflow_id)
 
         if name == EnsembleMemberName.DOCUMENT_AI_LAYOUT:
             if not self.__perception.ocr.enabled or self.__perception.ocr.document_ai is None:

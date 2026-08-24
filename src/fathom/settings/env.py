@@ -34,9 +34,15 @@ class FathomSettings(BaseSettings):
     Global settings loaded from environment variables and the .env file.
     """
 
-    # Gemini settings
+    # LLM settings
+    llm_provider: Literal["gemini", "openai"] = Field(
+        default="gemini",
+        validation_alias=AliasChoices("FATHOM_LLM_PROVIDER", "LLM_PROVIDER"),
+    )
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-3.5-flash", alias="GEMINI_MODEL")
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
 
     capacity_enabled: bool = Field(
         default=True,
@@ -249,12 +255,12 @@ class FathomSettings(BaseSettings):
     observation_overlay_enabled: bool = Field(default=True, alias="FATHOM_OBSERVATION_OVERLAY")
     observation_keyboard_enabled: bool = Field(default=False, alias="FATHOM_OBSERVATION_KEYBOARD")
 
-    # Ensemble vision-localizer (Gemini-vision + DocumentAI-layout) toggles. Enabled with both members so the
+    # Ensemble vision-localizer (provider-neutral LLM vision + DocumentAI-layout) toggles. Enabled with both members so the
     # supervise cascade can fall back to name-based localization when the XML manifest snap fails or returns a
     # generic container.
     ensemble_localizer_enabled: bool = Field(default=True, alias="FATHOM_ENSEMBLE_LOCALIZER")
     ensemble_localizer_members: Optional[str] = Field(
-        default="gemini_vision,document_ai_layout",
+        default="vision_llm,document_ai_layout",
         alias="FATHOM_ENSEMBLE_LOCALIZER_MEMBERS",
     )
 

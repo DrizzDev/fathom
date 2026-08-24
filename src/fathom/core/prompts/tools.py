@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, FrozenSet, List
 
 from fathom.constants.assessment import VisualVerdict
 from fathom.constants.tools import ToolName
+from fathom.interfaces.tools import CanonicalToolPayload
 
 
 class ToolRegistry:
@@ -17,18 +18,39 @@ class ToolRegistry:
     )
 
     @classmethod
-    def get_all_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+    def canonical_definitions(cls) -> CanonicalToolPayload:
         """
-        Returns all tool definitions in a format compatible with Gemini API.
+        Return all tool declarations in Fathom's provider-neutral payload shape.
+        """
+
+        return cls.canonical_definitions_for(names=frozenset(cls.__factories()))
+
+    @classmethod
+    def canonical_definitions_for(cls, *, names: FrozenSet[ToolName]) -> CanonicalToolPayload:
+        """
+        Return the requested declarations without a provider-specific envelope.
         """
 
         factories = cls.__factories()
         return {
-            "function_declarations": [
-                cls.__with_assessment(name=name, declaration=factory())
-                for name, factory in factories.items()
+            "tools": [
+                cls.__with_assessment(name=name, declaration=factories[name]())
+                for name in factories
+                if name in names
             ]
         }
+
+    @classmethod
+    def get_all_definitions(cls) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Return the legacy Gemini envelope for callers that have not migrated yet.
+
+        New runtime code must use :meth:`canonical_definitions` or
+        :meth:`canonical_definitions_for` and let the provider adapter encode it.
+        """
+
+        canonical = cls.canonical_definitions()
+        return {"function_declarations": canonical["tools"]}
 
     @classmethod
     def definitions(
@@ -37,17 +59,11 @@ class ToolRegistry:
         names: FrozenSet[ToolName],
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Return the function-declarations payload for the requested tools.
+        Return the legacy Gemini function-declarations payload for the requested tools.
         """
 
-        factories = cls.__factories()
-        ordered = [
-            cls.__with_assessment(name=name, declaration=factories[name]())
-            for name in factories
-            if name in names
-        ]
-
-        return {"function_declarations": ordered}
+        canonical = cls.canonical_definitions_for(names=names)
+        return {"function_declarations": canonical["tools"]}
 
     @classmethod
     def __with_assessment(cls, *, name: ToolName, declaration: Dict[str, Any]) -> Dict[str, Any]:

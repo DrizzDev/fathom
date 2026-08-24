@@ -53,6 +53,7 @@ dependencies = [
     "structlog>=23.0.0",
     "google-auth>=2.0.0",
     "google-genai>=2.10.0",
+    "openai>=1.0.0",
     "python-dotenv>=1.0.0",
     "pydantic-settings>=2.0.0",
     "opencv-python>=4.13.0.92",

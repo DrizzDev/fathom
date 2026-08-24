@@ -205,7 +205,7 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
     def test_localization_defaults_enable_full_ensemble(self) -> None:
         """
         Bring-up default: the ensemble vision-localizer is enabled with
-        both members (Gemini-vision + DocumentAI-layout) so the supervise
+        both members (provider-neutral vision + DocumentAI-layout) so the supervise
         cascade has a name-based fallback when snap fails.
         """
 
@@ -214,7 +214,7 @@ class RuntimeConfigLoaderTest(unittest.TestCase):
         self.assertTrue(config.enabled)
         self.assertEqual(
             config.members,
-            (EnsembleMemberName.GEMINI_VISION, EnsembleMemberName.DOCUMENT_AI_LAYOUT),
+            (EnsembleMemberName.VISION_LLM, EnsembleMemberName.DOCUMENT_AI_LAYOUT),
         )
 
     def test_localization_can_be_flipped_off_via_env(self) -> None:

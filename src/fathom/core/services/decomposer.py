@@ -56,7 +56,10 @@ class IntentDecomposer:
         self.__llm = llm
         self.__translator = translator
         self.__configuration = LLMConfiguration()
-        self.__prompt_builder = PromptFactory.get_decomposition_builder(model_name=llm.model_name)
+        self.__prompt_builder = PromptFactory.get_decomposition_builder(
+            model_name=llm.model_name,
+            provider=llm.identity.provider,
+        )
 
     @classmethod
     def with_configuration(

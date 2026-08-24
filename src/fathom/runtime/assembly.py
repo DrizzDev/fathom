@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.constants.llm import InferencePriorityMode
+from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL
 from fathom.constants.run import TargetKind
 from fathom.constants.storage import InteractionBackend
 from fathom.core.exceptions import ConfigurationError, StorageConfigurationError
@@ -69,10 +70,6 @@ class RunAssemblyBuilder:
         Resolve planner model configuration using request values with environment defaults.
         """
 
-        credentials = (
-            self.__settings.google_credentials_dict
-            or self.__settings.google_application_credentials
-        )
         request_values = (
             request.resources.language_model_configuration.planner_configuration.model_dump(
                 exclude_none=True,
@@ -80,12 +77,7 @@ class RunAssemblyBuilder:
             )
         )
         default_values = {
-            "credentials": credentials,
-            "model": self.__settings.gemini_model,
-            "api_key": self.__settings.gemini_api_key,
-            "location": self.__settings.vertex_location,
-            "priority": self.__priority_configuration(),
-            "project_id": self.__settings.vertex_project_id,
+            **self.__provider_defaults(),
             "use_cache": getattr(self.__settings, "use_cache", True),
         }
         default_values.update(request_values)
@@ -99,25 +91,46 @@ class RunAssemblyBuilder:
         Resolve qualifier model configuration from settings and the qualifier knobs.
         """
 
-        credentials = (
-            self.__settings.google_credentials_dict
-            or self.__settings.google_application_credentials
-        )
+        defaults = self.__provider_defaults()
+        configured_model = configuration.inference.model
+        if defaults["provider"] == "openai" and configured_model == DEFAULT_QUALIFIER_MODEL:
+            configured_model = self.__settings.openai_model
         return LLMConfiguration.model_validate(
             {
-                "credentials": credentials,
-                "model": configuration.inference.model,
-                "api_key": self.__settings.gemini_api_key,
+                **defaults,
+                "model": configured_model,
                 "timeout": configuration.inference.timeout,
-                "location": self.__settings.vertex_location,
                 "use_cache": configuration.inference.use_cache,
-                "project_id": self.__settings.vertex_project_id,
                 "temperature": configuration.inference.temperature,
                 "max_retries": configuration.inference.max_retries,
                 "thinking_level": configuration.inference.thinking_level,
-                "priority": self.__priority_configuration(),
             }
         )
+
+    def __provider_defaults(self) -> Dict[str, Any]:
+        """
+        Return the provider-shaped default kwargs the two model-configuration builders share.
+        """
+
+        provider = self.__settings.llm_provider
+        is_openai = provider == "openai"
+
+        return {
+            "provider": provider,
+            "model": self.__settings.openai_model if is_openai else self.__settings.gemini_model,
+            "api_key": (
+                self.__settings.openai_api_key if is_openai else self.__settings.gemini_api_key
+            ),
+            "credentials": None
+            if is_openai
+            else (
+                self.__settings.google_credentials_dict
+                or self.__settings.google_application_credentials
+            ),
+            "location": None if is_openai else self.__settings.vertex_location,
+            "project_id": None if is_openai else self.__settings.vertex_project_id,
+            "priority": self.__priority_configuration(),
+        }
 
     def __priority_configuration(self) -> PriorityInferenceConfiguration:
         """

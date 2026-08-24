@@ -43,6 +43,40 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
             conversation="conversation",
         )
 
+    def test_openai_settings_resolve_without_google_credentials(self) -> None:
+        """
+        OpenAI runs use the OpenAI key/model and do not inherit Google credentials.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(
+                _env_file=None,
+                llm_provider="openai",
+                openai_api_key="openai-test-key",
+                openai_model="gpt-4.1-mini",
+                google_application_credentials="/should/not/be-used.json",
+            )
+        )
+        request = IntentRunRequest(
+            principal=self.__principal(),
+            objective=IntentObjectiveConfiguration(intent="Open the app"),
+            resources=ResourceConfiguration(
+                targets=[
+                    TargetConfiguration(
+                        kind=TargetKind.DEVICE,
+                        device_configuration=DeviceConfiguration(),
+                    )
+                ]
+            ),
+        )
+
+        configuration = assembly.build_planner_model_configuration(request=request)
+
+        self.assertEqual(configuration.provider, "openai")
+        self.assertEqual(configuration.api_key, "openai-test-key")
+        self.assertEqual(configuration.model, "gpt-4.1-mini")
+        self.assertIsNone(configuration.credentials)
+
     def test_qualifier_llm_inherits_credentials_from_bound_settings(self) -> None:
         """
         Credentials must come from the settings bound to this assembly builder.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 
 from fathom.constants.collaboration import (
     IdempotencyState,
@@ -89,6 +89,14 @@ class NoopInteraction(InteractionPort):
     absorbs without crashing the run. Reads return None or empty collections.
     """
 
+    def __init__(self) -> None:
+        """Initialize ephemeral task state for the current local run."""
+
+        self.__executions: Dict[str, Execution] = {}
+        self.__idempotency: Dict[str, Idempotency] = {}
+        self.__jobs: Dict[str, Job] = {}
+        self.__tasks: Dict[str, Task] = {}
+
     async def initialize(self) -> None:
         """
         Realize adapter state. Noop adapter holds no schema or pool.
@@ -168,7 +176,7 @@ class NoopInteraction(InteractionPort):
         Echo a Task shaped from the request without persisting.
         """
 
-        return Task(
+        task = Task(
             kind=request.kind,
             plan=request.plan,
             state=request.state,
@@ -180,13 +188,15 @@ class NoopInteraction(InteractionPort):
             assignment=request.assignment,
             timing=Timing(created_at=request.created, updated_at=request.created),
         )
+        self.__tasks[task.identity.id] = task
+        return task
 
     async def start_execution(self, *, request: StartExecution) -> Execution:
         """
         Echo an Execution shaped from the request without persisting.
         """
 
-        return Execution(
+        execution = Execution(
             outcome=Metadata(),
             state=request.state,
             thread=request.thread,
@@ -199,15 +209,33 @@ class NoopInteraction(InteractionPort):
                 started_at=request.started,
             ),
         )
+        self.__executions[execution.identity.id] = execution
+        return execution
 
     async def finish_execution(self, *, request: FinishExecution) -> Execution:
         """
-        Finishing an execution requires prior state; not supported without storage.
+        Finish an ephemeral execution so local runs can terminate cleanly.
         """
 
-        _ = request
+        execution = self.__executions.get(request.execution)
+        if execution is None:
+            raise InteractionError(
+                f"Execution {request.execution} was not opened in this noop session"
+            )
 
-        raise InteractionError("Finish execution requires durable storage; noop is not supported")
+        finished = execution.model_copy(
+            update={
+                "state": request.state,
+                "terminal": request.terminal,
+                "summary": request.summary,
+                "outcome": request.outcome,
+                "timing": execution.timing.model_copy(
+                    update={"updated_at": request.completed, "ended_at": request.completed}
+                ),
+            }
+        )
+        self.__executions[request.execution] = finished
+        return finished
 
     async def get_execution(self, *, query: ExecutionQuery) -> Optional[Execution]:
         """
@@ -248,12 +276,29 @@ class NoopInteraction(InteractionPort):
 
     async def finish_task(self, *, request: FinishTask) -> Task:
         """
-        Finishing requires the prior task; not supported without state.
+        Finish an ephemeral task so local runs can terminate cleanly.
         """
 
-        _ = request
+        task = self.__tasks.get(request.task)
+        if task is None:
+            raise InteractionError(f"Task {request.task} was not opened in this noop session")
 
-        raise InteractionError("Finish task requires durable storage; noop is not supported")
+        finished = task.model_copy(
+            update={
+                "state": request.state,
+                "terminal": request.terminal,
+                "summary": request.summary,
+                "timing": task.timing.model_copy(
+                    update={
+                        "updated_at": request.ended,
+                        "ended_at": request.ended,
+                        "elapsed": request.elapsed,
+                    }
+                ),
+            }
+        )
+        self.__tasks[request.task] = finished
+        return finished
 
     async def get_thread(self, *, query: ThreadQuery) -> Optional[Thread]:
         """
@@ -509,7 +554,7 @@ class NoopInteraction(InteractionPort):
         Echo a pending Job shaped from the request without persisting.
         """
 
-        return Job(
+        job = Job(
             attempts=0,
             task=request.task,
             kind=request.kind,
@@ -521,6 +566,8 @@ class NoopInteraction(InteractionPort):
             available_at=request.available,
             timing=Timing(created_at=request.created, updated_at=request.created),
         )
+        self.__jobs[job.identity.id] = job
+        return job
 
     async def claim_job(self, *, request: ClaimJob) -> Optional[Job]:
         """
@@ -533,12 +580,25 @@ class NoopInteraction(InteractionPort):
 
     async def finish_job(self, *, request: FinishJob) -> Job:
         """
-        Finishing requires the prior job; not supported without state.
+        Finish an ephemeral job so local runs can terminate cleanly.
         """
 
-        _ = request
+        job = self.__jobs.get(request.job)
+        if job is None:
+            raise InteractionError(f"Job {request.job} was not scheduled in this noop session")
 
-        raise InteractionError("Finish job requires durable storage; noop is not supported")
+        finished = job.model_copy(
+            update={
+                "state": request.state,
+                "owner": request.owner,
+                "outcome": request.outcome,
+                "timing": job.timing.model_copy(
+                    update={"updated_at": request.finished, "ended_at": request.finished}
+                ),
+            }
+        )
+        self.__jobs[request.job] = finished
+        return finished
 
     async def recover_jobs(self, *, request: RecoverJob) -> List[Job]:
         """
@@ -572,7 +632,7 @@ class NoopInteraction(InteractionPort):
         Echo an active Idempotency record without persisting.
         """
 
-        return Idempotency(
+        record = Idempotency(
             key=request.key,
             hash=request.hash,
             tenant=request.tenant,
@@ -581,15 +641,23 @@ class NoopInteraction(InteractionPort):
             metadata=request.metadata,
             state=IdempotencyState.STARTED,
         )
+        self.__idempotency[request.key] = record
+        return record
 
     async def finish_request(self, *, request: FinishRequest) -> Idempotency:
         """
-        Finishing requires the prior idempotency record; not supported.
+        Finish an ephemeral idempotency record so local runs can terminate cleanly.
         """
 
-        _ = request
+        record = self.__idempotency.get(request.key)
+        if record is None:
+            raise InteractionError(
+                f"Idempotency key {request.key} was not started in this noop session"
+            )
 
-        raise InteractionError("Finish request requires durable storage; noop is not supported")
+        finished = record.model_copy(update={"state": request.state, "response": request.response})
+        self.__idempotency[request.key] = finished
+        return finished
 
     async def get_idempotency(self, *, query: IdempotencyQuery) -> Optional[Idempotency]:
         """
