@@ -379,6 +379,7 @@ class GraphContext:
             catalog=self.__catalog,
             workflow_id=workflow_id,
             ensemble=self.__ensemble,
+            grounding=configuration.intent.grounding_policy,
         )
 
         self.__abort_detector = abort_detector or AbortDetectorFactory.build(llm=llm)

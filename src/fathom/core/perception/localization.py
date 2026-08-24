@@ -4,6 +4,7 @@ from logging import getLogger
 from typing import Any, Dict, Optional
 
 from fathom.constants import SWIPE_ACTIONS
+from fathom.constants.localization import GroundingPolicy
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.localization.ensemble import EnsembleLocalizerService
 from fathom.core.localization.matcher import OcrPhraseMatcher
@@ -40,14 +41,16 @@ class TargetLocalizationService:
         phrase_matcher: Optional[OcrPhraseMatcher] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
         regional_matcher: Optional[RegionalEvidenceMatcher] = None,
+        grounding: GroundingPolicy = GroundingPolicy.STRICT,
     ) -> None:
         """
-        Initialize the localizer with optional ensemble layer, phrase + regional matchers, and run
-        context; omitted matchers default to the Domain implementations.
+        Initialize the localizer with optional ensemble layer, phrase + regional matchers, run
+        context, and grounding policy; omitted matchers default to the Domain implementations.
         """
 
         self.__catalog = catalog
         self.__ensemble = ensemble
+        self.__grounding = grounding
         self.__workflow_id = workflow_id
         self.__phrase_matcher = phrase_matcher if phrase_matcher is not None else OcrPhraseMatcher()
 
@@ -170,6 +173,9 @@ class TargetLocalizationService:
         )
         if ensemble_result.status == LocalizationStatus.RESOLVED:
             return ensemble_result
+
+        if self.__grounding is GroundingPolicy.STRICT:
+            return self.__refused_blind_dispatch(action=action, activity=observation.activity)
 
         blind_result = self.__by_blind_model_bounds(action=action)
         self.__log_localization_result(
@@ -655,6 +661,28 @@ class TargetLocalizationService:
             confidence=0.0,
             status=LocalizationStatus.UNRESOLVED,
             reason=f"Regional evidence abstained: {verdict.decision.value}.",
+        )
+
+    def __refused_blind_dispatch(self, *, action: Action, activity: str) -> LocalizationResult:
+        """
+        Refuse the planner-bounds fallback so an ungrounded action fails instead of tapping blind.
+        """
+
+        logger.warning(
+            "Blind dispatch refused under the strict grounding policy",
+            extra={
+                **self.__log_context(action=action, activity=activity),
+                "event": "localization.blind_model_bounds.refused",
+                "grounding.policy": self.__grounding.value,
+            },
+        )
+        return LocalizationResult(
+            confidence=0.0,
+            status=LocalizationStatus.UNRESOLVED,
+            reason=(
+                "Every grounding stage abstained and the strict grounding policy forbids "
+                "dispatching uncorroborated planner bounds."
+            ),
         )
 
     def __by_blind_model_bounds(self, *, action: Action) -> LocalizationResult:

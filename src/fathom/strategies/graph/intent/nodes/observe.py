@@ -317,17 +317,14 @@ class ObserveNode:
         if action_execution_kind is not ActionExecutionKind.DEVICE:
             return False
 
-        if (
-            self.__provider.context.catalog.is_gesture(action_type=action_type)
-            and action_effect.status is ActionEffectStatus.NO_PROGRESS
-        ):
+        if action_effect.status is ActionEffectStatus.NO_PROGRESS:
             logger.info(
-                "Gesture execution success overridden by no-progress effect",
+                "Device execution success overridden by no-progress effect",
                 extra={
                     "component": "graph.intent.observe",
                     "action.type": action_type.value,
                     "execution.success": execution_success,
-                    "override.reason": "gesture_no_progress",
+                    "override.reason": "device_no_progress",
                     "effect.status": action_effect.status.value,
                     "event": "observe.step.success.overridden",
                     "effect.phash_distance": action_effect.phash_distance,

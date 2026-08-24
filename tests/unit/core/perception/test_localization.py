@@ -4,12 +4,13 @@ import unittest
 from typing import Tuple
 
 from fathom.constants import ActionType
+from fathom.constants.localization import GroundingPolicy
 from fathom.constants.observation import KeyboardVisibility
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.perception.localization import TargetLocalizationService
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.budgets import LocalizationBudget
-from fathom.schemas.localization import LocalizationStatus
+from fathom.schemas.localization import LocalizationResult, LocalizationStatus
 from fathom.schemas.observation import (
     ElementRole,
     ElementSource,
@@ -109,7 +110,9 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         """
 
         service = TargetLocalizationService(
-            catalog=CommandCatalogProvider().build(), workflow_id="wf-localization"
+            catalog=CommandCatalogProvider().build(),
+            workflow_id="wf-localization",
+            grounding=GroundingPolicy.PERMISSIVE,
         )
 
         element = self.__element(
@@ -173,7 +176,10 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         Model bounds with no perception overlap dispatch and tag the result ``MODEL``.
         """
 
-        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
+        service = TargetLocalizationService(
+            catalog=CommandCatalogProvider().build(),
+            grounding=GroundingPolicy.PERMISSIVE,
+        )
         element = self.__element(
             identifier="cv_1",
             bounds=Bounds(
@@ -217,7 +223,10 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         Free viewport gestures do not require element localization.
         """
 
-        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
+        service = TargetLocalizationService(
+            catalog=CommandCatalogProvider().build(),
+            grounding=GroundingPolicy.PERMISSIVE,
+        )
 
         action = Action(
             target="page",
@@ -240,7 +249,10 @@ class TargetLocalizationServiceTest(unittest.IsolatedAsyncioTestCase):
         GENERIC_CONTAINER upstream snap outcome bypasses identifier match and lands on bbox.
         """
 
-        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
+        service = TargetLocalizationService(
+            catalog=CommandCatalogProvider().build(),
+            grounding=GroundingPolicy.PERMISSIVE,
+        )
         element = self.__element(
             identifier="13",
             bounds=Bounds(
@@ -484,6 +496,114 @@ class FragmentedOcrTargetResolutionTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(phrase.__dict__["phrase.score"], 0.7)
         self.assertEqual(phrase.__dict__["phrase.token_count"], 5)
         self.assertEqual(phrase.__dict__["observation.ocr_token_count"], 5)
+
+
+class BlindDispatchGroundingPolicyTest(unittest.IsolatedAsyncioTestCase):
+    """
+    When every grounding stage abstains, the strict policy refuses the planner's uncorroborated
+    bounds instead of tapping an unverified coordinate.
+
+    Regression: an ungrounded gpt-4.1 tap was dispatched blind and landed ~750px off target, and
+    nothing in the run rejected it.
+    """
+
+    @staticmethod
+    def __service(*, grounding: GroundingPolicy) -> TargetLocalizationService:
+        """
+        Build a localizer with no ensemble, so every grounding stage abstains.
+        """
+
+        return TargetLocalizationService(
+            catalog=CommandCatalogProvider().build(),
+            grounding=grounding,
+        )
+
+    @staticmethod
+    def __action() -> Action:
+        """
+        A targetless spatial action carrying only planner-estimated bounds.
+        """
+
+        return Action(
+            action_type=ActionType.TAP,
+            target="Settings app icon",
+            rationale="Tap the Settings icon to open the app.",
+            confidence=0.9,
+            bounds=Bounds(
+                x=825,
+                y=933,
+                width=125,
+                height=117,
+                source=CoordinateSource.MODEL,
+                coordinate_system=CoordinateSystem.NORMALIZED,
+            ),
+        )
+
+    @staticmethod
+    def __observation() -> ScreenObservation:
+        """
+        An empty observation so no element, OCR, or regional evidence can resolve the target.
+        """
+
+        return ScreenObservation(
+            activity="com.google.android.apps.nexuslauncher",
+            elements=(),
+            hashes=ScreenHashBundle(
+                xml_hash="0" * 16,
+                visual_hash="0" * 16,
+                interaction_hash="0" * 16,
+            ),
+            keyboard=KeyboardObservation(visibility=KeyboardVisibility.HIDDEN),
+        )
+
+    async def __localize(self, *, grounding: GroundingPolicy) -> LocalizationResult:
+        """
+        Drive one localization pass under the supplied grounding policy.
+        """
+
+        return await self.__service(grounding=grounding).localize(
+            image=b"",
+            action=self.__action(),
+            budget=LocalizationBudget(local=120, vision=False, attempts=0, threshold=0.72),
+            observation=self.__observation(),
+        )
+
+    async def test_strict_policy_refuses_uncorroborated_planner_bounds(self) -> None:
+        """
+        Strict grounding yields UNRESOLVED with no point, so no blind tap can be dispatched.
+        """
+
+        result = await self.__localize(grounding=GroundingPolicy.STRICT)
+
+        self.assertEqual(result.status, LocalizationStatus.UNRESOLVED)
+        self.assertIsNone(result.point)
+        self.assertEqual(result.confidence, 0.0)
+        self.assertIn("strict grounding policy", result.reason)
+
+    async def test_permissive_policy_preserves_the_existing_fallback(self) -> None:
+        """
+        The explicit legacy policy still dispatches planner bounds.
+        """
+
+        result = await self.__localize(grounding=GroundingPolicy.PERMISSIVE)
+
+        self.assertEqual(result.status, LocalizationStatus.RESOLVED)
+        self.assertIsNotNone(result.point)
+
+    async def test_default_policy_is_strict(self) -> None:
+        """
+        Direct localizer construction must fail closed unless permissive mode is explicit.
+        """
+
+        service = TargetLocalizationService(catalog=CommandCatalogProvider().build())
+        result = await service.localize(
+            image=b"",
+            action=self.__action(),
+            budget=LocalizationBudget(local=120, vision=False, attempts=0, threshold=0.72),
+            observation=self.__observation(),
+        )
+
+        self.assertEqual(result.status, LocalizationStatus.UNRESOLVED)
 
 
 if __name__ == "__main__":

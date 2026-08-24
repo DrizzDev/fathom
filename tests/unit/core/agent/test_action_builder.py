@@ -4,6 +4,7 @@ import unittest
 
 from fathom.constants import ActionType, StepEvent
 from fathom.core.agent.action import ActionBuilder
+from fathom.core.exceptions import ToolValidationError
 from fathom.schemas.actions import CoordinateSystem
 from fathom.schemas.gemini_tools import ExecuteAction, GeminiBBox
 from fathom.schemas.tools import AcceptedCommand
@@ -14,32 +15,30 @@ class ActionBuilderTest(unittest.TestCase):
     Covers deterministic action materialization after command acceptance.
     """
 
-    def test_coerces_malformed_normalized_bbox_to_logical(self) -> None:
+    def test_rejects_malformed_normalized_bbox(self) -> None:
         """
-        Pixel-scale bbox values mislabeled as normalized must not survive materialization.
+        Pixel-scale bbox values mislabeled as normalized must be rejected at the action boundary.
         """
 
-        action = ActionBuilder().build(
-            command=AcceptedCommand(
-                action_type=ActionType.SWIPE_UP,
-                payload=ExecuteAction(
-                    action_type="swipe_up",
-                    target_name="Restaurant list area",
-                    scroll_target="Restaurant list area",
-                    confidence=0.84,
-                    bbox=GeminiBBox(
-                        x=0,
-                        y=858,
-                        width=1206,
-                        height=1396,
-                        coordinate_system="normalized",
+        with self.assertRaises(ToolValidationError):
+            ActionBuilder().build(
+                command=AcceptedCommand(
+                    action_type=ActionType.SWIPE_UP,
+                    payload=ExecuteAction(
+                        action_type="swipe_up",
+                        target_name="Restaurant list area",
+                        scroll_target="Restaurant list area",
+                        confidence=0.84,
+                        bbox=GeminiBBox(
+                            x=0,
+                            y=858,
+                            width=1206,
+                            height=1396,
+                            coordinate_system="normalized",
+                        ),
                     ),
-                ),
+                )
             )
-        )
-
-        assert action.bounds is not None
-        self.assertEqual(action.bounds.system, CoordinateSystem.LOGICAL)
 
     def test_keeps_valid_normalized_bbox_normalized(self) -> None:
         """

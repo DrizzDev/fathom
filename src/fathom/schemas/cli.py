@@ -113,7 +113,10 @@ class RunCommandInput(LocalCommandInput):
         description="Optional workspace boundary inside the tenant; "
         "falls back to FATHOM_CLI_WORKSPACE if absent.",
     )
-    use_xml: bool = Field(default=False)
+    use_xml: bool = Field(
+        default=True,
+        description="Use Android/iOS accessibility hierarchy grounding when available.",
+    )
 
     signal: Literal["interactive", "socket"] = Field(default="interactive")
 

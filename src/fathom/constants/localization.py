@@ -13,6 +13,19 @@ class LocalizationGridScale(IntEnum):
     MAXIMUM = 1000
 
 
+class GroundingPolicy(StrEnum):
+    """
+    Whether the localization cascade may dispatch planner bounds that nothing corroborated.
+
+    ``PERMISSIVE`` preserves the historical fallback: when every grounding stage abstains, the
+    planner's own visual estimate is dispatched verbatim. ``STRICT`` refuses that dispatch so an
+    ungrounded action fails visibly instead of tapping an unverified coordinate.
+    """
+
+    STRICT = "STRICT"
+    PERMISSIVE = "PERMISSIVE"
+
+
 class RegionalEvidenceDecision(StrEnum):
     """
     Decision taken by ``RegionalEvidenceMatcher`` for one evaluation call.

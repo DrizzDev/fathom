@@ -14,6 +14,7 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_WINDOW,
     InferencePriorityMode,
 )
+from fathom.constants.localization import GroundingPolicy
 from fathom.constants.platform import (
     DeviceConnectionType,
     DevicePlatform,
@@ -535,7 +536,17 @@ class IntentConfiguration(BaseModel):
         description="Per-kind retry caps; nested so new retry kinds are additive without changing call sites.",
     )
 
-    use_xml_grounding: bool = Field(default=False, description="Enable structured XML analysis")
+    use_xml_grounding: bool = Field(
+        default=True,
+        description="Enable structured XML/accessibility analysis for intent runs",
+    )
+    grounding_policy: GroundingPolicy = Field(
+        default=GroundingPolicy.STRICT,
+        description=(
+            "Grounding policy for spatial actions. STRICT refuses uncorroborated planner "
+            "coordinates; PERMISSIVE is an explicit legacy escape hatch."
+        ),
+    )
     prompt_user_if_stuck: bool = Field(
         default=True,
         description="If True and in interactive mode, prompt the user for help when the agent detects a loop.",
