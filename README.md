@@ -409,6 +409,20 @@ Set your model key and pick a device serial (`adb devices` prints it):
 export GEMINI_API_KEY="..."      # your Gemini API key
 ```
 
+To run with OpenAI, install the OpenAI dependency and select the provider:
+
+```bash
+pip install -e .
+export FATHOM_LLM_PROVIDER="openai"
+export OPENAI_API_KEY="..."
+export OPENAI_MODEL="gpt-4.1-mini"
+```
+
+Fathom maps its provider-neutral prompts, tool declarations, images, structured outputs, and usage
+metrics through the OpenAI adapter. XML/accessibility grounding and the LLM-backed vision localizer
+use the adapter bound to the run, so the execution path does not require Gemini. Embeddings remain
+an optional provider capability and are enabled only when the selected adapter exposes one.
+
 ### CLI — the fastest way
 
 ```bash
