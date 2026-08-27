@@ -11,6 +11,7 @@ from fathom.adapters.interaction.noop import NoopInteraction
 from fathom.adapters.interaction.orm.postgres import (
     PostgresInteraction as RepositoryPostgresInteraction,
 )
+from fathom.adapters.llm.gateway import GatewayLLM
 from fathom.adapters.llm.gemini import GeminiLLM
 from fathom.adapters.perception.android import AndroidPerceptionAdapter
 from fathom.adapters.perception.ios import (
@@ -110,12 +111,14 @@ class LLMFactory(LLMFactoryPort):
         Create LLM adapter from runtime LLM configuration.
         """
 
+        # Gemini keeps its native adapter: it is the tuned default and uses
+        # provider-specific controls that do not survive the gateway. Every
+        # other provider routes through LiteLLM, so adding one is a
+        # configuration change rather than a new adapter.
         if configuration.provider == "gemini":
             return GeminiLLM(configuration=configuration)
 
-        raise NotImplementedError(
-            f"LLM adapter for provider {configuration.provider} is not implemented"
-        )
+        return GatewayLLM(configuration=configuration)
 
 
 class PerceptionFactory(PerceptionFactoryPort):
