@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from logging import getLogger
 from typing import TYPE_CHECKING, List, Optional, cast
 
 from fathom.adapters.knowledge.sqlite import SQLiteKnowledge
@@ -42,6 +43,9 @@ if TYPE_CHECKING:
     from fathom.interfaces.telemetry import TelemetryPort
     from fathom.runtime.assembly import RunAssemblyBuilder
     from fathom.runtime.runner import FathomRunner
+
+
+logger = getLogger(__name__)
 
 
 class FathomBuilder:
@@ -333,8 +337,25 @@ class FathomBuilder:
             self.__realignment = RealignmentPolicy()
 
         # Deterministic sibling of the planner for decomposition; runner owns its cleanup.
-        architect = self.__llm.derive(overrides=LLMConfiguration(temperature=0.0, use_cache=False))
-        owned_resources.append(architect)
+        # An adapter that has not implemented derivation is shared explicitly, so the manifest
+        # can report the limitation instead of silently pretending it received the overrides.
+        try:
+            architect = self.__llm.derive(
+                overrides=LLMConfiguration(temperature=0.0, use_cache=False)
+            )
+        except NotImplementedError:
+            architect = self.__llm
+            logger.warning(
+                "LLM adapter does not support derived role configuration; sharing planner",
+                extra={
+                    "component": "runtime.builder",
+                    "event": "llm.role.derive.unavailable",
+                    "role": "architect",
+                },
+            )
+
+        if architect is not self.__llm:
+            owned_resources.append(architect)
 
         return FathomRunner(
             llm=self.__llm,

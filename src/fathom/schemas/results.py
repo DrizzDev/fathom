@@ -13,6 +13,7 @@ from fathom.schemas.assessment import VisualAssessment
 from fathom.schemas.base.common import NonBlank
 from fathom.schemas.capture import Capture
 from fathom.schemas.delta import DeltaSignal
+from fathom.schemas.manifest import RuntimeManifest
 from fathom.schemas.planner import PlannerEvent, PlannerMetrics
 from fathom.schemas.screens import ScreenCapture
 from fathom.schemas.shadow import ShadowTurnDraft
@@ -210,6 +211,11 @@ class IntentResult(WorkflowResult):
     )
     subgoal_count: int = Field(
         default=0, ge=0, description="Total number of sub-goals in the decomposition"
+    )
+
+    manifest: Optional[RuntimeManifest] = Field(
+        default=None,
+        description="Model roles resolved for this run; None for results produced before it existed.",
     )
 
 

@@ -17,6 +17,7 @@ from fathom.constants.llm import (
     GEMINI_VERTEX_REQUEST_TYPE_HEADER,
     GEMINI_VERTEX_SHARED_REQUEST_TYPE,
     InferenceTier,
+    ModelProvider,
 )
 from fathom.core.exceptions import VisionError
 from fathom.schemas.configuration import LLMConfiguration
@@ -510,3 +511,96 @@ class GeminiUsageMetricsTest(unittest.TestCase):
         metrics = GeminiLLM._GeminiLLM__collect_usage_metrics(response=response)
 
         self.assertEqual(metrics, {})
+
+
+class GeminiIdentityTest(unittest.TestCase):
+    """
+    The adapter declares its own provider and fairness-relevant settings rather than
+    leaving the runtime to infer them from its class name.
+    """
+
+    @staticmethod
+    def __gemini(*, configuration: LLMConfiguration) -> GeminiLLM:
+        """
+        Bind a configuration without building an SDK client, which identity does not consult.
+        """
+
+        gemini = object.__new__(GeminiLLM)
+        gemini._GeminiLLM__configuration = configuration
+        return gemini
+
+    def test_identity_reports_the_configured_provider_model_and_settings(self) -> None:
+        """
+        A gemini-provider configuration surfaces as GEMINI with its temperature, cache, thinking.
+        """
+
+        gemini = self.__gemini(
+            configuration=LLMConfiguration(
+                model="gemini-3.5-flash",
+                temperature=0.25,
+                use_cache=False,
+                thinking_level="high",
+            )
+        )
+
+        identity = gemini.identity
+
+        self.assertEqual(identity.provider, ModelProvider.GEMINI)
+        self.assertEqual(identity.model, "gemini-3.5-flash")
+        self.assertEqual(identity.settings.temperature, 0.25)
+        self.assertEqual(identity.settings.thinking, "high")
+        self.assertFalse(identity.settings.cache)
+
+    def test_vertex_configuration_reports_its_own_provider(self) -> None:
+        """
+        The same adapter class configured for Vertex declares VERTEX_AI, not GEMINI.
+        """
+
+        gemini = self.__gemini(
+            configuration=LLMConfiguration(provider="vertex_ai", model="gemini-3.5-flash")
+        )
+
+        self.assertEqual(gemini.identity.provider, ModelProvider.VERTEX_AI)
+
+    def test_derived_sibling_reports_the_overridden_settings(self) -> None:
+        """
+        A sibling built by derive() declares the deterministic settings it was given.
+        """
+
+        planner = GeminiLLM(
+            configuration=LLMConfiguration(
+                api_key="test-key", model="gemini-3.5-flash", temperature=1.0, use_cache=True
+            )
+        )
+
+        architect = planner.derive(
+            overrides=LLMConfiguration(temperature=0.0, use_cache=False),
+        )
+
+        self.assertIsNot(architect, planner)
+        self.assertEqual(planner.identity.settings.temperature, 1.0)
+        self.assertEqual(architect.identity.settings.temperature, 0.0)
+        self.assertEqual(architect.identity.model, planner.identity.model)
+
+
+class ModelProviderDeclarationTest(unittest.TestCase):
+    """
+    Provider identity comes from the declared configuration value, not from string guessing.
+    """
+
+    def test_every_configuration_provider_literal_maps_to_a_member(self) -> None:
+        """
+        Each value LLMConfiguration.provider accepts resolves to a distinct typed provider.
+        """
+
+        self.assertEqual(ModelProvider.declared(value="gemini"), ModelProvider.GEMINI)
+        self.assertEqual(ModelProvider.declared(value="openai"), ModelProvider.OPENAI)
+        self.assertEqual(ModelProvider.declared(value="anthropic"), ModelProvider.ANTHROPIC)
+        self.assertEqual(ModelProvider.declared(value="vertex_ai"), ModelProvider.VERTEX_AI)
+
+    def test_unrecognized_value_resolves_to_unknown(self) -> None:
+        """
+        An unfamiliar provider string is reported as UNKNOWN rather than coerced or raised.
+        """
+
+        self.assertEqual(ModelProvider.declared(value="mystery"), ModelProvider.UNKNOWN)

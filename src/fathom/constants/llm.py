@@ -96,3 +96,29 @@ GEMINI_STALE_CACHE_STATE_MARKERS = (
     "invalid_argument",
     "invalid resource state",
 )
+
+
+class ModelProvider(StrEnum):
+    """
+    Provider identity an LLM adapter declares for itself, never inferred from its class name.
+
+    Values mirror the ``LLMConfiguration.provider`` vocabulary and are persisted on recorded
+    runs, so they keep that literal protocol form rather than the internal upper-case style.
+    """
+
+    GEMINI = "gemini"
+    VERTEX_AI = "vertex_ai"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def declared(cls, *, value: str) -> "ModelProvider":
+        """
+        Map a configuration-declared provider value onto its typed identity.
+        """
+
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.UNKNOWN

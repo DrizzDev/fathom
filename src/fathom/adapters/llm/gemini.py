@@ -11,6 +11,7 @@ from google.genai import Client, types
 from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
+from fathom.adapters.tools import GeminiToolDialect
 from fathom.constants.llm import (
     GEMINI_CANCELLED_ERROR_MARKERS,
     GEMINI_CANCELLED_STATUS_CODE,
@@ -33,17 +34,21 @@ from fathom.constants.llm import (
     GEMINI_VERTEX_REQUEST_TYPE_HEADER,
     GEMINI_VERTEX_SHARED_REQUEST_TYPE,
     InferenceTier,
+    ModelProvider,
     StructuredOutputMediaType,
 )
 from fathom.core.exceptions import VisionError
 from fathom.core.inference.priority import PriorityInferencePolicy
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
+from fathom.interfaces.tools import CanonicalToolPayload
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.llm import (
     GeminiExceptionKind,
     GeminiExceptionMetadata,
+    InferenceSettings,
+    ModelIdentity,
     PriorityInferenceSignal,
     PriorityInferenceTransition,
     StructuredOutput,
@@ -74,6 +79,8 @@ class GeminiLLM(LLMPort):
         else:
             self.__configuration = LLMConfiguration(api_key=api_key, model=model, use_cache=True)
 
+        self.__tool_dialect = GeminiToolDialect()
+
         self.__client: Optional[Any] = None
         self.__credentials: Optional[Any] = None
         self.__priority = PriorityInferencePolicy(configuration=self.__configuration.priority)
@@ -90,6 +97,22 @@ class GeminiLLM(LLMPort):
         """
 
         return self.__configuration.model
+
+    @property
+    def identity(self) -> ModelIdentity:
+        """
+        Declare the configured provider, model, and the settings that affect comparability.
+        """
+
+        return ModelIdentity(
+            provider=ModelProvider.declared(value=self.__configuration.provider),
+            model=self.__configuration.model,
+            settings=InferenceSettings(
+                cache=self.__configuration.use_cache,
+                thinking=self.__configuration.thinking_level,
+                temperature=self.__configuration.temperature,
+            ),
+        )
 
     def derive(self, *, overrides: LLMConfiguration) -> LLMPort:
         """
@@ -348,10 +371,12 @@ class GeminiLLM(LLMPort):
         if structured_output is not None and tools:
             raise VisionError("Structured-output mode cannot be combined with tool calling")
 
+        provider_tools = self.__encode_tools(tools=tools)
+
         if use_cache and self.__cache and system_instruction and structured_output is None:
             cache_name = await self.__cache.get_cached_content(
                 system_instruction=system_instruction,
-                tools=tools.get("function_declarations") if tools else None,
+                tools=provider_tools.get("function_declarations") if provider_tools else None,
             )
         else:
             cache_name = None
@@ -386,7 +411,7 @@ class GeminiLLM(LLMPort):
 
             config = self.__get_generation_configuration(
                 tier=tier,
-                tools=tools,
+                tools=provider_tools,
                 cache_name=active_cache_name,
                 structured_output=structured_output,
                 system_instruction=system_instruction,
@@ -650,12 +675,27 @@ class GeminiLLM(LLMPort):
         if not self.__configuration.use_cache:
             return
 
-        declarations = tools.get("function_declarations") if tools is not None else None
+        provider_tools = self.__encode_tools(tools=tools)
+        declarations = provider_tools.get("function_declarations") if provider_tools else None
 
         await self.__cache.get_cached_content(
             tools=declarations,
             system_instruction=system_instruction,
         )
+
+    def __encode_tools(self, *, tools: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Translate canonical declarations at the Gemini adapter boundary.
+
+        Accepting the legacy envelope keeps older integrations working while all migrated runtime
+        callers use the provider-neutral ``{"tools": [...]}`` shape.
+        """
+
+        if tools is None or "function_declarations" in tools:
+            return tools
+
+        canonical: CanonicalToolPayload = {"tools": tools.get("tools", [])}
+        return self.__tool_dialect.encode(payload=canonical)
 
     async def cleanup(self) -> None:
         """

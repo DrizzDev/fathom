@@ -27,6 +27,7 @@ from fathom.constants.collaboration import (
     ArtifactBackend,
     TaskCode,
 )
+from fathom.constants.llm import ModelProvider
 from fathom.constants.qualification import DEFAULT_REJECTION_MESSAGE, RationaleCategory
 from fathom.constants.screen import (
     MEMORY_SUMMARY_HASH_PREVIEW_LENGTH,
@@ -61,9 +62,12 @@ from fathom.interfaces.storage import StoragePort
 from fathom.interfaces.summarization import SummarizationPort
 from fathom.interfaces.telemetry import TelemetryLevel, TelemetryPort
 from fathom.runtime.inspection import RuntimeConfigurationInspector
+from fathom.runtime.manifest import ManifestResolver
 from fathom.schemas.configuration import FathomConfiguration
 from fathom.schemas.conversation import ActorInput
 from fathom.schemas.exploration import ExplorationGraph
+from fathom.schemas.llm import ModelIdentity
+from fathom.schemas.manifest import RuntimeManifest
 from fathom.schemas.qualification import QualificationVerdict
 from fathom.schemas.recording import Completion, Handle, Output, Run, ScriptOutput
 from fathom.schemas.results import ExplorationResult, IntentResult
@@ -191,6 +195,15 @@ class FathomRunner:
             message=self.__config.telemetry.phase,
         )
 
+        self.__manifest_resolver = ManifestResolver(
+            planner=llm,
+            architect=self.__architect,
+            qualifier=qualifier,
+            summarizer=summarizer,
+            configuration=self.__config,
+        )
+        self.__manifest: Optional[RuntimeManifest] = None
+
         self.__catalog = CommandCatalogProvider().build()
         self.__capture_store = CaptureStore()
         self.__engine = ExecutionEngine(
@@ -242,6 +255,10 @@ class FathomRunner:
                 "package": VersionInfo.payload(),
                 "event": "fathom.runner.configured",
                 "runtime_configuration_bound": self.__runtime_configuration is not None,
+                "effective_llm": {
+                    "provider": self.__llm_provider(),
+                    "model": self.__llm_model(),
+                },
             },
         )
 
@@ -292,6 +309,35 @@ class FathomRunner:
 
         return self.__context_manager
 
+    @property
+    def manifest(self) -> Optional[RuntimeManifest]:
+        """
+        Model-role manifest resolved for the most recent run, or None before one starts.
+        """
+
+        return self.__manifest
+
+    def __resolve_manifest(self, *, steps: int, loader: RuntimeConfigLoader) -> RuntimeManifest:
+        """
+        Resolve and record the run's model-role manifest, then emit it as one structured event.
+        """
+
+        manifest = self.__manifest_resolver.resolve(
+            steps=steps,
+            localization=loader.localization(),
+        )
+        self.__manifest = manifest
+
+        logger.info(
+            "Fathom model roles resolved",
+            extra={
+                "component": "runtime.runner",
+                "event": "fathom.manifest.resolved",
+                "manifest": manifest.model_dump(mode="json"),
+            },
+        )
+        return manifest
+
     async def run_intent(
         self,
         *,
@@ -299,7 +345,7 @@ class FathomRunner:
         request_id: str,
         principal: Principal,
         max_steps: int = 50,
-        use_xml: bool = False,
+        use_xml: Optional[bool] = None,
         execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
         realignment: Optional[RealignmentPolicy] = None,
@@ -340,16 +386,24 @@ class FathomRunner:
 
         self.__sync_telemetry_identity(workflow=workflow_id)
 
+        # Resolve the loader once so the manifest reports the same adapter mix the strategy
+        # composes, rather than a second env read that could disagree with it.
+        loader = self.__runtime_configuration or RuntimeConfigLoader()
+        steps = max_steps or self.__config.intent.max_steps
+        manifest = self.__resolve_manifest(steps=steps, loader=loader)
+
         await self.__telemetry.info(
             "Starting intent workflow",
             intent=intent,
             max_steps=max_steps,
             workflow_id=workflow_id,
             context_scope=context_scope,
+            manifest=manifest.model_dump(mode="json"),
         )
 
         rejection = await self.__qualify_or_reject(
             intent=intent,
+            manifest=manifest,
             start_time=start_time,
             workflow_id=workflow_id,
         )
@@ -442,9 +496,9 @@ class FathomRunner:
             perception=self.__perception,
             path_manager=self.__path_manager,
             realignment=realignment or self.__realignment,
-            runtime_configuration=self.__runtime_configuration,
+            runtime_configuration=loader,
             plans=LangGraphPlanStore(),
-            max_steps=max_steps or self.__config.intent.max_steps,
+            max_steps=steps,
             use_xml=use_xml if use_xml is not None else self.__config.intent.use_xml_grounding,
         )
         self.__current_strategy = strategy
@@ -509,6 +563,7 @@ class FathomRunner:
                 error=error,
                 status=status,
                 intent=intent,
+                manifest=manifest,
                 metrics=metrics,
                 success=success,
                 duration=duration,
@@ -961,6 +1016,7 @@ class FathomRunner:
         intent: str,
         workflow_id: str,
         start_time: float,
+        manifest: RuntimeManifest,
     ) -> Optional[IntentResult]:
         """
         Qualify the intent before any device interaction.
@@ -1018,6 +1074,7 @@ class FathomRunner:
             return await self.__build_rejection_result(
                 intent=intent,
                 verdict=verdict,
+                manifest=manifest,
                 start_time=start_time,
                 workflow_id=workflow_id,
                 verdict_payload=verdict_payload,
@@ -1046,6 +1103,7 @@ class FathomRunner:
         intent: str,
         workflow_id: str,
         start_time: float,
+        manifest: RuntimeManifest,
         verdict: QualificationVerdict,
         verdict_payload: Dict[str, Any],
     ) -> IntentResult:
@@ -1081,6 +1139,7 @@ class FathomRunner:
             error=None,
             metrics={},
             intent=intent,
+            manifest=manifest,
             success=False,
             steps_taken=0,
             subgoal_count=0,
@@ -1357,11 +1416,15 @@ class FathomRunner:
 
     def __llm_provider(self) -> str:
         """
-        Derive a stable provider hint from the configured LLM adapter.
+        Return the provider the planner adapter declares for itself.
         """
 
-        provider = self.__llm.__class__.__name__.removesuffix("LLM").lower()
-        return provider or "unknown"
+        identity = self.__llm.identity
+
+        if not isinstance(identity, ModelIdentity):
+            return ModelProvider.UNKNOWN.value
+
+        return identity.provider.value
 
     def __llm_model(self) -> Optional[str]:
         """

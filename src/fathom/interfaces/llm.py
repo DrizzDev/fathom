@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Optional,
+    Protocol,
+    Sequence,
+    Union,
+    runtime_checkable,
+)
 
+from fathom.constants.llm import ModelProvider
 from fathom.schemas.conversation import ConversationTurn
-from fathom.schemas.llm import StructuredOutput
+from fathom.schemas.llm import ModelIdentity, StructuredOutput
 from fathom.schemas.results import GenerateResult
 
 if TYPE_CHECKING:
@@ -12,6 +22,24 @@ if TYPE_CHECKING:
 
 # Type alias for LLM prompt parts (text, images, or structured content)
 PromptPart = Union[str, bytes, Dict[str, str]]
+
+
+@runtime_checkable
+class ModelBound(Protocol):
+    """
+    Capability for a port that runs on a language model and exposes the adapter it was given.
+
+    Lets the composition root tell whether two roles share one adapter or hold distinct ones,
+    which a comparison of their reported identities cannot decide.
+    """
+
+    @property
+    def llm(self) -> "LLMPort":
+        """
+        The adapter this port was composed with.
+        """
+
+        ...
 
 
 class LLMPort(ABC):
@@ -27,6 +55,17 @@ class LLMPort(ABC):
         """
 
         raise NotImplementedError
+
+    @property
+    def identity(self) -> ModelIdentity:
+        """
+        Provider, model, and settings this adapter declares for itself.
+
+        Default declares UNKNOWN: an adapter that does not state its provider is reported as
+        undeclared rather than guessed from its class name.
+        """
+
+        return ModelIdentity(provider=ModelProvider.UNKNOWN, model=self.model_name)
 
     @abstractmethod
     async def generate(
@@ -69,12 +108,14 @@ class LLMPort(ABC):
         Spawn a sibling adapter sharing credentials and model, with only the explicitly-set
         fields of ``overrides`` applied on top.
 
-        Default returns self; providers that support reconfiguration (e.g. Gemini) override
-        this to build a genuinely independent sibling.
+        Every provider adapter must implement this operation. Returning the planner itself would
+        silently discard role-specific settings such as deterministic temperature and caching.
         """
 
         _ = overrides
-        return self
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement provider adapter derivation"
+        )
 
     @abstractmethod
     async def cleanup(self) -> None:

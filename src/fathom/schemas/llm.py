@@ -5,8 +5,53 @@ from typing import Optional, Type
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fathom.constants.llm import InferencePriorityTransitionReason, InferenceTier
+from fathom.constants.llm import (
+    InferencePriorityTransitionReason,
+    InferenceTier,
+    ModelProvider,
+)
 from fathom.schemas.base.common import ThresholdConfiguration
+
+
+class InferenceSettings(BaseModel):
+    """
+    Non-secret inference settings that change a model's behavior between otherwise identical runs.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    cache: Optional[bool] = Field(
+        default=None,
+        description="Whether the adapter reuses provider-side prompt caching.",
+    )
+    thinking: Optional[str] = Field(
+        default=None,
+        description="Reasoning-depth level the adapter requests, when the provider exposes one.",
+    )
+    temperature: Optional[float] = Field(
+        default=None,
+        description="Sampling temperature the adapter is configured with.",
+    )
+
+
+class ModelIdentity(BaseModel):
+    """
+    Provider and model an instantiated LLM adapter resolves to, as the adapter itself declares it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: ModelProvider = Field(
+        description="Provider the adapter declares; UNKNOWN when it declares none.",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model identifier the adapter is bound to.",
+    )
+    settings: InferenceSettings = Field(
+        default_factory=InferenceSettings,
+        description="Fairness-relevant inference settings the adapter applies.",
+    )
 
 
 class StructuredOutput(BaseModel):

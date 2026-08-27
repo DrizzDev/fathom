@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Any, Protocol, Tuple, runtime_checkable
 
 from fathom.schemas.embedding import EmbeddingResult
+
+
+@runtime_checkable
+class EmbeddingCapable(Protocol):
+    """
+    Capability for an LLM adapter that exposes a client a sibling embedding adapter can share.
+    """
+
+    @property
+    def client(self) -> Any:
+        """
+        Provider client reused for embedding calls; None until the adapter has initialized one.
+        """
+
+        ...
 
 
 class EmbeddingPort(ABC):
