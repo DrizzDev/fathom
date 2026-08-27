@@ -12,6 +12,17 @@ class ToolRegistryTest(unittest.TestCase):
     Pins the tool catalog filtering and ordering contracts.
     """
 
+    def test_canonical_definitions_have_no_provider_envelope(self) -> None:
+        """
+        Canonical declarations use the provider-neutral tools key.
+        """
+
+        payload = ToolRegistry.canonical_definitions_for(names=frozenset({ToolName.EXECUTE_UI}))
+
+        self.assertIn("tools", payload)
+        self.assertNotIn("function_declarations", payload)
+        self.assertEqual(payload["tools"][0]["name"], "execute_ui")
+
     def test_execute_ui_action_requires_confidence(self) -> None:
         """
         execute_ui's schema must require action.confidence on every tool call.

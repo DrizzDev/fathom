@@ -5,12 +5,13 @@ from pathlib import Path
 from typing import Optional
 from unittest import mock
 
+from fathom.adapters.embedding.gemini import GeminiEmbeddingAdapter
 from fathom.adapters.icon.noop import NoopIconDetector
 from fathom.adapters.icon.template import TemplateIconDetector
 from fathom.adapters.journal.jsonl import JsonRuntimeJournal
 from fathom.adapters.journal.noop import NoopRuntimeJournal
 from fathom.adapters.localization.document.layout import DocumentAiLayoutLocalizer
-from fathom.adapters.localization.gemini.vision import GeminiVisionLocalizer
+from fathom.adapters.localization.vision import VisionLLMLocalizer
 from fathom.adapters.ocr.document.adapter import DocumentAiOcr
 from fathom.adapters.ocr.noop import NoopOcr
 from fathom.adapters.perception.overlay.noop import NoopOverlayDetector
@@ -205,7 +206,7 @@ class AdapterAssemblyTest(unittest.TestCase):
         members = assembly.ensemble().members
 
         self.assertEqual(len(members), 2)
-        self.assertIsInstance(members[0], GeminiVisionLocalizer)
+        self.assertIsInstance(members[0], VisionLLMLocalizer)
         self.assertIsInstance(members[1], DocumentAiLayoutLocalizer)
 
     def test_ensemble_drops_document_ai_layout_when_ocr_disabled(self) -> None:
@@ -223,7 +224,7 @@ class AdapterAssemblyTest(unittest.TestCase):
         members = assembly.ensemble().members
 
         self.assertEqual(len(members), 1)
-        self.assertIsInstance(members[0], GeminiVisionLocalizer)
+        self.assertIsInstance(members[0], VisionLLMLocalizer)
 
     def test_journal_returns_noop_when_local_disabled(self) -> None:
         """
@@ -252,3 +253,71 @@ class AdapterAssemblyTest(unittest.TestCase):
         )
 
         self.assertIsInstance(assembly.journal(), JsonRuntimeJournal)
+
+
+class _ClientLlm(_FakeLlm):
+    """
+    LLM double exposing a provider client, as the Gemini adapter does after initialization.
+    """
+
+    def __init__(self, *, client: Optional[object]) -> None:
+        """
+        Record the client this double exposes.
+        """
+
+        self.__client = client
+
+    @property
+    def client(self) -> Optional[object]:
+        """
+        Provider client a sibling embedding adapter would share.
+        """
+
+        return self.__client
+
+
+class AdapterAssemblyEmbedderTest(unittest.TestCase):
+    """
+    Embedder composition is decided by the typed port capability, so a custom LLMPort that
+    exposes no client disables embeddings instead of raising.
+    """
+
+    @staticmethod
+    def __assemble(*, llm: LLMPort) -> AdapterAssembly:
+        """
+        Build an assembly around the supplied LLM with env isolated from the developer's shell.
+        """
+
+        with mock.patch.dict("os.environ", {}, clear=True):
+            settings = FathomSettings(_env_file=None)
+        return AdapterAssembly(
+            loader=RuntimeConfigLoader(settings=settings),
+            llm=llm,
+            workflow_id="run-abc",
+        )
+
+    def test_custom_llm_without_a_client_disables_embeddings(self) -> None:
+        """
+        A third-party LLMPort that declares no client yields no embedder rather than failing.
+        """
+
+        self.assertIsNone(self.__assemble(llm=_FakeLlm()).embedder())
+
+    def test_uninitialized_client_disables_embeddings(self) -> None:
+        """
+        An adapter whose client never initialized yields no embedder.
+        """
+
+        self.assertIsNone(self.__assemble(llm=_ClientLlm(client=None)).embedder())
+
+    def test_client_bearing_llm_builds_the_gemini_embedding_adapter(self) -> None:
+        """
+        An adapter exposing a live client backs a Gemini embedding adapter sharing that client.
+        """
+
+        client = object()
+
+        embedder = self.__assemble(llm=_ClientLlm(client=client)).embedder()
+
+        self.assertIsInstance(embedder, GeminiEmbeddingAdapter)
+        self.assertIs(embedder._GeminiEmbeddingAdapter__client, client)  # type: ignore[attr-defined]

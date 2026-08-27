@@ -81,7 +81,10 @@ class VisionService:
         self.__capabilities = capabilities
         self.__tool_scope = tool_scope or ToolScope(policies=DEFAULT_TOOL_POLICIES)
 
-        self.__builder = PromptFactory.get_builder(model_name=self.__llm.model_name)
+        self.__builder = PromptFactory.get_builder(
+            model_name=self.__llm.model_name,
+            provider=self.__llm.identity.provider,
+        )
 
     async def prewarm(self) -> None:
         """
@@ -92,7 +95,7 @@ class VisionService:
 
         for variant in self.__prewarm_variants():
             instruction = self.__builder.build(tools=variant)
-            payload = ToolRegistry.definitions(names=variant.names)
+            payload = ToolRegistry.canonical_definitions_for(names=variant.names)
             await self.__llm.prewarm(tools=payload, system_instruction=instruction)
 
         await self.__telemetry.debug(
@@ -279,7 +282,7 @@ class VisionService:
         )
 
         tool_scope_start = time.time()
-        allowed_tools = ToolRegistry.definitions(names=tools.names)
+        allowed_tools = ToolRegistry.canonical_definitions_for(names=tools.names)
         tool_scope_duration = time.time() - tool_scope_start
 
         manifest_start = time.time()

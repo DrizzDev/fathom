@@ -239,7 +239,7 @@ class CommandApplication:
             default=None,
             help="Path to adb executable for Android local adapter",
         )
-        run_parser.add_argument("--api-key", "-k", type=str, help="Gemini API Key")
+        run_parser.add_argument("--api-key", "-k", type=str, help="Active LLM provider API key")
         run_parser.add_argument("--max-steps", type=int, default=50, help="Maximum steps allowed")
         run_parser.add_argument(
             "--verbose",
@@ -262,7 +262,15 @@ class CommandApplication:
             "--use-xml",
             "-x",
             action="store_true",
-            help="Use XML bounding boxes",
+            dest="use_xml",
+            default=True,
+            help="Use XML/accessibility bounding boxes (default)",
+        )
+        run_parser.add_argument(
+            "--no-xml",
+            action="store_false",
+            dest="use_xml",
+            help="Disable XML/accessibility grounding and use visual perception only",
         )
         run_parser.add_argument(
             "--interactive",
@@ -560,7 +568,10 @@ class CommandApplication:
         """
 
         if command_input.api_key:
-            settings.gemini_api_key = command_input.api_key
+            if settings.llm_provider == "openai":
+                settings.openai_api_key = command_input.api_key
+            else:
+                settings.gemini_api_key = command_input.api_key
 
         if command_input.verbose:
             settings.log_level = "DEBUG"
