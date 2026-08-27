@@ -110,10 +110,10 @@ class CheckpointStoreSerdeTest(unittest.IsolatedAsyncioTestCase):
             async with store.open(workflow_id="workflow-allowlist-test") as checkpointer:
                 self.assertEqual(type(checkpointer).__name__, "AsyncSqliteSaver")
                 self.assertEqual(type(checkpointer.serde).__name__, "JsonPlusSerializer")
-                allowed_modules = getattr(
-                    checkpointer.serde,
-                    "_allowed_json_modules",
-                    checkpointer.serde._allowed_modules,
+                allowed_modules = (
+                    checkpointer.serde._allowed_json_modules
+                    if hasattr(checkpointer.serde, "_allowed_json_modules")
+                    else checkpointer.serde._allowed_modules
                 )
                 self.assertEqual(allowed_modules, set(CHECKPOINT_ALLOWED_JSON_MODULES))
                 if hasattr(checkpointer.serde, "_allowed_msgpack_modules"):

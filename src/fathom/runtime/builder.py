@@ -347,7 +347,11 @@ class FathomBuilder:
             architect = self.__llm
             logger.warning(
                 "LLM adapter does not support derived role configuration; sharing planner",
-                extra={"event": "llm.role.derive.unavailable", "role": "architect"},
+                extra={
+                    "component": "runtime.builder",
+                    "event": "llm.role.derive.unavailable",
+                    "role": "architect",
+                },
             )
 
         if architect is not self.__llm:

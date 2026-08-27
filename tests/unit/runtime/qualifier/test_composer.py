@@ -85,6 +85,7 @@ class QualifierComposerTest(unittest.IsolatedAsyncioTestCase):
         """
 
         bound_settings = FathomSettings(
+            _env_file=None,
             gemini_api_key=api_key,
             vertex_location="bound-location",
             vertex_project_id="bound-project",

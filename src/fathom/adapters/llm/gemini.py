@@ -11,7 +11,7 @@ from google.genai import Client, types
 from google.oauth2 import service_account
 
 from fathom.adapters.llm.cache import CacheService
-from fathom.adapters.tool_protocol import GeminiToolDialect
+from fathom.adapters.tools import GeminiToolDialect
 from fathom.constants.llm import (
     GEMINI_CANCELLED_ERROR_MARKERS,
     GEMINI_CANCELLED_STATUS_CODE,
@@ -41,7 +41,7 @@ from fathom.core.exceptions import VisionError
 from fathom.core.inference.priority import PriorityInferencePolicy
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
-from fathom.interfaces.tool_protocol import CanonicalToolPayload
+from fathom.interfaces.tools import CanonicalToolPayload
 from fathom.schemas.configuration import LLMConfiguration
 from fathom.schemas.conversation import ConversationTurn
 from fathom.schemas.llm import (

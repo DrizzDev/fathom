@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping
 
-from fathom.interfaces.tool_protocol import ToolDeclaration, ToolDialect
+from fathom.interfaces.tools import ToolDeclaration, ToolDialect
 
 
 class GeminiToolDialect(ToolDialect):

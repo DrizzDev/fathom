@@ -49,6 +49,7 @@ class RunAssemblyBuilderQualifierLLMConfigurationTest(unittest.TestCase):
         """
 
         bound_settings = FathomSettings(
+            _env_file=None,
             gemini_api_key="test-api-key",
             vertex_location="bound-location",
             vertex_project_id="bound-project",
