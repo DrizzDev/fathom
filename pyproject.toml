@@ -72,6 +72,9 @@ fathom = "fathom.cli:main"
 gemini = [
     "google-generativeai>=0.3.0",
 ]
+gateway = [
+    "litellm>=1.49.1",
+]
 temporal = [
     "temporalio>=1.0.0",
 ]
