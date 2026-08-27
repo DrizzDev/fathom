@@ -101,9 +101,9 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
 
         self.assertFalse(result)
 
-    def test_non_gesture_success_keeps_execution_result(self) -> None:
+    def test_tap_no_progress_is_not_recorded_as_success(self) -> None:
         """
-        Non-gesture device actions still use the adapter execution result.
+        A tap that leaves the screen unchanged must fail the recorded step too.
         """
 
         effect = ActionEffect(
@@ -119,7 +119,7 @@ class ObserveNodeStepSuccessTest(unittest.TestCase):
             execution_success=True,
         )
 
-        self.assertTrue(result)
+        self.assertFalse(result)
 
     def test_control_command_success_ignores_screen_change(self) -> None:
         """

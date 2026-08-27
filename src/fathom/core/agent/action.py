@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Optional
 
 from fathom.constants import ActionType, StepEvent
+from fathom.core.exceptions import ToolValidationError
 from fathom.core.services.normalizer import Normalizer
 from fathom.schemas.actions import Action, Bounds, CoordinateSource, CoordinateSystem
 from fathom.schemas.gemini_tools import ExecuteAction
+from fathom.schemas.results import ToolErrorFeedback
 from fathom.schemas.tools import AcceptedCommand
 
 
@@ -76,7 +78,18 @@ class ActionBuilder:
             coordinate_system=CoordinateSystem.from_legacy(data.bbox.coordinate_system),
         )
         if bounds.has_normalized_extent_violation():
-            return bounds.model_copy(update={"system": CoordinateSystem.LOGICAL})
+            raise ToolValidationError(
+                ToolErrorFeedback(
+                    tool_call_id=None,
+                    tool_name="execute_ui",
+                    error_kind="validation",
+                    message=(
+                        "bbox uses coordinate_system='normalized' but its values exceed the "
+                        "published 0-1000 grid. Re-emit the action with a valid normalized "
+                        "bbox, or use coordinate_system='pixel' for screenshot-space values."
+                    ),
+                )
+            )
 
         return bounds
 

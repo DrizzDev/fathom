@@ -13,6 +13,7 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_WINDOW,
     InferencePriorityMode,
 )
+from fathom.constants.localization import GroundingPolicy
 from fathom.constants.qualification import (
     DEFAULT_QUALIFIER_MAX_RETRIES,
     DEFAULT_QUALIFIER_MODEL,
@@ -29,12 +30,29 @@ from fathom.schemas.authoring import (
 )
 from fathom.schemas.configuration import (
     InferenceConfiguration,
+    IntentConfiguration,
     LLMConfiguration,
     PostgresInteractionConfiguration,
     PriorityInferenceConfiguration,
     QualifierConfiguration,
     StorageConfiguration,
 )
+
+
+class IntentConfigurationGroundingDefaultsTest(unittest.TestCase):
+    """
+    Intent runs default to evidence-backed spatial execution.
+    """
+
+    def test_xml_and_strict_grounding_are_enabled_by_default(self) -> None:
+        """
+        A normal run must collect the accessibility manifest and refuse blind coordinates.
+        """
+
+        configuration = IntentConfiguration()
+
+        self.assertTrue(configuration.use_xml_grounding)
+        self.assertIs(configuration.grounding_policy, GroundingPolicy.STRICT)
 
 
 class InferenceConfigurationContractTest(unittest.TestCase):
