@@ -1,3 +1,5 @@
+"""Verify the provider-neutral LLM interface contract."""
+
 from __future__ import annotations
 
 import unittest

@@ -1,3 +1,5 @@
+"""Define model-role manifest constants and enums."""
+
 from __future__ import annotations
 
 from enum import StrEnum

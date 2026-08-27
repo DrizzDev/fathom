@@ -1,3 +1,5 @@
+"""Verify model-role manifest construction and serialization."""
+
 from __future__ import annotations
 
 import json

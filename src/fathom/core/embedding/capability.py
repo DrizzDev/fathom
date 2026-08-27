@@ -1,3 +1,5 @@
+"""Detect whether an LLM adapter supports embeddings."""
+
 from __future__ import annotations
 
 from fathom.interfaces.embedding import EmbeddingCapable

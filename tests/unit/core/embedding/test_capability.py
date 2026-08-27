@@ -1,3 +1,5 @@
+"""Verify embedding-capability detection across LLM adapters."""
+
 from __future__ import annotations
 
 import unittest

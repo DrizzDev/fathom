@@ -1,3 +1,5 @@
+"""Encode provider-neutral tools for the Gemini SDK."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping
