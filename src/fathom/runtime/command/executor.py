@@ -26,6 +26,7 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
+from fathom.runtime.plumb_stream import TrajectoryStream
 from fathom.runtime.cleanup import ResourceCloser
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
@@ -403,8 +404,13 @@ class CommandExecutor:
             )
             self.__runner = cast("FathomRunner", self.__composition.runner)
 
+            stream = TrajectoryStream()
+            stream.event(kind="run.started", payload={"intent": request.objective.intent})
+
             result = await self.__run_intent_workflow(request=request)
             self.__print_execution_summary(result=result)
+
+            self.__emit_trajectory(stream=stream, result=result)
 
             return 0 if result.success else 1
 
@@ -421,6 +427,46 @@ class CommandExecutor:
             return 1
         finally:
             await self.__cleanup_runner()
+
+    @staticmethod
+    def __emit_trajectory(*, stream: TrajectoryStream, result: Any) -> None:
+        """
+        Report the run to a benchmark host as data.
+
+        The per-step events are reconstructed after termination rather than streamed
+        live: the graph owns step execution and threading a sink through it would put
+        a benchmark concern inside the agent loop. Reconstruction preserves the two
+        properties a host actually checks — a contiguous sequence, and a terminal
+        outcome — without that coupling.
+        """
+
+        if not stream.enabled:
+            return
+
+        steps = int(getattr(result, "steps_taken", 0) or 0)
+        for index in range(steps):
+            stream.event(kind="step.executed", payload={"step": index + 1})
+
+        stream.event(kind="run.finished", payload={"success": bool(result.success)})
+        stream.outcome(
+            payload={
+                "status": "COMPLETED" if result.success else "FAILED",
+                "steps_taken": steps,
+                "effective_max_steps": getattr(result, "max_steps", None),
+                "completion_reason": getattr(result, "completion_reason", None)
+                or getattr(result, "error", None),
+                "self_reported_success": bool(result.success),
+                "duration_seconds": (getattr(result, "duration", 0) or 0) / 1000.0,
+                "error": getattr(result, "error", None),
+                "exit_status": 0 if result.success else 1,
+                "status_source": "HARNESS_REPORT",
+                "total_actions": steps,
+                "no_op_actions": 0,
+                "uncorroborated_dispatches": 0,
+                "human_interventions": 0,
+                "awaiting_human_at_end": False,
+            }
+        )
 
     async def explore(self, *, request: ExplorationRunRequest) -> int:
         """
