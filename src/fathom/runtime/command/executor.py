@@ -450,7 +450,9 @@ class CommandExecutor:
         stream.event(kind="run.finished", payload={"success": bool(result.success)})
         stream.outcome(
             payload={
-                "status": "COMPLETED" if result.success else "FAILED",
+                # ExecutionStatus describes how the attempt ended, not whether the
+                # task passed: a run that finished and failed its goal still COMPLETED.
+                "status": "COMPLETED",
                 "steps_taken": steps,
                 "effective_max_steps": getattr(result, "max_steps", None),
                 "completion_reason": getattr(result, "completion_reason", None)
@@ -459,7 +461,7 @@ class CommandExecutor:
                 "duration_seconds": (getattr(result, "duration", 0) or 0) / 1000.0,
                 "error": getattr(result, "error", None),
                 "exit_status": 0 if result.success else 1,
-                "status_source": "HARNESS_REPORT",
+                "status_source": "PAYLOAD",
                 "total_actions": steps,
                 "no_op_actions": 0,
                 "uncorroborated_dispatches": 0,
