@@ -43,6 +43,20 @@ class FathomSettings(BaseSettings):
     gemini_model: str = Field(default="gemini-3.5-flash", alias="GEMINI_MODEL")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
+    inference_temperature: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "FATHOM_INFERENCE_TEMPERATURE",
+            "DRIZZ_FATHOM_INFERENCE_TEMPERATURE",
+        ),
+    )
+    use_cache: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "FATHOM_INFERENCE_CACHE",
+            "DRIZZ_FATHOM_INFERENCE_CACHE",
+        ),
+    )
 
     capacity_enabled: bool = Field(
         default=True,

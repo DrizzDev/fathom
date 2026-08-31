@@ -78,7 +78,8 @@ class RunAssemblyBuilder:
         )
         default_values = {
             **self.__provider_defaults(),
-            "use_cache": getattr(self.__settings, "use_cache", True),
+            "use_cache": self.__settings.use_cache,
+            "temperature": self.__settings.inference_temperature,
         }
         default_values.update(request_values)
 
