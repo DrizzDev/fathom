@@ -308,10 +308,25 @@ class ObserveNode:
         Return the canonical success bit for one recorded step.
         """
 
-        if self.__provider.context.catalog.is_control(action_type=action_type):
-            # A control command's postcondition is not a screen change: a delivered-and-answered
-            # ASK_USER, for example, succeeds without moving the screen. Its recorded success is
-            # the handler's execution result. The run may still replan afterwards.
+        catalog = self.__provider.context.catalog
+
+        if catalog.is_control(action_type=action_type) or catalog.is_non_interactive(
+            action_type=action_type
+        ):
+            # These commands do not promise a screen change, so an unchanged screen is not
+            # evidence they failed. A delivered-and-answered ASK_USER succeeds without moving
+            # the screen, and so does a VALIDATE that confirms what is already true.
+            #
+            # Asking only `is_control` here left every OBSERVATION, WAIT, MEMORY, CAPTURE and
+            # TERMINAL command to be judged by the device rule below. A VALIDATE therefore
+            # executed successfully, was overridden to failure for not moving the screen, and
+            # `CompletionNode` skipped the sub-goal evaluation on `not step_result.success` -
+            # so the sub-goal the validation was proving could never be discharged. The agent
+            # re-validated until the stuck detector ended the run.
+            #
+            # The catalog already models this: VALIDATE is declared on
+            # ``ExecutionChannel.OBSERVATION``, which is in ``NON_INTERACTIVE_CHANNELS``. Only
+            # this call site disagreed with it.
             return execution_success
 
         if action_execution_kind is not ActionExecutionKind.DEVICE:
