@@ -56,6 +56,27 @@ console = Console()
 logger = getLogger(__name__)
 
 
+def _counter_payload(*, counters: Any) -> dict[str, Any]:
+    """
+    The measured counters, or nothing at all.
+
+    Returning an empty mapping is the point: the host distinguishes "measured zero"
+    from "not measured", and the only honest way to say the second is to omit the
+    fields rather than to send a number nobody counted.
+    """
+
+    if counters is None:
+        return {}
+
+    return {
+        "total_actions": counters.total_actions,
+        "no_op_actions": counters.no_op_actions,
+        "uncorroborated_dispatches": counters.uncorroborated_dispatches,
+        "human_interventions": counters.human_interventions,
+        "awaiting_human_at_end": counters.awaiting_human_at_end,
+    }
+
+
 class CommandExecutor:
     """
     Runtime executor for CLI command workflows.
@@ -476,12 +497,11 @@ class CommandExecutor:
                 "error": getattr(result, "error", None),
                 "exit_status": 0 if result.success else 1,
                 "status_source": "PAYLOAD",
-                # The action counters are deliberately absent. Fathom does not measure
-                # dispatched actions, no-ops, uncorroborated coordinates or human
-                # interventions, and the host's fields are tri-state precisely so an
-                # uninstrumented harness reports them as unverified. Sending zeros
-                # would answer those checks with a number nobody counted, and a
-                # fabricated pass is worse than a visible gap.
+                # Measured, never defaulted. Absent entirely when the run recorded no
+                # counters, because the host's fields are tri-state: a missing counter
+                # reports UNVERIFIED, while a zero asserts that nothing happened. Only
+                # a run that was actually observed may say the latter.
+                **_counter_payload(counters=getattr(result, "counters", None)),
             }
         )
 

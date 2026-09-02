@@ -1572,6 +1572,7 @@ class IntentStrategy:
             "step_count": self.__graph_context.agent_state.step_count,
             "is_complete": self.__graph_context.agent_state.is_complete,
             "completion_reason": self.__graph_context.agent_state.completion_reason,
+            "human_interventions": self.__graph_context.hitl.answers_received,
         }
 
     def get_subgoal_execution_audit(self) -> Tuple[List[str], List[str], int]:

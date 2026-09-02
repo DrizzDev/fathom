@@ -38,6 +38,7 @@ from fathom.constants.screen import (
 )
 from fathom.constants.state import CompletionReason
 from fathom.conversation.identity import InteractionIdentity
+from fathom.core.agent.counters import measure_run
 from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.capture.store import CaptureStore
 from fathom.core.config.loader import RuntimeConfigLoader
@@ -559,9 +560,16 @@ class FathomRunner:
                     fallback=raw_completion_reason,
                 )
 
+            counters = measure_run(
+                step_results=strategy.step_results,
+                human_interventions=int(progress.get("human_interventions", 0) or 0),
+                completion_reason=completion_reason,
+            )
+
             result = IntentResult(
                 error=error,
                 status=status,
+                counters=counters,
                 intent=intent,
                 manifest=manifest,
                 metrics=metrics,

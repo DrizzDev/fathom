@@ -162,6 +162,7 @@ class EmittedPayloadTest(unittest.TestCase):
         result.completion_reason = "Stuck: No progress"
         result.duration = 58.6
         result.error = None
+        result.counters = None
         return result
 
     def test_a_failed_run_emits_completed_not_a_literal(self) -> None:
@@ -195,11 +196,15 @@ class EmittedPayloadTest(unittest.TestCase):
 
         self.assertEqual(payload["status"], "CANCELLED")
 
-    def test_the_action_counters_are_absent_rather_than_zero(self) -> None:
+    def test_unmeasured_counters_are_absent_rather_than_zero(self) -> None:
         """
         The host's counters are tri-state so an uninstrumented harness reports
         UNVERIFIED. Sending 0 answered "were any dispatches uncorroborated?" with a
         number nobody counted, turning an unperformed check into a passed one.
+
+        A run that *did* record counters emits them, zeros included — that contract is
+        pinned in tests/unit/core/agent/test_run_counters.py. This is the other half:
+        when nothing was measured, nothing is claimed.
         """
 
         stream = TrajectoryStream(run_id="run-1")

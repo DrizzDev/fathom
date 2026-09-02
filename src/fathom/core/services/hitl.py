@@ -34,6 +34,15 @@ class HITLService:
         self.__signal = signal
         self.__telemetry = telemetry
         self.__capabilities = capabilities
+        self.__answers = 0
+
+    @property
+    def answers_received(self) -> int:
+        """
+        How many times a human answered this run. Zero is a measurement, not a default.
+        """
+
+        return self.__answers
 
     @property
     def available(self) -> bool:
@@ -141,6 +150,11 @@ class HITLService:
             )
 
         response = await self.__signal.ask(prompt=prompt)
+        # Counted here rather than at the call site: this is the one place an answer
+        # actually arrives, and a request that was never answered is not an
+        # intervention. A benchmark host reads this to decide whether the run was
+        # unassisted, so it has to count answers, not prompts.
+        self.__answers += 1
         logger.info("Received HITL response from user")
 
         await self.__telemetry.info(

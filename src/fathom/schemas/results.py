@@ -181,6 +181,28 @@ class WorkflowResult(BaseModel):
     step_results: List[StepResult] = Field(default_factory=list)
 
 
+class RunCounters(BaseModel):
+    """
+    What a run did, counted rather than assumed.
+
+    Every field is a measurement. A run that dispatched nothing reports zero, which is a
+    fact; a run whose steps were never recorded carries no counters at all rather than
+    zeros, which is the difference between "none happened" and "nobody looked".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    total_actions: int = Field(ge=0, description="Actions dispatched to the device.")
+    no_op_actions: int = Field(ge=0, description="Dispatched actions that changed nothing.")
+    uncorroborated_dispatches: int = Field(
+        ge=0, description="Dispatches on bounds no independent evidence corroborated."
+    )
+    human_interventions: int = Field(ge=0, description="Answers a human supplied mid-run.")
+    awaiting_human_at_end: bool = Field(
+        description="Whether the run ended on a question nobody answered."
+    )
+
+
 class IntentResult(WorkflowResult):
     """
     Result of intent workflow.
@@ -216,6 +238,13 @@ class IntentResult(WorkflowResult):
     manifest: Optional[RuntimeManifest] = Field(
         default=None,
         description="Model roles resolved for this run; None for results produced before it existed.",
+    )
+    counters: Optional[RunCounters] = Field(
+        default=None,
+        description=(
+            "What the run did, measured from its recorded steps. None when the steps "
+            "were never recorded, which is not the same as a run that did nothing."
+        ),
     )
 
 
