@@ -84,6 +84,14 @@ class OpenAILLM(LLMPort):
             model=self.__configuration.model,
             settings=InferenceSettings(
                 cache=None,
+                # The effective value, not the requested one: None here means the
+                # provider's default applied, which is a different run from one that
+                # pinned a level, and the manifest has to be able to say which.
+                thinking=(
+                    self.__configuration.reasoning_effort.value
+                    if self.__configuration.reasoning_effort is not None
+                    else None
+                ),
                 temperature=(
                     None if self.__is_reasoning_model else self.__configuration.temperature
                 ),
@@ -136,6 +144,13 @@ class OpenAILLM(LLMPort):
         # configuration.
         if not self.__is_reasoning_model:
             request["temperature"] = self.__configuration.temperature
+
+        # Sent only when the experiment pinned one. Omitting the parameter and sending
+        # a level are different requests, and some models accept function tools only
+        # under an explicit level - so "unset" must stay distinguishable from "none"
+        # rather than being collapsed into a default here.
+        if self.__configuration.reasoning_effort is not None:
+            request["reasoning_effort"] = self.__configuration.reasoning_effort.value
 
         if tools:
             request.update(self.__dialect.encode(payload=self.__canonical_tools(tools=tools)))

@@ -13,6 +13,7 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_SLOW_THRESHOLD,
     DEFAULT_PRIORITY_WINDOW,
     InferencePriorityMode,
+    ReasoningEffort,
 )
 from fathom.constants.localization import GroundingPolicy
 from fathom.constants.platform import (
@@ -153,6 +154,13 @@ class LLMConfiguration(BaseModel):
     )
 
     # Common hyper-parameters
+    reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        description=(
+            "Reasoning depth requested of the provider. None omits the parameter so the "
+            "provider's own default applies; an explicit level is sent verbatim."
+        ),
+    )
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     temperature: float = Field(default=1.0, description="Sampling temperature")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")

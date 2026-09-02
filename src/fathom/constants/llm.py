@@ -48,6 +48,29 @@ class StructuredOutputMediaType(StrEnum):
 
 # Gemini provider HTTP-style status codes
 GEMINI_CANCELLED_STATUS_CODE = 499
+
+
+class ReasoningEffort(StrEnum):
+    """
+    How much internal reasoning a model is asked to spend before answering.
+
+    Provider-neutral by design. Every frontier provider now exposes some version of
+    this dial under its own name, and the alternative to naming it once here is a
+    per-model conditional in each adapter - which is how a harness ends up encoding a
+    vendor's release schedule in its control flow.
+
+    ``NONE`` is a real level, not an absence. Some models accept function tools only
+    when reasoning is explicitly switched off, so "off" has to be expressible; a run
+    that wants the provider's own default omits the setting entirely instead.
+    """
+
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 GEMINI_RATE_LIMIT_STATUS_CODE = 429
 GEMINI_STALE_CACHE_STATUS_CODE = 400
 GEMINI_GATEWAY_TIMEOUT_STATUS_CODE = 504

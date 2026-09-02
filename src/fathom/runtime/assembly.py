@@ -80,6 +80,7 @@ class RunAssemblyBuilder:
             **self.__provider_defaults(),
             "use_cache": self.__settings.use_cache,
             "temperature": self.__settings.inference_temperature,
+            "reasoning_effort": self.__settings.inference_reasoning_effort,
         }
         default_values.update(request_values)
 

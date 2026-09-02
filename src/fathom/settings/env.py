@@ -11,6 +11,7 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_RECOVERY_SUCCESSES,
     DEFAULT_PRIORITY_SLOW_THRESHOLD,
     DEFAULT_PRIORITY_WINDOW,
+    ReasoningEffort,
 )
 from fathom.constants.storage import (
     INTERACTION_DEFAULT_BACKEND,
@@ -55,6 +56,17 @@ class FathomSettings(BaseSettings):
         validation_alias=AliasChoices(
             "FATHOM_INFERENCE_CACHE",
             "DRIZZ_FATHOM_INFERENCE_CACHE",
+        ),
+    )
+    inference_reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "FATHOM_INFERENCE_REASONING_EFFORT",
+            "DRIZZ_FATHOM_INFERENCE_REASONING_EFFORT",
+        ),
+        description=(
+            "Reasoning depth requested of every provider that exposes one. Unset omits "
+            "the parameter entirely, which is not the same as sending 'none'."
         ),
     )
 
