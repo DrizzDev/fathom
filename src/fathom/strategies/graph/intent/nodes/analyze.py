@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Any, Dict, Optional, Tuple, cast
@@ -22,7 +21,7 @@ from fathom.constants.state import (
 )
 from fathom.constants.timing import TimingPhase
 from fathom.constants.turn.advancement import AdvanceKind
-from fathom.core.exceptions import ToolValidationError
+from fathom.core.exceptions import UNABSORBABLE_ERRORS, ToolValidationError
 from fathom.schemas.advancement import Advancement
 from fathom.schemas.observation import ScreenObservation
 from fathom.schemas.planner import (
@@ -437,9 +436,10 @@ class AnalyzeNode:
 
             return result
 
-        except asyncio.CancelledError:
-            # CancelledError is the cooperative cancellation signal; it
-            # must propagate so the LangGraph task tree unwinds cleanly.
+        except UNABSORBABLE_ERRORS:
+            # Cancellation must propagate so the LangGraph task tree unwinds cleanly,
+            # and provider exhaustion must propagate because absorbing it here would
+            # record a provider that stopped answering as a step the model failed.
             raise
         except ToolValidationError as exception:
             return self.__handle_tool_validation_exhaustion(

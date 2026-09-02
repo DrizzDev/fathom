@@ -37,7 +37,7 @@ from fathom.constants.llm import (
     ModelProvider,
     StructuredOutputMediaType,
 )
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ProviderExhaustedError, VisionError
 from fathom.core.inference.priority import PriorityInferencePolicy
 from fathom.core.services.parsing import ToolResponseParser
 from fathom.interfaces.llm import LLMPort
@@ -515,6 +515,14 @@ class GeminiLLM(LLMPort):
                     raise VisionError(f"LLM cancelled: {exception}") from exception
 
                 if attempt == max_retries:
+                    if metadata.kind in {
+                        GeminiExceptionKind.RATE_LIMITED,
+                        GeminiExceptionKind.PROVIDER_OVERLOADED,
+                    }:
+                        raise ProviderExhaustedError(
+                            f"Gemini {metadata.kind.value} after "
+                            f"{max_retries + 1} attempts: {exception}"
+                        ) from exception
                     raise VisionError(f"LLM fail: {exception}") from exception
 
                 delay = self.__retry_delay(attempt=attempt, metadata=metadata)

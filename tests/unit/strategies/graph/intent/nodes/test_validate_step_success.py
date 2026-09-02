@@ -20,8 +20,8 @@ import unittest
 from unittest.mock import MagicMock
 
 from fathom.constants import ActionExecutionKind, ActionType
-from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.core.agent.loop import LoopDetector
+from fathom.core.capability.catalog import CommandCatalogProvider
 from fathom.schemas.effect import ActionEffect, ActionEffectStatus
 from fathom.schemas.screens import ScreenState
 from fathom.strategies.graph.intent.nodes.observe import ObserveNode
@@ -42,7 +42,9 @@ def _no_progress() -> ActionEffect:
     The effect reading a validation produces: nothing moved, because nothing should.
     """
 
-    return ActionEffect(status=ActionEffectStatus.NO_PROGRESS, visual_progress=0.0, phash_distance=0)
+    return ActionEffect(
+        status=ActionEffectStatus.NO_PROGRESS, visual_progress=0.0, phash_distance=0
+    )
 
 
 def _step_success(
@@ -252,7 +254,9 @@ class RepeatedValidationRemainsBoundedTest(unittest.TestCase):
 
         detector = LoopDetector(threshold=3, window_size=10)
         for visual_hash, description in zip(
-            screens, ("Tap Network", "Tap Airplane mode", "Validate airplane mode on")
+            screens,
+            ("Tap Network", "Tap Airplane mode", "Validate airplane mode on"),
+            strict=True,
         ):
             detector.record(
                 screen=self.__screen(visual_hash=visual_hash),

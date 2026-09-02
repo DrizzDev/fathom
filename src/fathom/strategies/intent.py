@@ -28,9 +28,11 @@ from fathom.core.agent.termination import TerminationResolver
 from fathom.core.capability.catalog import CommandCatalog
 from fathom.core.config import RuntimeConfigLoader
 from fathom.core.exceptions import (
+    UNABSORBABLE_ERRORS,
     DecompositionError,
     FinalizationTimeoutError,
     LanguageComplianceError,
+    ProviderExhaustedError,
     WorkflowCancelledError,
 )
 from fathom.core.services.decomposer import IntentDecomposer
@@ -261,6 +263,12 @@ class IntentStrategy:
                 assembler=assembler,
                 run_outcome=run_outcome,
             )
+        except ProviderExhaustedError:
+            # Ahead of the cancellation handler on purpose: that one finalizes the run
+            # as cancelled, and a provider outage is not an operator stopping the run.
+            # Nothing is finalized here at all - the run has no honest ending to record
+            # and the host is told so instead.
+            raise
         except asyncio.CancelledError:
             self.__graph_context.cancel()
             final_state = await self.__finalize_cancelled_run(
@@ -665,7 +673,7 @@ class IntentStrategy:
 
         try:
             await executor.run()
-        except asyncio.CancelledError:
+        except UNABSORBABLE_ERRORS:
             raise
 
         except WorkflowCancelledError as exception:

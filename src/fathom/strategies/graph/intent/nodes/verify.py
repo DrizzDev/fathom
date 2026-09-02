@@ -10,7 +10,7 @@ from fathom.constants.flow import AssertionSource, CheckKind
 from fathom.constants.observability import CompletionEvent
 from fathom.constants.runtime import DEFAULT_VERIFICATION_REJECTION_LIMIT
 from fathom.constants.state import CommonStateKey, CompletionReason, IntentStateKey, VerifyMode
-from fathom.core.exceptions import InvariantViolation
+from fathom.core.exceptions import UNABSORBABLE_ERRORS, InvariantViolation
 from fathom.core.prompts.templates import (
     SUBGOAL_VERIFICATION_SYSTEM,
     VERIFICATION_SYSTEM,
@@ -202,9 +202,9 @@ class VerifyNode:
                 is_truly_complete = False
                 reason = MISSING_COMPLETION_ASSERTIONS_REASON
 
-        except asyncio.CancelledError:
-            # Cooperative cancellation must propagate so the graph
-            # unwinds; do not absorb it as a verification failure.
+        except UNABSORBABLE_ERRORS:
+            # Cooperative cancellation must propagate so the graph unwinds, and so must
+            # provider exhaustion; neither is a verification failure.
             raise
         except Exception as exception:
             diagnostic = f"LLM verification failed: {exception}"[:500]

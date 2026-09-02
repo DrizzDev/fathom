@@ -26,7 +26,6 @@ from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.signal import SignalPort
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.runtime.builder import Fathom
-from fathom.runtime.plumb_stream import TrajectoryStream
 from fathom.runtime.cleanup import ResourceCloser
 from fathom.runtime.command.resolver import (
     RuntimeDeviceDefaultsResolver,
@@ -39,6 +38,11 @@ from fathom.runtime.factories import (
     PerceptionFactory,
     SignalFactory,
     TelemetryFactory,
+)
+from fathom.runtime.plumb_stream import (
+    TrajectoryStream,
+    status_for_exception,
+    status_for_result,
 )
 from fathom.runtime.qualifier import QualifierComposer
 from fathom.runtime.runner import FathomRunner
@@ -397,6 +401,12 @@ class CommandExecutor:
             )
         )
 
+        # Built before the try so that a failure while assembling the runner is still
+        # reportable. A host that asked for the stream and received nothing cannot tell
+        # a harness that broke on startup from one that was never invoked.
+        stream = TrajectoryStream()
+        started = time.time()
+
         try:
             signal_adapter = self.__create_signal_adapter(request=request)
             self.__composition = await self.__create_runner(
@@ -404,7 +414,6 @@ class CommandExecutor:
             )
             self.__runner = cast("FathomRunner", self.__composition.runner)
 
-            stream = TrajectoryStream()
             stream.event(kind="run.started", payload={"intent": request.objective.intent})
 
             result = await self.__run_intent_workflow(request=request)
@@ -414,16 +423,19 @@ class CommandExecutor:
 
             return 0 if result.success else 1
 
-        except (asyncio.CancelledError, KeyboardInterrupt):
+        except (asyncio.CancelledError, KeyboardInterrupt) as exception:
             console.print("\n[bold red]Execution cancelled by user.[/bold red]")
+            self.__emit_failure(stream=stream, exception=exception, started=started)
             return 1
         except FathomError as exception:
             logger.error("CLI error: %s", exception)
             console.print(f"[bold red]Fathom Error:[/bold red] {escape(str(exception))}")
+            self.__emit_failure(stream=stream, exception=exception, started=started)
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
+            self.__emit_failure(stream=stream, exception=exception, started=started)
             return 1
         finally:
             await self.__cleanup_runner()
@@ -450,23 +462,61 @@ class CommandExecutor:
         stream.event(kind="run.finished", payload={"success": bool(result.success)})
         stream.outcome(
             payload={
-                # ExecutionStatus describes how the attempt ended, not whether the
-                # task passed: a run that finished and failed its goal still COMPLETED.
-                "status": "COMPLETED",
+                # The status describes how the attempt ended, not whether the task
+                # passed: a run that finished and failed its goal still COMPLETED, and
+                # the host scores the goal from the device rather than from here.
+                "status": status_for_result(status=str(getattr(result, "status", "") or "")).value,
                 "steps_taken": steps,
                 "effective_max_steps": getattr(result, "max_steps", None),
                 "completion_reason": getattr(result, "completion_reason", None)
                 or getattr(result, "error", None),
                 "self_reported_success": bool(result.success),
-                "duration_seconds": (getattr(result, "duration", 0) or 0) / 1000.0,
+                # Already seconds: the runner records ``time.time() - start_time``.
+                "duration_seconds": max(float(getattr(result, "duration", 0) or 0), 0.0),
                 "error": getattr(result, "error", None),
                 "exit_status": 0 if result.success else 1,
                 "status_source": "PAYLOAD",
-                "total_actions": steps,
-                "no_op_actions": 0,
-                "uncorroborated_dispatches": 0,
-                "human_interventions": 0,
-                "awaiting_human_at_end": False,
+                # The action counters are deliberately absent. Fathom does not measure
+                # dispatched actions, no-ops, uncorroborated coordinates or human
+                # interventions, and the host's fields are tri-state precisely so an
+                # uninstrumented harness reports them as unverified. Sending zeros
+                # would answer those checks with a number nobody counted, and a
+                # fabricated pass is worse than a visible gap.
+            }
+        )
+
+    @staticmethod
+    def __emit_failure(
+        *, stream: TrajectoryStream, exception: BaseException, started: float
+    ) -> None:
+        """
+        Report a run that raised instead of producing a result.
+
+        Without this a run the provider shut out, or one the harness broke on, emitted
+        no outcome line at all and the host fell back to the process exit status -
+        which says only "non-zero", the single thing a failed task and a broken
+        harness have in common. Emitting here is what makes PROVIDER_EXHAUSTED and
+        HARNESS_ERROR reachable, and therefore what lets the host exclude a cell the
+        model never got a fair chance at instead of scoring it as a loss.
+
+        Counters and step totals are omitted rather than zeroed: a run that died
+        mid-flight took some number of steps and this layer does not know it.
+        """
+
+        if not stream.enabled:
+            return
+
+        status = status_for_exception(exception=exception)
+        stream.event(kind="run.finished", payload={"success": False})
+        stream.outcome(
+            payload={
+                "status": status.value,
+                "completion_reason": type(exception).__name__,
+                "self_reported_success": False,
+                "duration_seconds": max(time.time() - started, 0.0),
+                "error": str(exception) or type(exception).__name__,
+                "exit_status": 1,
+                "status_source": "PAYLOAD",
             }
         )
 

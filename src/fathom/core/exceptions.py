@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+import asyncio
+from typing import Final, Optional
 
 from fathom.schemas.results import ToolErrorFeedback
 
@@ -130,6 +131,39 @@ class VisionError(ToolError):
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message, tool_name="vision", retryable=retryable)
+
+
+class ProviderExhaustedError(VisionError):
+    """
+    The provider refused the call and the adapter ran out of attempts.
+
+    Rate limiting is ordinarily transient and the adapters absorb it by retrying, so
+    this is raised only once retrying has stopped: the run cannot continue because the
+    provider will not serve it, which is a fact about the provider rather than about
+    the model's competence at the task. Keeping it as a type is what lets that
+    distinction survive to the process boundary; a message saying "429" cannot, since
+    a recovered throttle logs the same three characters as a terminal one.
+
+    It stays a VisionError so every existing handler treats it exactly as it treated
+    the failure it replaces.
+    """
+
+
+#: Failures that must reach the process boundary instead of becoming a completion
+#: reason. Every layer between a node and the CLI ends the run gracefully on a broad
+#: ``except Exception`` - which is right for a fault the agent can report on, and wrong
+#: for these two. Cancellation must unwind the LangGraph task tree rather than be
+#: recorded as a workflow that finished. Provider exhaustion must stay visible because
+#: a benchmark host has to exclude the run: absorbed, a provider that stopped serving
+#: the account is indistinguishable from a model that could not do the task, and gets
+#: scored as one.
+#:
+#: Naming the set once is what keeps the two ideas from drifting apart across the eight
+#: handlers that enforce it.
+UNABSORBABLE_ERRORS: Final[tuple[type[BaseException], ...]] = (
+    asyncio.CancelledError,
+    ProviderExhaustedError,
+)
 
 
 class ToolValidationError(VisionError):

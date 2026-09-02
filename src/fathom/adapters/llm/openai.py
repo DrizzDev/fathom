@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fathom.adapters.tools import OpenAIToolDialect
 from fathom.constants.llm import ModelProvider
-from fathom.core.exceptions import VisionError
+from fathom.core.exceptions import ProviderExhaustedError, VisionError
 from fathom.interfaces.llm import LLMPort, PromptPart
 from fathom.interfaces.tools import CanonicalToolPayload
 from fathom.schemas.configuration import LLMConfiguration
@@ -181,7 +181,36 @@ class OpenAILLM(LLMPort):
                     break
                 await asyncio.sleep(self.__configuration.retry_delay * (2**attempt))
 
+        if self.__is_rate_limited(exception=last_exception):
+            raise ProviderExhaustedError(
+                f"OpenAI rate limit after "
+                f"{self.__configuration.max_retries + 1} attempts: {last_exception}"
+            ) from last_exception
+
         raise VisionError(f"OpenAI generation failed: {last_exception}") from last_exception
+
+    @staticmethod
+    def __is_rate_limited(*, exception: Optional[Exception]) -> bool:
+        """
+        Whether the provider refused the call for rate or quota reasons.
+
+        Decided from the SDK's exception type and its structured status code, never
+        from the message. A run that recovered from a throttle and later failed on its
+        own merits mentions 429 in exactly the same words as one the provider shut
+        out, so reading the text would make the two indistinguishable.
+        """
+
+        if exception is None:
+            return False
+
+        try:
+            from openai import RateLimitError
+        except ImportError:
+            return False
+
+        return isinstance(exception, RateLimitError) or (
+            getattr(exception, "status_code", None) == 429
+        )
 
     @property
     def __is_reasoning_model(self) -> bool:

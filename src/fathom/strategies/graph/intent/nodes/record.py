@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import time
@@ -21,7 +20,7 @@ from fathom.constants.state import (
 )
 from fathom.constants.timing import TimingEvent, TimingPhase
 from fathom.conversation.identity import InteractionIdentity
-from fathom.core.exceptions import FathomError
+from fathom.core.exceptions import UNABSORBABLE_ERRORS, FathomError
 from fathom.core.services.timing import Stopwatch
 from fathom.schemas.binding import Binding
 from fathom.schemas.effect import ActionEffectStatus, EffectReading
@@ -428,9 +427,11 @@ class RecordNode:
             self.__provider.persistence.persist(result=result)
             return result
 
-        except asyncio.CancelledError:
-            # CancelledError is the cooperative cancellation signal; it
-            # must propagate so the LangGraph task tree unwinds cleanly.
+        except UNABSORBABLE_ERRORS:
+            # Cancellation must propagate so the LangGraph task tree unwinds cleanly.
+            # Provider exhaustion must propagate because completion.evaluate reaches the
+            # model through OutcomeObserver: absorbing it here would record the step as
+            # one that simply failed to prove its sub-goal.
             raise
         except Exception as exception:
             logger.exception(

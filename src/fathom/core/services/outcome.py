@@ -16,6 +16,7 @@ from typing import Optional, Tuple
 
 from fathom.constants.assessment import VisualVerdict
 from fathom.core.artifact.renderer import TraceRenderer
+from fathom.core.exceptions import UNABSORBABLE_ERRORS
 from fathom.interfaces.llm import LLMPort
 from fathom.schemas.actions import Action
 from fathom.schemas.artifact import ArtifactRecord, TracePayload
@@ -156,7 +157,19 @@ class OutcomeObserver:
         self, *, requirement: ObservationRequirement, before: bytes, after: bytes
     ) -> VisualAssessment:
         """
-        Ask the model whether the requirement holds on the AFTER screen; degrade to UNCLEAR on any failure.
+        Ask the model whether the requirement holds on the AFTER screen.
+
+        Two kinds of failure, answered differently. An ordinary adjudication failure -
+        an unparseable verdict, a malformed response, a transport fault - degrades to
+        UNCLEAR, because the question really was put to the model and really did not
+        come back settled. A boundary failure the process must not absorb - cancellation,
+        or a provider that has stopped serving the run - propagates instead, because no
+        adjudication happened and UNCLEAR would claim one did.
+
+        That distinction is load-bearing. SubGoalEvaluator consumes this verdict as the
+        visual evidence proving an observed sub-goal, so an UNCLEAR returned for a call
+        that never happened leaves the sub-goal unproven, repeats the step, and ends the
+        run "Stuck: No progress" - a verdict about the model, caused by the provider.
         """
 
         prompt = (
@@ -172,7 +185,12 @@ class OutcomeObserver:
                 structured_output=StructuredOutput(payload=VisualAssessment),
             )
             return VisualAssessment.model_validate_json(result.content or "")
-        except Exception as exception:  # noqa: BLE001 - broad catch keeps the shadow alive
+        except UNABSORBABLE_ERRORS:
+            # Nothing was adjudicated, so there is no verdict to degrade to. See the
+            # method docstring for why answering UNCLEAR here misattributes a provider
+            # outage to the model.
+            raise
+        except Exception as exception:  # noqa: BLE001 - an unsettled question is UNCLEAR
             logger.warning(
                 "outcome.vision.failed",
                 extra={
