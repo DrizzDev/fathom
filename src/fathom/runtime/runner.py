@@ -585,6 +585,9 @@ class FathomRunner:
                 completion_reason=completion_reason,
                 steps_taken=progress.get("step_count", 0),
                 steps_executed=progress.get("step_count", 0),
+                # The resolved budget, not the requested one: `steps` is what the
+                # strategy was constructed with, so it is what actually bounded the run.
+                max_steps=steps,
             )
 
             await self.__telemetry.info(

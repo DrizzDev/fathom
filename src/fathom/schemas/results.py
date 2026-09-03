@@ -214,6 +214,17 @@ class IntentResult(WorkflowResult):
         description="Final generated script content produced during run finalization.",
     )
     steps_taken: int = Field(ge=0, description="Number of steps executed")
+    max_steps: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The step budget that actually governed this run, after resolution. The "
+            "runner takes it from the request or falls back to the intent "
+            "configuration, so the number a caller asked for is not evidence of what "
+            "applied. None when the run never reached execution, which is not the "
+            "same as a run that had no budget."
+        ),
+    )
     final_screen: Optional[Any] = Field(default=None, description="Final state")
 
     metrics: Dict[str, Dict[str, float]] = Field(
