@@ -213,7 +213,7 @@ def _emitted(*, result: object) -> dict:
     stream = TrajectoryStream(run_id="run-1")
     with patch("fathom.runtime.plumb_stream.sys.stdout") as stdout:
         CommandExecutor._CommandExecutor__emit_trajectory(  # noqa: SLF001
-            stream=stream, result=result
+            stream=stream, result=result, grounding_policy=None
         )
     written = "".join(str(c.args[0]) for c in stdout.write.call_args_list)
     line = next(p for p in written.splitlines() if p.startswith("PLUMB_OUTCOME "))

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from fathom.constants.llm import InferencePriorityMode
+from fathom.constants.localization import GroundingPolicy
 from fathom.constants.qualification import DEFAULT_QUALIFIER_MODEL
 from fathom.constants.run import TargetKind
 from fathom.constants.storage import InteractionBackend, PostgresMigrationMode
@@ -11,6 +12,7 @@ from fathom.core.exceptions import StorageConfigurationError
 from fathom.runtime.assembly import RunAssemblyBuilder
 from fathom.schemas.configuration import (
     DeviceConfiguration,
+    IntentConfiguration,
     InteractionStorageConfiguration,
     PostgresInteractionConfiguration,
     QualifierConfiguration,
@@ -18,6 +20,7 @@ from fathom.schemas.configuration import (
 from fathom.schemas.run import (
     IntentObjectiveConfiguration,
     IntentRunRequest,
+    InteractionConfiguration,
     Principal,
     ResourceConfiguration,
     RunRequest,
@@ -448,3 +451,105 @@ class InteractionStorageResolutionTest(unittest.TestCase):
 
         with self.assertRaises(StorageConfigurationError):
             builder.build_interaction_storage_configuration(request=request)
+
+
+class RunAssemblyBuilderGroundingPolicyTest(unittest.TestCase):
+    """
+    Verify that the grounding policy a benchmark host asks for reaches the run.
+
+    The gap this covers: Fathom resolved ``GroundingPolicy.STRICT`` from its own class
+    default while a host declared PERMISSIVE and recorded PERMISSIVE as held. The two
+    disagreed for a whole sweep and neither side could tell, because the policy was
+    settable only from inside the process.
+    """
+
+    def __principal(self) -> Principal:
+        """
+        Return a valid principal for runtime request construction.
+        """
+
+        return Principal(
+            tenant="tenant",
+            operator="operator",
+            agent="agent:fathom",
+            conversation="conversation",
+        )
+
+    def __request(self, **interaction: object) -> IntentRunRequest:
+        """
+        Build a minimal intent request, optionally overriding the interaction block.
+        """
+
+        return IntentRunRequest(
+            principal=self.__principal(),
+            objective=IntentObjectiveConfiguration(intent="Open the app"),
+            resources=ResourceConfiguration(
+                targets=[
+                    TargetConfiguration(
+                        kind=TargetKind.DEVICE,
+                        device_configuration=DeviceConfiguration(),
+                    )
+                ]
+            ),
+            **interaction,
+        )
+
+    def test_the_environment_selects_the_policy(self) -> None:
+        """
+        The variable a host sets is the policy the cascade will consult.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(_env_file=None, grounding_policy=GroundingPolicy.PERMISSIVE)
+        )
+
+        configuration = assembly.build_intent_configuration(request=self.__request())
+
+        self.assertEqual(configuration.grounding_policy, GroundingPolicy.PERMISSIVE)
+
+    def test_an_unset_environment_keeps_the_strict_default(self) -> None:
+        """
+        Adding a channel must not quietly relax the default for everyone else.
+        """
+
+        assembly = RunAssemblyBuilder(settings=FathomSettings(_env_file=None))
+
+        configuration = assembly.build_intent_configuration(request=self.__request())
+
+        self.assertEqual(configuration.grounding_policy, GroundingPolicy.STRICT)
+
+    def test_an_explicit_request_value_outranks_the_environment(self) -> None:
+        """
+        Same precedence as every other assembled control: the request wins.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(_env_file=None, grounding_policy=GroundingPolicy.PERMISSIVE)
+        )
+        request = self.__request(
+            interaction=InteractionConfiguration(
+                intent_configuration=IntentConfiguration(
+                    grounding_policy=GroundingPolicy.STRICT,
+                )
+            )
+        )
+
+        configuration = assembly.build_intent_configuration(request=request)
+
+        self.assertEqual(configuration.grounding_policy, GroundingPolicy.STRICT)
+
+    def test_an_untouched_request_does_not_count_as_a_choice(self) -> None:
+        """
+        A request that carries a default-constructed intent block has expressed no
+        preference. Treating its class default as one would let it silently outrank
+        the operator who set the variable, which is the original bug wearing a hat.
+        """
+
+        assembly = RunAssemblyBuilder(
+            settings=FathomSettings(_env_file=None, grounding_policy=GroundingPolicy.PERMISSIVE)
+        )
+        request = self.__request(interaction=InteractionConfiguration())
+
+        configuration = assembly.build_intent_configuration(request=request)
+
+        self.assertEqual(configuration.grounding_policy, GroundingPolicy.PERMISSIVE)

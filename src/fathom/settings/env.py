@@ -13,6 +13,7 @@ from fathom.constants.llm import (
     DEFAULT_PRIORITY_WINDOW,
     ReasoningEffort,
 )
+from fathom.constants.localization import GroundingPolicy
 from fathom.constants.storage import (
     INTERACTION_DEFAULT_BACKEND,
     INTERACTION_POSTGRES_DEFAULT_MIGRATION_MODE,
@@ -67,6 +68,20 @@ class FathomSettings(BaseSettings):
         description=(
             "Reasoning depth requested of every provider that exposes one. Unset omits "
             "the parameter entirely, which is not the same as sending 'none'."
+        ),
+    )
+    grounding_policy: GroundingPolicy = Field(
+        default=GroundingPolicy.STRICT,
+        validation_alias=AliasChoices(
+            "FATHOM_GROUNDING_POLICY",
+            "DRIZZ_FATHOM_GROUNDING_POLICY",
+        ),
+        description=(
+            "Whether the localization cascade may dispatch uncorroborated planner "
+            "bounds. A benchmark host grades a run against the policy it asked for, so "
+            "the policy has to be settable from outside the process; without this the "
+            "harness resolved STRICT from its own default while the experiment "
+            "declared PERMISSIVE, and nothing in either place could tell."
         ),
     )
 

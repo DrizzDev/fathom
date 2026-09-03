@@ -11,6 +11,7 @@ from fathom.schemas.base.common import ThresholdConfiguration
 from fathom.schemas.configuration import (
     AdaptivePriorityConfiguration,
     DeviceConfiguration,
+    IntentConfiguration,
     InteractionStorageConfiguration,
     LLMConfiguration,
     NoopInteractionConfiguration,
@@ -85,6 +86,26 @@ class RunAssemblyBuilder:
         default_values.update(request_values)
 
         return LLMConfiguration.model_validate(default_values)
+
+    def build_intent_configuration(self, *, request: RunRequest) -> IntentConfiguration:
+        """
+        Resolve intent configuration using request values with environment defaults.
+
+        Same precedence as the model builders: the environment supplies a default and
+        anything the request set explicitly wins. ``exclude_unset`` is what makes that
+        distinction possible — an untouched ``IntentConfiguration`` carries the field's
+        own default, and treating that as a choice would let a class default silently
+        outrank the operator who set the variable.
+        """
+
+        request_values = request.interaction.intent_configuration.model_dump(
+            exclude_none=True,
+            exclude_unset=True,
+        )
+        default_values: Dict[str, Any] = {"grounding_policy": self.__settings.grounding_policy}
+        default_values.update(request_values)
+
+        return IntentConfiguration.model_validate(default_values)
 
     def build_qualifier_model_configuration(
         self, *, configuration: QualifierConfiguration

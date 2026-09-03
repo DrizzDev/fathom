@@ -13,6 +13,7 @@ from rich.table import Table
 
 from fathom.adapters.telemetry.console import ConsoleTelemetryAdapter
 from fathom.base.paths import SharedPathManager
+from fathom.constants.localization import GroundingPolicy
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import FathomError
 from fathom.interfaces.factory import (
@@ -103,6 +104,12 @@ class CommandExecutor:
         self.__runner: Optional[FathomRunner] = None
         self.__composition: Optional[RunnerComposition] = None
 
+        # Set once the runner is assembled, and reported to a benchmark host as the
+        # policy the run actually executed under. None until then on purpose: a run
+        # that broke during assembly executed under no policy at all, and naming one
+        # would be the same fabrication this field exists to remove.
+        self.__grounding_policy: Optional[GroundingPolicy] = None
+
         self.__llm_factory = llm_factory or LLMFactory()
         self.__device_factory = device_factory or DeviceFactory()
 
@@ -181,6 +188,7 @@ class CommandExecutor:
         assembly_builder = RunAssemblyBuilder(settings=self.__settings)
 
         device_configuration = self.__resolve_device_configuration(request=request)
+        intent_configuration = assembly_builder.build_intent_configuration(request=request)
         llm_configuration = assembly_builder.build_planner_model_configuration(request=request)
         telemetry_configuration = assembly_builder.build_telemetry_configuration(request=request)
         interaction_storage_configuration = (
@@ -228,8 +236,14 @@ class CommandExecutor:
                 .with_perception(port=perception_adapter)
                 .with_interaction(port=interaction_adapter)
                 .with_runtime_configuration(loader=RuntimeConfigLoader(settings=self.__settings))
+                .with_intent_config(configuration=intent_configuration)
                 .with_qualifier_config(configuration=request.interaction.qualifier_configuration)
             )
+
+            # Recorded only now, from the configuration handed to the builder, so the
+            # value reported is the one the localization cascade will consult rather
+            # than the one the environment asked for.
+            self.__grounding_policy = intent_configuration.grounding_policy
 
             owned_resources: tuple[LLMPort, ...] = ()
             if QualifierComposer.should_compose(request=request):
@@ -440,29 +454,48 @@ class CommandExecutor:
             result = await self.__run_intent_workflow(request=request)
             self.__print_execution_summary(result=result)
 
-            self.__emit_trajectory(stream=stream, result=result)
+            self.__emit_trajectory(
+                stream=stream, result=result, grounding_policy=self.__grounding_policy
+            )
 
             return 0 if result.success else 1
 
         except (asyncio.CancelledError, KeyboardInterrupt) as exception:
             console.print("\n[bold red]Execution cancelled by user.[/bold red]")
-            self.__emit_failure(stream=stream, exception=exception, started=started)
+            self.__emit_failure(
+                stream=stream,
+                exception=exception,
+                started=started,
+                grounding_policy=self.__grounding_policy,
+            )
             return 1
         except FathomError as exception:
             logger.error("CLI error: %s", exception)
             console.print(f"[bold red]Fathom Error:[/bold red] {escape(str(exception))}")
-            self.__emit_failure(stream=stream, exception=exception, started=started)
+            self.__emit_failure(
+                stream=stream,
+                exception=exception,
+                started=started,
+                grounding_policy=self.__grounding_policy,
+            )
             return 1
         except Exception as exception:
             logger.exception("Unexpected error")
             console.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(exception))}")
-            self.__emit_failure(stream=stream, exception=exception, started=started)
+            self.__emit_failure(
+                stream=stream,
+                exception=exception,
+                started=started,
+                grounding_policy=self.__grounding_policy,
+            )
             return 1
         finally:
             await self.__cleanup_runner()
 
     @staticmethod
-    def __emit_trajectory(*, stream: TrajectoryStream, result: Any) -> None:
+    def __emit_trajectory(
+        *, stream: TrajectoryStream, result: Any, grounding_policy: Optional[GroundingPolicy]
+    ) -> None:
         """
         Report the run to a benchmark host as data.
 
@@ -497,6 +530,16 @@ class CommandExecutor:
                 "error": getattr(result, "error", None),
                 "exit_status": 0 if result.success else 1,
                 "status_source": "PAYLOAD",
+                # The policy the localization cascade actually ran under. A host that
+                # asked for PERMISSIVE and got the STRICT class default was grading a
+                # different experiment than the one it configured, and neither side
+                # could detect it. Omitted when unknown rather than defaulted: absent
+                # means "never confirmed", which is not the same as agreement.
+                **(
+                    {"grounding_policy": grounding_policy.value}
+                    if grounding_policy is not None
+                    else {}
+                ),
                 # Measured, never defaulted. Absent entirely when the run recorded no
                 # counters, because the host's fields are tri-state: a missing counter
                 # reports UNVERIFIED, while a zero asserts that nothing happened. Only
@@ -507,7 +550,11 @@ class CommandExecutor:
 
     @staticmethod
     def __emit_failure(
-        *, stream: TrajectoryStream, exception: BaseException, started: float
+        *,
+        stream: TrajectoryStream,
+        exception: BaseException,
+        started: float,
+        grounding_policy: Optional[GroundingPolicy] = None,
     ) -> None:
         """
         Report a run that raised instead of producing a result.
@@ -537,6 +584,16 @@ class CommandExecutor:
                 "error": str(exception) or type(exception).__name__,
                 "exit_status": 1,
                 "status_source": "PAYLOAD",
+                # The policy the localization cascade actually ran under. A host that
+                # asked for PERMISSIVE and got the STRICT class default was grading a
+                # different experiment than the one it configured, and neither side
+                # could detect it. Omitted when unknown rather than defaulted: absent
+                # means "never confirmed", which is not the same as agreement.
+                **(
+                    {"grounding_policy": grounding_policy.value}
+                    if grounding_policy is not None
+                    else {}
+                ),
             }
         )
 

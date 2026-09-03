@@ -174,7 +174,9 @@ class EmittedPayloadTest(unittest.TestCase):
         stream = TrajectoryStream(run_id="run-1")
         payload = _emitted(
             lambda: CommandExecutor._CommandExecutor__emit_trajectory(  # noqa: SLF001
-                stream=stream, result=self.__result(status="failed", success=False)
+                grounding_policy=None,
+                stream=stream,
+                result=self.__result(status="failed", success=False),
             ),
         )
 
@@ -190,7 +192,9 @@ class EmittedPayloadTest(unittest.TestCase):
         stream = TrajectoryStream(run_id="run-1")
         payload = _emitted(
             lambda: CommandExecutor._CommandExecutor__emit_trajectory(  # noqa: SLF001
-                stream=stream, result=self.__result(status="cancelled", success=False)
+                grounding_policy=None,
+                stream=stream,
+                result=self.__result(status="cancelled", success=False),
             ),
         )
 
@@ -210,7 +214,9 @@ class EmittedPayloadTest(unittest.TestCase):
         stream = TrajectoryStream(run_id="run-1")
         payload = _emitted(
             lambda: CommandExecutor._CommandExecutor__emit_trajectory(  # noqa: SLF001
-                stream=stream, result=self.__result(status="completed", success=True)
+                grounding_policy=None,
+                stream=stream,
+                result=self.__result(status="completed", success=True),
             ),
         )
 
@@ -233,7 +239,9 @@ class EmittedPayloadTest(unittest.TestCase):
         stream = TrajectoryStream(run_id="run-1")
         payload = _emitted(
             lambda: CommandExecutor._CommandExecutor__emit_trajectory(  # noqa: SLF001
-                stream=stream, result=self.__result(status="completed", success=True)
+                grounding_policy=None,
+                stream=stream,
+                result=self.__result(status="completed", success=True),
             ),
         )
 
