@@ -67,6 +67,7 @@ from fathom.core.services.timing import RunClock
 from fathom.core.services.trace import TraceService
 from fathom.core.services.vision import VisionService
 from fathom.interfaces.abort import AbortDetectorPort
+from fathom.interfaces.apps import ApplicationsPort
 from fathom.interfaces.authoring import AuthoringDraftStore, AuthoringPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.dialect import Dialect
@@ -158,6 +159,7 @@ class GraphContext:
         pixel_overlay: Optional[OverlayDetectorPort] = None,
         ensemble: Optional[EnsembleLocalizerService] = None,
         exploration_graph: Optional[ExplorationGraph] = None,
+        applications: Optional[ApplicationsPort] = None,
         perception_service: Optional[PerceptionService] = None,
         resolution: Optional[ReferenceResolutionService] = None,
         screen_observer: Optional[ScreenObservationService] = None,
@@ -191,6 +193,7 @@ class GraphContext:
         self.__path_manager = path_manager
 
         self.__exploration_graph = exploration_graph or ExplorationGraph()
+        self.__applications = applications
 
         self.__use_xml = use_xml
         self.__max_steps = max_steps
@@ -743,6 +746,11 @@ class GraphContext:
         """
 
         self.__cancel_event.set()
+
+    @property
+    def applications(self) -> Optional[ApplicationsPort]:
+        """Return the persistent application knowledge port."""
+        return self.__applications
 
     @property
     def exploration_graph(self) -> ExplorationGraph:

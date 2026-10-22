@@ -127,7 +127,7 @@ class TestStudioExporterWrite(unittest.TestCase):
             out = Path(tmp) / "app-maps" / g.package
             written = exporter.write(out)
 
-            self.assertTrue((out / "app-map.json").exists())
+            self.assertTrue((out / "index.json").exists())
             self.assertTrue((out / "index.md").exists())
             self.assertTrue((out / "home.md").exists())
             self.assertTrue((out / "search.md").exists())
@@ -141,11 +141,13 @@ class TestStudioExporterWrite(unittest.TestCase):
             out = Path(tmp) / "maps" / g.package
             exporter.write(out)
 
-            raw = json.loads((out / "app-map.json").read_text())
+            raw = json.loads((out / "index.json").read_text())
             self.assertEqual(raw["package"], "com.doordash")
             self.assertEqual(raw["label"], "DoorDash")
             self.assertIn("pages", raw)
             self.assertIn("edges", raw)
+            self.assertEqual(raw["pages"][0]["fingerprint"]["struct"], [])
+            self.assertEqual(raw["pages"][0]["fingerprint"]["content"], [])
 
             # Verify camelCase keys
             page = raw["pages"][0]

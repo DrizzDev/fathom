@@ -12,6 +12,7 @@ from fathom.base.paths import SharedPathManager
 from fathom.core.config.loader import RuntimeConfigLoader
 from fathom.core.exceptions import ConfigurationError
 from fathom.core.services.qualifier import IntentQualifierFactory
+from fathom.infrastructure.apps.repository import Repository
 from fathom.infrastructure.memory.ledger import Ledger
 from fathom.infrastructure.memory.sqlite import SQLiteMemoryProvider
 from fathom.runtime.factories import LLMFactory
@@ -346,6 +347,7 @@ class FathomBuilder:
             signal=self.__signal,
             storage=self.__storage,
             knowledge=self.__knowledge,
+            applications=Repository(root=self.__path_manager.memory_path / "apps"),
             telemetry=self.__telemetry,
             qualifier=self.__qualifier,
             summarizer=self.__summarizer,

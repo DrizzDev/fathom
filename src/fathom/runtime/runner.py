@@ -19,6 +19,8 @@ from pydantic import JsonValue
 
 from fathom.adapters.checkpoint import LangGraphPlanStore
 from fathom.adapters.signing.noop import NoopSigner
+from fathom.app_graph.state import Completion as GraphCompletion
+from fathom.app_graph.state import Identity, Start
 from fathom.base.paths import SharedPathManager
 from fathom.base.phase import AbandonablePhase
 from fathom.constants import ContextScope, FathomEvent
@@ -49,6 +51,7 @@ from fathom.core.services.conversation.title import TitleComposer
 from fathom.core.services.qualifier.gate import QualificationGatePolicy
 from fathom.core.services.recorder import ConversationRecorder
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.interfaces.apps import ApplicationsPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.interaction import InteractionPort
 from fathom.interfaces.knowledge import KnowledgePort
@@ -139,6 +142,7 @@ class FathomRunner:
         signal: SignalPort,
         storage: StoragePort,
         knowledge: KnowledgePort,
+        applications: Optional[ApplicationsPort] = None,
         telemetry: TelemetryPort,
         perception: PerceptionPort,
         summarizer: SummarizationPort,
@@ -154,6 +158,7 @@ class FathomRunner:
         Initialize runner with all configured ports.
         """
 
+        self.__applications = applications
         self.__llm = llm
         self.__architect = architect or llm
         self.__device = device
@@ -623,6 +628,8 @@ class FathomRunner:
         request_id: str,
         principal: Principal,
         max_steps: int = 100,
+        intent: str = "Explore application structure",
+        use_xml: bool = True,
         execution_id: Optional[str] = None,
         package_name: Optional[str] = None,
     ) -> ExplorationResult:
@@ -654,7 +661,6 @@ class FathomRunner:
         requester = principal.operator
         workspace = principal.workspace
 
-        intent = "Explore application structure"
         handle: Optional[Handle] = None
 
         self.__sync_telemetry_identity(workflow=workflow_id)
@@ -710,6 +716,9 @@ class FathomRunner:
         self.__context_manager.set_roadmap(intent=intent)
 
         strategy = ExplorationStrategy(
+            intent=intent,
+            use_xml=use_xml,
+            applications=self.__applications,
             tenant=tenant,
             thread=thread,
             llm=self.__llm,
@@ -734,8 +743,15 @@ class FathomRunner:
 
         self.__current_strategy = strategy
 
+        terminal_error: Optional[str] = "Exploration interrupted before completion"
         try:
+            if self.__applications is not None:
+                await self.__applications.start(start=Start(
+                    identity=Identity(tenant=tenant, package=package_name),
+                    execution=workflow_id, goal=intent,
+                ))
             execution_result = await strategy.execute()
+            terminal_error = execution_result.error if not execution_result.success else None
 
             progress = strategy.get_progress()
             stats = progress.get("stats", {})
@@ -809,6 +825,7 @@ class FathomRunner:
             return result
 
         except Exception as exception:
+            terminal_error = str(exception)
             await self.__telemetry.warning(
                 "Exploration run failed before completion",
                 workflow_id=workflow_id,
@@ -853,6 +870,11 @@ class FathomRunner:
             raise
 
         finally:
+            if self.__applications is not None:
+                await self.__applications.complete(completion=GraphCompletion(
+                    identity=Identity(tenant=tenant, package=package_name),
+                    execution=workflow_id, error=terminal_error,
+                ))
             self.__current_strategy = None
 
     def cancel(self) -> None:

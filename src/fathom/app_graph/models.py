@@ -229,6 +229,12 @@ class ScreenChange(BaseModel):
     new_purpose: str = ""
 
 
+class Coverage(BaseModel):
+    """Screen identities exhaustively checked by a scoped exploration."""
+
+    activities: list[str] = Field(default_factory=list, description="Activities whose screen inventory was completely explored.")
+
+
 class GraphDiff(BaseModel):
     """Diff between an old graph state and a new exploration.
 
@@ -342,7 +348,7 @@ class LastRun(BaseModel):
 
 
 class AppMap(BaseModel):
-    """Top-level Drizz Studio App Map — written as ``app-map.json``."""
+    """Top-level Drizz Studio App Map — written as ``index.json``."""
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
 

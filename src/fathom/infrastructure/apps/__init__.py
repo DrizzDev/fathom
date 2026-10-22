@@ -1,0 +1,1 @@
+"""Application knowledge persistence adapters."""

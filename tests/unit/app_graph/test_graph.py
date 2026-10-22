@@ -12,6 +12,7 @@ from fathom.app_graph.models import (
     Block,
     BlockStatus,
     ChangeType,
+    Coverage,
     Element,
     Locator,
     LocatorRepair,
@@ -303,7 +304,7 @@ class TestChangeIntelligence(unittest.TestCase):
         new = AppGraph(package="com.example")
         new.add_screen(_screen(hash="a", name="Home", activity="X"))
 
-        diff = old.diff(new)
+        diff = old.diff(new, coverage=Coverage(activities=["X", "Y"]))
         self.assertEqual(len(diff.removed_screens), 1)
         self.assertEqual(diff.removed_screens[0].screen_name, "Legacy")
 
@@ -450,3 +451,18 @@ class TestAppGraphCumulative(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestScopedDiff(unittest.TestCase):
+    def test_unobserved_screens_are_not_removed(self) -> None:
+        old = AppGraph(package="com.example")
+        old.add_screen(_screen(hash="home", name="Home", activity="Home"))
+        old.add_screen(_screen(hash="cart", name="Cart", activity="Cart"))
+        new = AppGraph(package="com.example")
+        new.add_screen(_screen(hash="cart", name="Cart", activity="Cart"))
+        self.assertEqual(old.diff(new).removed_screens, [])
+        self.assertEqual(old.diff(new, coverage=Coverage(activities=["Cart"])).removed_screens, [])
+        self.assertEqual(len(old.diff(new, coverage=Coverage(activities=["Home"])).removed_screens), 1)
+
+    def test_other_app_cannot_be_compared(self) -> None:
+        with self.assertRaises(ValueError):
+            AppGraph(package="one").diff(AppGraph(package="two"))

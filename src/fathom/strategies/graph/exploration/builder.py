@@ -54,6 +54,7 @@ class ExplorationGraphBuilder(GraphBuilder):
             {
                 NodeName.EXECUTE: NodeName.EXECUTE,
                 NodeName.BFS_ROUTE: NodeName.BFS_ROUTE,
+                NodeName.END: NodeName.END,
             },
         )
 
@@ -79,6 +80,9 @@ class ExplorationGraphBuilder(GraphBuilder):
         Route after scan based on content exhaustion.
         """
 
+        if state.get(CommonStateKey.IS_COMPLETE):
+            return NodeName.END
+
         if state.get(ExplorationStateKey.CONTENT_EXHAUSTED):
             return NodeName.BFS_ROUTE
 
@@ -88,8 +92,5 @@ class ExplorationGraphBuilder(GraphBuilder):
         """
         Route after record based on completion status.
         """
-
-        if state.get(CommonStateKey.IS_COMPLETE):
-            return NodeName.END
 
         return NodeName.GROUND

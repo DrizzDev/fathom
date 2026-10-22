@@ -19,10 +19,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from fathom.app_graph.state import Snapshot
 from fathom.app_graph.models import (
     Block,
     BlockStatus,
     ChangeType,
+    Coverage,
     Element,
     GraphDiff,
     Locator,
@@ -334,13 +336,17 @@ class AppGraph:
     # Change Intelligence — diff two graph states
     # ------------------------------------------------------------------
 
-    def diff(self, new_graph: AppGraph) -> GraphDiff:
+    def diff(self, new_graph: AppGraph, *, coverage: Optional[Coverage] = None) -> GraphDiff:
         """Compare this graph (old/baseline) against a new exploration.
 
         Returns a GraphDiff describing what screens were added, removed,
-        or modified.  Used by Change Intelligence to understand the impact
+        or modified. Removal requires explicit exhaustive activity coverage.
+        Used by Change Intelligence to understand the impact
         of a product update.
         """
+        if self.package and new_graph.package and self.package != new_graph.package:
+            raise ValueError("Cannot compare graphs for different applications")
+        covered = set(coverage.activities) if coverage is not None else set()
         old_by_key = {_screen_key(s): s for s in self._screens.values()}
         new_by_key = {_screen_key(s): s for s in new_graph._screens.values()}
 
@@ -362,7 +368,7 @@ class AppGraph:
 
         # Screens in old but not new → REMOVED
         for key, screen in old_by_key.items():
-            if key not in new_by_key:
+            if key not in new_by_key and screen.activity in covered:
                 changes.append(ScreenChange(
                     screen_name=screen.name,
                     change_type=ChangeType.REMOVED,
@@ -491,6 +497,23 @@ class AppGraph:
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
+
+    def snapshot(self) -> Snapshot:
+        """Return an isolated typed snapshot of application knowledge."""
+        return Snapshot(package=self.package, label=self.label, goals=self._goals,
+                        exploration_count=self._exploration_count, total_steps=self._total_steps,
+                        screens=list(self._screens.values()), transitions=self._transitions,
+                        aliases=self._aliases, blocks=self._blocks, locator_repairs=self._locator_repairs).model_copy(deep=True)
+
+    def restore(self, *, snapshot: Snapshot) -> None:
+        """Restore validated repository state without performing IO."""
+        state = snapshot.model_copy(deep=True)
+        self.package, self.label = state.package, state.label
+        self._goals, self._exploration_count = state.goals, state.exploration_count
+        self._total_steps, self._aliases = state.total_steps, state.aliases
+        self._screens = {screen.hash: screen for screen in state.screens}
+        self._transitions, self._blocks = state.transitions, state.blocks
+        self._locator_repairs = state.locator_repairs
 
     def stats(self) -> dict:
         activities = {s.activity for s in self._screens.values()}

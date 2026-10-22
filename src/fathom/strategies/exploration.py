@@ -6,7 +6,9 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fathom.base.paths import SharedPathManager
+from fathom.constants.state import CommonStateKey
 from fathom.core.services.telemetry import PhaseAnnouncer
+from fathom.interfaces.apps import ApplicationsPort
 from fathom.interfaces.device import DevicePort
 from fathom.interfaces.llm import LLMPort
 from fathom.interfaces.memory import MemoryPort
@@ -54,11 +56,13 @@ class ExplorationStrategy:
         path_manager: SharedPathManager,
         configuration: FathomConfiguration,
         runtime_configuration: Optional["RuntimeConfigLoader"] = None,
+        applications: Optional[ApplicationsPort] = None,
+        intent: str = "Explore application structure",
+        use_xml: bool = True,
     ) -> None:
         self.__seed = seed
         self.__timeout = timeout
         self.__execution_id = execution_id
-        intent = "Explore application"
 
         # Exploration strategy doesn't use XML grounding (uses visual-only approach)
         from fathom.core.config.loader import RuntimeConfigLoader
@@ -77,9 +81,10 @@ class ExplorationStrategy:
 
         self.__graph_context = GraphContext(
             llm=llm,
+            applications=applications,
             phase=phase,
             intent=intent,
-            use_xml=False,
+            use_xml=use_xml,
             device=device,
             signal=signal,
             tenant=tenant,
@@ -112,12 +117,14 @@ class ExplorationStrategy:
         try:
             # Execute with timeout if configured
             if self.__timeout > 0:
-                await asyncio.wait_for(self.__graph.ainvoke({}), timeout=self.__timeout)
+                final = await asyncio.wait_for(self.__graph.ainvoke({}), timeout=self.__timeout)
             else:
-                await self.__graph.ainvoke({})
+                final = await self.__graph.ainvoke({})
 
             duration = int((time.time() - start_time) * 1000)
-            return ExecutionResult(success=True, duration=duration)
+            reason = final.get(CommonStateKey.COMPLETION_REASON)
+            error = str(reason) if reason in ("Capture failed", "Cancelled") else None
+            return ExecutionResult(success=error is None, duration=duration, error=error)
 
         except asyncio.TimeoutError:
             logger.warning(f"Exploration timed out after {self.__timeout}s")

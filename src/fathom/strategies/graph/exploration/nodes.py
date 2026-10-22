@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any, Callable, Dict, cast
 
+from fathom.app_graph.models import Screen, Transition
+from fathom.app_graph.state import Description, Identity, Observation
 from fathom.constants import ActionType
 from fathom.constants.execution import VISUAL_HASH_LENGTH
 from fathom.constants.state import CommonStateKey as CKey
@@ -75,6 +77,33 @@ class ExplorationNodeProvider:
             )
             screen = screen.model_copy(update={"state": screen_state})
 
+            self.__context.exploration_graph.add_screen(screen_state)
+            previous = get_step_result(state)
+            if previous and previous.success and previous.step.action and previous.pre_hash != "0":
+                self.__context.exploration_graph.record_transition(
+                    origin=previous.pre_hash,
+                    destination=screen_state.visual_hash,
+                    action=previous.step.action.to_description(),
+                )
+
+            if self.__context.applications is not None:
+                transition = None
+                if previous and previous.success and previous.pre_hash != "0":
+                    transition = Transition(source_hash=previous.pre_hash,
+                                            target_hash=screen_state.visual_hash,
+                                            action_type=previous.step.action.action_type.value,
+                                            action_target=previous.step.action.to_description())
+                await self.__context.applications.observe(observation=Observation(
+                    identity=Identity(tenant=self.__context.tenant, package=self.__context.package_name),
+                    execution=self.__context.workflow_id,
+                    sequence=self.__context.agent_state.step_count,
+                    goal=self.__context.intent,
+                    screen=Screen(hash=screen_state.visual_hash,
+                                  name=f"{screen.activity.rsplit('.', 1)[-1]} {screen_state.visual_hash[:6]}",
+                                  activity=screen.activity),
+                    image=screen.image, xml=screen.xml_content, transition=transition,
+                ))
+
             is_new = self.__context.agent_state.update_screen(screen=screen_state)
 
             result = cast("Dict[str, Any]", dict(state))
@@ -101,6 +130,9 @@ class ExplorationNodeProvider:
         Scan the screen using Vision Service to find next action.
         """
 
+        if state.get(CKey.IS_COMPLETE):
+            return state
+
         if self.__context.is_cancelled:
             result = cast("Dict[str, Any]", {})
             result[CKey.IS_COMPLETE] = True
@@ -116,7 +148,7 @@ class ExplorationNodeProvider:
         width = capture.width
         height = capture.height
 
-        intent = "Explore this app. Find a unique interactive element."
+        intent = f"Explore the requested scope: {self.__context.intent}. Find a unique interactive element within that scope."
 
         tools = self.__context.tool_scope.compute(
             context=ToolPolicyContext(capabilities=self.__context.capabilities),
@@ -132,6 +164,11 @@ class ExplorationNodeProvider:
             visual_hash=capture.state.visual_hash if capture.state is not None else "",
         )
         analysis = self.__materialize_command(analysis=analysis)
+        if self.__context.applications is not None and capture.state is not None:
+            await self.__context.applications.describe(description=Description(
+                identity=Identity(tenant=self.__context.tenant, package=self.__context.package_name),
+                screen=capture.state.visual_hash, text=analysis.screen_description,
+            ))
 
         if (
             analysis.is_goal_complete
@@ -143,6 +180,9 @@ class ExplorationNodeProvider:
             exhausted = False
 
         result = cast("Dict[str, Any]", dict(state))
+        if analysis.is_goal_complete:
+            result[CKey.IS_COMPLETE] = True
+            result[CKey.COMPLETION_REASON] = "Requested exploration scope completed"
         result[CKey.ANALYSIS] = analysis
         result[EKey.CONTENT_EXHAUSTED] = exhausted
         result[CKey.ANALYSIS_DURATION] = time.time() - start
@@ -236,17 +276,6 @@ class ExplorationNodeProvider:
         step_result = get_step_result(state)
         if not step_result:
             return state
-
-        screen_state = get_screen_state(state)
-        if isinstance(screen_state, ScreenState):
-            self.__context.exploration_graph.add_screen(screen_state)
-
-        if step_result.success and step_result.pre_hash and step_result.step.action:
-            self.__context.exploration_graph.record_transition(
-                destination="0",
-                origin=step_result.pre_hash,
-                action=step_result.step.action.to_description(),
-            )
 
         self.__context.agent_state.record_step(result=step_result)
         current_screen = state.get(CKey.SCREEN_STATE)

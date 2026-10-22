@@ -373,6 +373,8 @@ class FathomActivities:
                     package_name=package_name,
                     principal=validated_request.principal,
                     max_steps=validated_request.objective.max_steps,
+                    intent=validated_request.objective.intent,
+                    use_xml=validated_request.objective.use_xml,
                     execution_id=validated_request.runtime.execution_id,
                 )
 

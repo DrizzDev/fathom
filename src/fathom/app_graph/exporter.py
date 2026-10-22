@@ -4,7 +4,7 @@ The studio runner stores App Maps under ``app-maps/{package}/`` with this
 structure::
 
     app-maps/com.example.app/
-    ├── app-map.json          # AppMap (pages, edges, metadata)
+    ├── index.json          # AppMap (pages, edges, metadata)
     ├── evidence/
     │   ├── home.png          # screenshot captures
     │   ├── home.xml          # UI hierarchy dumps
@@ -95,8 +95,8 @@ class StudioExporter:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. app-map.json
-        map_path = output_dir / "app-map.json"
+        # 1. index.json
+        map_path = output_dir / "index.json"
         map_path.write_text(
             app_map.model_dump_json(indent=2, by_alias=True),
             encoding="utf-8",
@@ -141,7 +141,7 @@ class StudioExporter:
         index_path.write_text(index_md, encoding="utf-8")
         written.append(index_path)
 
-        # Re-write app-map.json with updated file references
+        # Re-write index.json with updated file references
         map_path.write_text(
             app_map.model_dump_json(indent=2, by_alias=True),
             encoding="utf-8",
@@ -188,8 +188,8 @@ class StudioExporter:
                 name=screen.name,
                 activity=screen.activity,
                 fingerprint=Fingerprint(
-                    struct=[screen.structure_hash] if screen.structure_hash else [],
-                    content=[w for w in screen.name.lower().split() if len(w) > 2],
+                    struct=[],
+                    content=[],
                 ),
                 visits=screen.visits,
                 file=f"{slug}.md",
